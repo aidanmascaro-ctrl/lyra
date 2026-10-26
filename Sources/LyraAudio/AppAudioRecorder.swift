@@ -43,8 +43,8 @@ public final class AppAudioRecorder: TrackRecorder {
 
             let writer = try CAFWriter(url: url, format: format)
             self.writer = writer
-            try check(AudioDeviceCreateIOProcIDWithBlock(&procID, deviceID, nil) { _, input, _, _, _ in
-                writer.write(input)
+            try check(AudioDeviceCreateIOProcIDWithBlock(&procID, deviceID, nil) { _, input, inputTime, _, _ in
+                writer.write(input, hostTime: inputTime.pointee.mHostTime)
             }, "create IO proc")
             try check(AudioDeviceStart(deviceID, procID), "start aggregate device")
         } catch {

@@ -55,10 +55,11 @@ public final class TwoTrackRecorder {
     }
 
     /// Runs on the caller's actor, so a @MainActor owner can await it without sending the recorder.
+    /// Each result carries its `startOffset`: the tracks start up to ~3 s apart.
     nonisolated(nonsending) public func stop() async -> [TrackResult] {
         var results: [TrackResult] = []
         for recorder in recorders { results.append(await recorder.stop()) }
         recorders = []
-        return results
+        return TrackResult.withStartOffsets(results)
     }
 }

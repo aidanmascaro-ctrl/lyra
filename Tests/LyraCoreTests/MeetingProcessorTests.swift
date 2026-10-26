@@ -10,7 +10,7 @@ private struct FakeTranscriber: SpeechTranscribing {
     func transcribe(samples: [Float]) async throws -> [TimedWord] {
         samples.first == 1
             ? [TimedWord(text: "hello", start: 0, end: 0.5), TimedWord(text: "from", start: 0.5, end: 1), TimedWord(text: "zoom", start: 1, end: 1.5)]
-            : [TimedWord(text: "hi", start: 5, end: 5.5), TimedWord(text: "back", start: 5.5, end: 6)]
+            : [TimedWord(text: "hi", start: 1, end: 1.5), TimedWord(text: "back", start: 1.5, end: 2)]
     }
 }
 
@@ -29,10 +29,12 @@ final class MeetingProcessorTests: XCTestCase {
 
     override func tearDownWithError() throws { try? FileManager.default.removeItem(at: dir) }
 
-    private func track(_ kind: TrackKind, peak: Float = 0.3, error: String? = nil) throws -> TrackResult {
+    private func track(_ kind: TrackKind, peak: Float = 0.3, error: String? = nil, startOffset: Double? = nil) throws -> TrackResult {
         let url = folder.appendingPathComponent("\(kind.rawValue).caf")
         try Data([kind == .meeting ? 1 : 2]).write(to: url)
-        return TrackResult(kind: kind, url: url, seconds: 60, peakLevel: peak, error: error)
+        var result = TrackResult(kind: kind, url: url, seconds: 60, peakLevel: peak, error: error)
+        result.startOffset = startOffset
+        return result
     }
 
     private func processor(convertFails: Bool = false) -> MeetingProcessor {
@@ -62,16 +64,53 @@ final class MeetingProcessorTests: XCTestCase {
         }
     }
 
-    func testSilentMeetingTrackStillWritesNote() async throws {
-        _ = try await processor().process(meeting: meeting, tracks: [track(.meeting, peak: 0), track(.mic)], folder: folder, noteURL: note)
-        let text = try String(contentsOf: note, encoding: .utf8)
-        XCTAssertTrue(text.contains("Meeting audio was silent"))
-        XCTAssertTrue(text.contains("Screen & System Audio Recording"))
+    func testSilentMeetingTrackWarningIsNeutral() async throws {
+        let chrome = Meeting(title: "Call", appName: "Google Chrome", startedAt: meeting.startedAt, endedAt: meeting.endedAt)
+        _ = try await processor().process(meeting: chrome, tracks: [track(.meeting, peak: 0), track(.mic)], folder: folder, noteURL: note)
+        let expected = "No sound came from Google Chrome during this meeting, so the transcript is from your microphone only. If other people spoke, check System Settings → Privacy & Security → Screen & System Audio Recording for Lyra."
+        XCTAssertEqual(MeetingProcessor.noSoundWarning(appName: "Google Chrome"), expected)
+        XCTAssertEqual(try Meeting.load(from: folder).warnings, [expected])
+        XCTAssertTrue(try String(contentsOf: note, encoding: .utf8).contains(expected))
     }
 
     func testMeetingTrackErrorWarns() async throws {
         _ = try await processor().process(meeting: meeting, tracks: [track(.meeting, error: "tap died"), track(.mic)], folder: folder, noteURL: note)
-        XCTAssertTrue(try String(contentsOf: note, encoding: .utf8).contains("Meeting audio was silent"))
+        XCTAssertTrue(try String(contentsOf: note, encoding: .utf8).contains("No sound came from zoom.us"))
+    }
+
+    func testMicLinesShiftedByStartOffset() async throws {
+        _ = try await processor().process(meeting: meeting, tracks: [track(.meeting, startOffset: 0), track(.mic, startOffset: 2.5)],
+                                          folder: folder, noteURL: note)
+        let lines = try JSONDecoder().decode([TranscriptLine].self, from: Data(contentsOf: folder.appendingPathComponent("transcript.json")))
+        let mic = try XCTUnwrap(lines.first { $0.track == .mic })
+        XCTAssertEqual(mic.start, 3.5, accuracy: 1e-9)
+        XCTAssertEqual(mic.end, 4.5, accuracy: 1e-9)
+        XCTAssertEqual(lines.first { $0.track == .meeting }?.start, 0)
+    }
+
+    func testOldTrackWithoutOffsetDecodes() throws {
+        let json = #"{"kind":"mic","url":"file:///tmp/mic.caf","seconds":60,"peakLevel":0.4}"#
+        let track = try JSONDecoder().decode(TrackResult.self, from: Data(json.utf8))
+        XCTAssertNil(track.startOffset)
+        XCTAssertEqual(track.kind, .mic)
+    }
+
+    func testStartOffsetsRelativeToEarliestTrack() throws {
+        var meetingTrack = try track(.meeting), micTrack = try track(.mic), silent = try track(.mic)
+        meetingTrack.firstFrameTime = 100.5
+        micTrack.firstFrameTime = 98
+        let out = TrackResult.withStartOffsets([meetingTrack, micTrack, silent])
+        XCTAssertEqual(out.map(\.startOffset), [2.5, 0, nil])
+    }
+
+    func testMeetingTitleStripsBrowserSuffix() {
+        XCTAssertEqual(Meeting.title(window: "Meet - abc-defg-hij - Google Chrome", appName: "Google Chrome"), "Meet - abc-defg-hij")
+        XCTAssertEqual(Meeting.title(window: "Meet - abc - Google Chrome - Aidan", appName: "Google Chrome"), "Meet - abc")
+        XCTAssertEqual(Meeting.title(window: "Zoom Call — Safari", appName: "Safari"), "Zoom Call")
+        XCTAssertEqual(Meeting.title(window: "Teams - Microsoft Edge", appName: "Microsoft Edge"), "Teams")
+        XCTAssertEqual(Meeting.title(window: " - Brave", appName: "Brave Browser"), "Brave Browser")
+        XCTAssertEqual(Meeting.title(window: nil, appName: "zoom.us"), "zoom.us")
+        XCTAssertEqual(Meeting.title(window: "Zoom Meeting", appName: "zoom.us"), "Zoom Meeting")
     }
 
     func testMicOnlyMeeting() async throws {
@@ -159,7 +198,7 @@ final class MeetingProcessorRecoveryTests: XCTestCase {
         XCTAssertEqual(job.tracks.first { $0.kind == .meeting }?.peakLevel, 0)
         _ = try await processor.process(meeting: job.meeting, tracks: job.tracks, folder: folder, noteURL: job.note)
         let text = try String(contentsOf: job.note, encoding: .utf8)
-        XCTAssertEqual(text.components(separatedBy: "Meeting audio was silent").count, 2)  // exactly once
+        XCTAssertEqual(text.components(separatedBy: "No sound came from zoom.us").count, 2)  // exactly once
     }
 
     func testRecoveryJobThrowsWithoutMeetingJSON() throws {

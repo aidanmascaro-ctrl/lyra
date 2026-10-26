@@ -1,4 +1,5 @@
 import AVFoundation
+import LyraAudio
 import LyraCore
 import LyraSpeech
 import XCTest
@@ -50,6 +51,22 @@ final class SpeechTests: XCTestCase {
         let samples = try AudioLoader.load16kMono(url: caf)
         XCTAssertEqual(Double(samples.count) / 16_000, 43, accuracy: 1)
         XCTAssertGreaterThan(samples.map(abs).max() ?? 0, 0.1)
+    }
+
+    /// Compressed formats overestimate `length`; the read past the real end must count as end-of-file.
+    /// Encoded with Lyra's own converter, as every processed meeting is.
+    func testLoadsAACThroughEnd() async throws {
+        try requireIntegration()
+        let wav = try XCTUnwrap(Bundle.module.url(
+            forResource: "speaker-test-3-voices", withExtension: "wav", subdirectory: "Fixtures"))
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("lyra-aac-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let m4a = dir.appendingPathComponent("meeting.m4a")
+        try await M4AConverter.convert(wav, to: m4a)
+
+        let samples = try AudioLoader.load16kMono(url: m4a)
+        XCTAssertEqual(Double(samples.count) / 16_000, 43, accuracy: 1)
     }
 
     /// A call where only the right channel carries sound must not load as silence.

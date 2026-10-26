@@ -17,7 +17,9 @@ public enum AudioLoader {
         var mono: [Float] = []
         mono.reserveCapacity(Int(file.length))
         while file.framePosition < file.length {
-            try file.read(into: buffer, frameCount: chunk)
+            // Compressed files (AAC) can report more frames than they hold; a failed read once audio
+            // has arrived is the real end of the file.
+            do { try file.read(into: buffer, frameCount: chunk) } catch where !mono.isEmpty { break }
             let n = Int(buffer.frameLength)
             guard n > 0, let data = buffer.floatChannelData else { break }
             for i in 0..<n {

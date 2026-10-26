@@ -4,7 +4,11 @@ import Foundation
 /// Order matters for crash safety: convert → note → transcript.json (the "done" marker) → delete CAFs.
 public struct MeetingProcessor: Sendable {
     public static let silentPeak: Float = 0.005
-    public static let silentWarning = "Meeting audio was silent — transcript is from your microphone only. If this keeps happening, check System Settings → Privacy & Security → Screen & System Audio Recording for Lyra."
+
+    /// Neutral on purpose: a solo call is silent too, so this must not claim a permission problem.
+    public static func noSoundWarning(appName: String) -> String {
+        "No sound came from \(appName) during this meeting, so the transcript is from your microphone only. If other people spoke, check System Settings → Privacy & Security → Screen & System Audio Recording for Lyra."
+    }
 
     private let trackTranscriber: TrackTranscriber
     private let loader: @Sendable (URL) throws -> [Float]
@@ -23,7 +27,7 @@ public struct MeetingProcessor: Sendable {
     public func process(meeting: Meeting, tracks: [TrackResult], folder: URL, noteURL: URL) async throws -> URL {
         var meeting = meeting
         if let m = tracks.first(where: { $0.kind == .meeting }), m.peakLevel < Self.silentPeak || m.error != nil {
-            meeting.warn(Self.silentWarning)
+            meeting.warn(Self.noSoundWarning(appName: meeting.appName))
         }
         var lines: [TrackKind: [TranscriptLine]] = [:]
         for track in tracks {
@@ -34,7 +38,11 @@ public struct MeetingProcessor: Sendable {
                 continue
             }
             // Engine failures (e.g. models not downloaded) throw, so the folder is retried next launch.
-            lines[track.kind] = try await trackTranscriber.run(samples: samples, track: track.kind)
+            // Shift onto the shared timeline: the tracks start recording at different moments.
+            let offset = track.startOffset ?? 0
+            lines[track.kind] = try await trackTranscriber.run(samples: samples, track: track.kind).map {
+                TranscriptLine(speakerLabel: $0.speakerLabel, track: $0.track, start: $0.start + offset, end: $0.end + offset, text: $0.text)
+            }
         }
         let merged = TranscriptMerger.merge(meeting: lines[.meeting] ?? [], mic: lines[.mic] ?? [])
 
@@ -89,7 +97,9 @@ public struct MeetingProcessor: Sendable {
             guard let kind = TrackKind(rawValue: url.deletingPathExtension().lastPathComponent) else { return nil }
             let saved = meeting.tracks?.first { $0.kind == kind }
             // No saved level means Lyra died mid-recording; don't claim silence we never measured.
-            return TrackResult(kind: kind, url: url, seconds: saved?.seconds ?? 0, peakLevel: saved?.peakLevel ?? 1, error: saved?.error)
+            var track = TrackResult(kind: kind, url: url, seconds: saved?.seconds ?? 0, peakLevel: saved?.peakLevel ?? 1, error: saved?.error)
+            track.startOffset = saved?.startOffset
+            return track
         }.sorted { $0.kind.rawValue < $1.kind.rawValue }
         guard !tracks.isEmpty else {
             throw CocoaError(.fileReadNoSuchFile, userInfo: [NSLocalizedDescriptionKey: "no meeting.caf or mic.caf in \(folder.lastPathComponent)"])

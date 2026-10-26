@@ -131,12 +131,14 @@ final class FormatBridgeTests: XCTestCase {
         let input = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: 4410))
         input.frameLength = 4410
         for i in 0..<4410 { input.floatChannelData![0][i] = 0.5 * sin(Float(i) * 0.06) }
-        for _ in 0..<10 { bridge.write(input) } // 1 s of 44.1 kHz mono
+        let start = AudioConvertNanosToHostTime(5_000_000_000)
+        for i in 0..<10 { bridge.write(input, hostTime: start + UInt64(i)) } // 1 s of 44.1 kHz mono
         bridge.flush()
         let result = writer.finish(kind: .mic)
         XCTAssertNil(result.error)
         XCTAssertEqual(result.seconds, 1, accuracy: 0.005)
         XCTAssertEqual(result.peakLevel, 0.5, accuracy: 0.05)
+        XCTAssertEqual(try XCTUnwrap(result.firstFrameTime), 5, accuracy: 0.001)  // the first buffer's time is kept
         let file = try AVAudioFile(forReading: url)
         XCTAssertEqual(file.fileFormat.sampleRate, 48_000)
         XCTAssertEqual(file.fileFormat.channelCount, 2)

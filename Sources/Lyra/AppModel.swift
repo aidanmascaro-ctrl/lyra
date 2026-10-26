@@ -62,7 +62,11 @@ final class AppModel: ObservableObject {
                 prompted = user
                 let title = Self.windowTitle(for: user)
                 panel.show(app: user.appName, title: title,
-                           onAllow: { [weak self] in self?.prompted = nil; self?.startRecording(target: user, title: title) },
+                           onAllow: { [weak self] in
+                               self?.prompted = nil
+                               self?.startRecording(target: user, title: title)
+                               Self.askForWindowTitlesOnce()
+                           },
                            // Also the 60 s timeout. Frees the detector so other apps can still prompt.
                            onIgnore: { [weak self] in self?.prompted = nil; self?.detector.dismiss() })
             case .meetingEnded(let user):
@@ -72,15 +76,26 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Front window title of the meeting app (needs Screen Recording permission), else the app name.
+    /// Front window title of the app owning the meeting process (Chrome, not its audio helper), without the
+    /// browser suffix; else the app name. Window names need the Screen Recording permission.
     static func windowTitle(for user: MicUser) -> String {
+        let owner = CoreAudioMicUsage.owningApp(of: user.pid)?.processIdentifier ?? user.pid
+        // Front-to-back order, so the first match is the app's frontmost window.
         let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
-        let title = windows.first { w in
-            (w[kCGWindowLayer as String] as? Int) == 0
-                && ((w[kCGWindowOwnerPID as String] as? pid_t) == user.pid || (w[kCGWindowOwnerName as String] as? String) == user.appName)
+        let name = windows.first { w in
+            (w[kCGWindowLayer as String] as? Int) == 0 && (w[kCGWindowOwnerPID as String] as? pid_t) == owner
                 && !((w[kCGWindowName as String] as? String) ?? "").isEmpty
         }?[kCGWindowName as String] as? String
-        return title ?? user.appName
+        return Meeting.title(window: name, appName: user.appName)
+    }
+
+    /// Asks for Screen Recording (which unlocks window titles) the first time it is missing at Allow, and
+    /// never again. Called after recording has started: the system prompt must not hold it up.
+    static func askForWindowTitlesOnce() {
+        let key = "askedScreenCaptureAccess"
+        guard !CGPreflightScreenCaptureAccess(), !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        CGRequestScreenCaptureAccess()
     }
 
     // MARK: recording

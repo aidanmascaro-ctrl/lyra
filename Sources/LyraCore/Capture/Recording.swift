@@ -7,9 +7,26 @@ public struct TrackResult: Codable, Sendable {
     public let seconds: Double
     public let peakLevel: Float
     public let error: String?
+    /// Seconds after the earliest track's first frame that this track's first frame arrived; that track is 0.
+    /// Nil when the track captured nothing, or in files saved before offsets were measured: treat as 0.
+    public var startOffset: Double?
+    /// Host clock (seconds) of the first captured frame. Only meaningful live, so never saved.
+    public var firstFrameTime: Double?
+
+    private enum CodingKeys: String, CodingKey { case kind, url, seconds, peakLevel, error, startOffset }
 
     public init(kind: TrackKind, url: URL, seconds: Double, peakLevel: Float, error: String?) {
         self.kind = kind; self.url = url; self.seconds = seconds; self.peakLevel = peakLevel; self.error = error
+    }
+
+    /// Sets each track's `startOffset` from its `firstFrameTime`, relative to the earliest one.
+    public static func withStartOffsets(_ tracks: [TrackResult]) -> [TrackResult] {
+        guard let earliest = tracks.compactMap(\.firstFrameTime).min() else { return tracks }
+        return tracks.map { t in
+            var t = t
+            t.startOffset = t.firstFrameTime.map { $0 - earliest }
+            return t
+        }
     }
 }
 
