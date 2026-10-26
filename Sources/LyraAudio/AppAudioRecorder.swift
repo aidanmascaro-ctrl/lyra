@@ -15,6 +15,7 @@ public final class AppAudioRecorder: TrackRecorder {
     public init(target: MicUser) { self.target = target }
 
     public func start(writingTo url: URL) throws {
+        guard writer == nil, procID == nil else { throw AudioError(description: "app audio recorder already started") }
         let processes = matchingProcesses()
         guard !processes.isEmpty else {
             throw AudioError(description: "no Core Audio process for \(target.appName) (pid \(target.pid), bundle '\(target.bundleID)')")

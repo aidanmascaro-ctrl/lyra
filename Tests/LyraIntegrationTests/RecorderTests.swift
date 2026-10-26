@@ -1,5 +1,5 @@
 import AVFoundation
-import LyraAudio
+@testable import LyraAudio
 import LyraCore
 import XCTest
 
@@ -49,6 +49,31 @@ final class RecorderTests: XCTestCase {
         withExtendedLifetime(recorder) {}
     }
 
+    func testMicResumesAfterConfigurationChange() async throws {
+        let recorder = MicRecorder()
+        try recorder.start(writingTo: folder.appendingPathComponent("mic.caf"))
+        try await Task.sleep(for: .seconds(1))
+        // Simulate a device change: the engine stops itself, then posts the notification.
+        let engine = try XCTUnwrap(recorder.session?.engine)
+        engine.stop()
+        NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: engine)
+        try await Task.sleep(for: .seconds(2))
+        let result = await recorder.stop()
+        print("config change: seconds=\(result.seconds) error=\(result.error ?? "nil")")
+        XCTAssertNil(result.error)
+        XCTAssertGreaterThanOrEqual(result.seconds, 2.7)
+    }
+
+    func testSecondStartThrows() throws {
+        let mic = MicRecorder()
+        try mic.start(writingTo: folder.appendingPathComponent("a.caf"))
+        XCTAssertThrowsError(try mic.start(writingTo: folder.appendingPathComponent("b.caf")))
+        let app = AppAudioRecorder(target: MicUser(pid: ProcessInfo.processInfo.processIdentifier, bundleID: "", appName: "self"))
+        // Our own process has a Core Audio object because the mic engine is running.
+        try app.start(writingTo: folder.appendingPathComponent("c.caf"))
+        XCTAssertThrowsError(try app.start(writingTo: folder.appendingPathComponent("d.caf")))
+    }
+
     func testInPersonRecordsMicOnly() async throws {
         let recorder = TwoTrackRecorder(target: nil)
         try recorder.start(in: folder)
@@ -86,5 +111,29 @@ final class RecorderTests: XCTestCase {
         p.waitUntilExit()
         let data = out.fileHandleForReading.readDataToEndOfFile()
         return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+/// No hardware: converting a changed input format back into the file's original format.
+final class FormatBridgeTests: XCTestCase {
+    func testConvertsNewInputFormatIntoFileFormat() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("lyra-bridge-\(UUID().uuidString).caf")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let fileFormat = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2))
+        let inputFormat = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
+        let writer = try CAFWriter(url: url, format: fileFormat.streamDescription.pointee)
+        let bridge = try FormatBridge(from: inputFormat, to: fileFormat, writer: writer)
+        let input = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: 4410))
+        input.frameLength = 4410
+        for i in 0..<4410 { input.floatChannelData![0][i] = 0.5 * sin(Float(i) * 0.06) }
+        for _ in 0..<10 { bridge.write(input) } // 1 s of 44.1 kHz mono
+        bridge.flush()
+        let result = writer.finish(kind: .mic)
+        XCTAssertNil(result.error)
+        XCTAssertEqual(result.seconds, 1, accuracy: 0.005)
+        XCTAssertEqual(result.peakLevel, 0.5, accuracy: 0.05)
+        let file = try AVAudioFile(forReading: url)
+        XCTAssertEqual(file.fileFormat.sampleRate, 48_000)
+        XCTAssertEqual(file.fileFormat.channelCount, 2)
     }
 }

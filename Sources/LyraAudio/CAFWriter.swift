@@ -42,6 +42,9 @@ final class CAFWriter: Sendable {
         self.sampleRate = format.mSampleRate
     }
 
+    /// Seconds written so far.
+    var seconds: Double { Double(frames.load(ordering: .relaxed)) / sampleRate }
+
     /// Frame count comes from the first buffer's byte size (4 bytes per sample per channel).
     func write(_ list: UnsafePointer<AudioBufferList>) {
         let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: list))
@@ -66,7 +69,7 @@ final class CAFWriter: Sendable {
         let errors = [extraError,
                       writeStatus == noErr ? nil : "write failed (OSStatus \(writeStatus))",
                       closeStatus == noErr ? nil : "close failed (OSStatus \(closeStatus))"].compactMap { $0 }
-        return TrackResult(kind: kind, url: url, seconds: Double(frames.load(ordering: .relaxed)) / sampleRate,
+        return TrackResult(kind: kind, url: url, seconds: seconds,
                            peakLevel: Float(bitPattern: peakBits.load(ordering: .relaxed)),
                            error: errors.isEmpty ? nil : errors.joined(separator: "; "))
     }
