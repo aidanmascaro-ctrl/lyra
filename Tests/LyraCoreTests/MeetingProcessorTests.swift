@@ -68,6 +68,8 @@ final class MeetingProcessorTests: XCTestCase {
         XCTAssertEqual(speakers, [SpeakerCluster(id: "meeting:A", track: .meeting, centroid: [0, 1], speechSeconds: 100),
                                   SpeakerCluster(id: "mic:A", track: .mic, centroid: [1, 0], speechSeconds: 100)])
         XCTAssertEqual(try Meeting.load(from: folder).id, meeting.id)
+        let section = try XCTUnwrap(NoteSections.transcriptBody(of: String(contentsOf: note, encoding: .utf8)))
+        XCTAssertEqual(try Meeting.load(from: folder).transcriptSectionHash, NoteSections.hash(section))
         for kind in ["meeting", "mic"] {
             XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appendingPathComponent("\(kind).m4a").path))
             XCTAssertFalse(FileManager.default.fileExists(atPath: folder.appendingPathComponent("\(kind).caf").path))

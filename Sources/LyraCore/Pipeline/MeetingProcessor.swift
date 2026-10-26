@@ -78,8 +78,10 @@ public struct MeetingProcessor: Sendable {
             guard existing.contains("lyra_id: \(meeting.id.uuidString)") else {
                 throw CocoaError(.fileWriteFileExists, userInfo: [NSFilePathErrorKey: noteURL.path])
             }
+            meeting.transcriptSectionHash = NoteSections.transcriptBody(of: existing).map(NoteSections.hash)
         } else {
             try Self.createExclusively(Data(note.utf8), at: noteURL)
+            meeting.transcriptSectionHash = NoteSections.hash(NoteRenderer.transcriptBody(lines: merged))
         }
         try meeting.save(in: folder)
         // Before transcript.json: a crash between the two leaves no done marker, so the folder is reprocessed.

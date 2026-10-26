@@ -12,6 +12,8 @@ public struct Meeting: Codable, Sendable {
     public var warnings: [String]
     /// Each track's level and error, saved at stop so crash recovery can still spot a silent meeting track.
     public var tracks: [TrackResult]? = nil
+    /// SHA-256 hex of the note's transcript section as Lyra last wrote it; a different section means Aidan edited it.
+    public var transcriptSectionHash: String? = nil
 
     public init(id: UUID = UUID(), title: String, appName: String, bundleID: String? = nil,
                 startedAt: Date, endedAt: Date? = nil, warnings: [String] = []) {
