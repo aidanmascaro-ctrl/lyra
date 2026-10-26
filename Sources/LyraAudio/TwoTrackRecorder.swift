@@ -22,7 +22,8 @@ public final class TwoTrackRecorder {
         recorders = started
     }
 
-    public func stop() async -> [TrackResult] {
+    /// Runs on the caller's actor, so a @MainActor owner can await it without sending the recorder.
+    nonisolated(nonsending) public func stop() async -> [TrackResult] {
         var results: [TrackResult] = []
         for recorder in recorders { results.append(await recorder.stop()) }
         recorders = []

@@ -16,5 +16,5 @@ public struct TrackResult: Sendable {
 /// Records one audio source to a file. `start` throws if capture cannot begin; `stop` always returns a result.
 public protocol TrackRecorder: AnyObject {
     func start(writingTo url: URL) throws
-    func stop() async -> TrackResult
+    nonisolated(nonsending) func stop() async -> TrackResult
 }

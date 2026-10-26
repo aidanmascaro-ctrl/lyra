@@ -19,7 +19,7 @@ public final class MicRecorder: TrackRecorder {
         self.session = session
     }
 
-    public func stop() async -> TrackResult {
+    nonisolated(nonsending) public func stop() async -> TrackResult {
         guard let session else {
             return TrackResult(kind: .mic, url: URL(fileURLWithPath: "/dev/null"), seconds: 0, peakLevel: 0, error: "not recording")
         }

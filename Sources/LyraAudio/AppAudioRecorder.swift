@@ -53,7 +53,7 @@ public final class AppAudioRecorder: TrackRecorder {
         }
     }
 
-    public func stop() async -> TrackResult {
+    nonisolated(nonsending) public func stop() async -> TrackResult {
         teardown() ?? TrackResult(kind: .meeting, url: URL(fileURLWithPath: "/dev/null"), seconds: 0, peakLevel: 0, error: "not recording")
     }
 
