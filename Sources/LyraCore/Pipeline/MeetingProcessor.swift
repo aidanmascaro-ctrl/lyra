@@ -73,7 +73,9 @@ public struct MeetingProcessor: Sendable {
         }
         try meeting.save(in: folder)
         // Before transcript.json: a crash between the two leaves no done marker, so the folder is reprocessed.
-        let speakers = (clusters[.meeting] ?? []) + (clusters[.mic] ?? [])
+        // Only clusters with a line left after the echo filter: an echo-only mic cluster is the remote voice leaking in.
+        let kept = Set(merged.compactMap(\.speakerID))
+        let speakers = ((clusters[.meeting] ?? []) + (clusters[.mic] ?? [])).filter { kept.contains($0.id) }
         try Self.encoder.encode(speakers).write(to: folder.appendingPathComponent("speakers.json"), options: .atomic)
         try Self.encoder.encode(merged).write(to: folder.appendingPathComponent("transcript.json"), options: .atomic)
         // Only now is the meeting safe without its CAFs; a crash before this point reprocesses the folder.

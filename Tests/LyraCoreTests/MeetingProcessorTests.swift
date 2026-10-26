@@ -7,10 +7,10 @@ private struct FakeDiarizer: SpeakerDiarizing {
     }
 }
 
-/// The first sample says which track this is: 1 = meeting, 2 = mic.
+/// The first sample says which track this is: 1 = meeting, 2 = mic, 3 = mic hearing only the call's echo.
 private struct FakeTranscriber: SpeechTranscribing {
     func transcribe(samples: [Float]) async throws -> [TimedWord] {
-        samples.first == 1
+        samples.first == 1 || samples.first == 3
             ? [TimedWord(text: "hello", start: 0, end: 0.5), TimedWord(text: "from", start: 0.5, end: 1), TimedWord(text: "zoom", start: 1, end: 1.5)]
             : [TimedWord(text: "hi", start: 1, end: 1.5), TimedWord(text: "back", start: 1.5, end: 2)]
     }
@@ -68,6 +68,17 @@ final class MeetingProcessorTests: XCTestCase {
             XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appendingPathComponent("\(kind).m4a").path))
             XCTAssertFalse(FileManager.default.fileExists(atPath: folder.appendingPathComponent("\(kind).caf").path))
         }
+    }
+
+    /// An echo-only mic cluster is the remote voice leaking into the mic; it must not be saved as a mic speaker.
+    func testEchoOnlyMicClusterNotSaved() async throws {
+        let mic = try track(.mic)
+        try Data([3]).write(to: mic.url)
+        _ = try await processor().process(meeting: meeting, tracks: [track(.meeting), mic], folder: folder, noteURL: note)
+        let lines = try JSONDecoder().decode([TranscriptLine].self, from: Data(contentsOf: folder.appendingPathComponent("transcript.json")))
+        XCTAssertEqual(lines.map(\.speakerID), ["meeting:A"])
+        let speakers = try JSONDecoder().decode([SpeakerCluster].self, from: Data(contentsOf: folder.appendingPathComponent("speakers.json")))
+        XCTAssertEqual(speakers.map(\.id), ["meeting:A"])
     }
 
     func testSilentMeetingTrackWarningIsNeutral() async throws {

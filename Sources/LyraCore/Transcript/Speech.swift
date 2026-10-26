@@ -20,6 +20,26 @@ public struct Diarization: Sendable {
     public init(turns: [SpeakerTurn], centroids: [String: [Float]]) {
         self.turns = turns; self.centroids = centroids
     }
+
+    /// One unit-length fingerprint per speaker in `segments`: the engine's `database` vector if it has a
+    /// non-empty one, else the mean of that speaker's segment embeddings. Skipped when the vector is empty,
+    /// all zero or non-finite, or the segment embeddings disagree on dimension.
+    public static func normalisedCentroids(database: [String: [Float]]?,
+                                           segments: [(speaker: String, embedding: [Float])]) -> [String: [Float]] {
+        var out: [String: [Float]] = [:]
+        for speaker in Set(segments.map(\.speaker)) {
+            var v = database?[speaker] ?? []
+            if v.isEmpty {
+                let embeddings = segments.filter { $0.speaker == speaker }.map(\.embedding)
+                guard let first = embeddings.first, embeddings.allSatisfy({ $0.count == first.count }) else { continue }
+                v = embeddings.dropFirst().reduce(first) { zip($0, $1).map(+) }  // the mean's direction; scale goes below
+            }
+            let norm = v.reduce(0) { $0 + $1 * $1 }.squareRoot()
+            guard norm > 0, norm.isFinite else { continue }  // also catches NaN, empty and all-zero
+            out[speaker] = v.map { $0 / norm }
+        }
+        return out
+    }
 }
 
 /// Splits 16 kHz mono audio into speaker turns.

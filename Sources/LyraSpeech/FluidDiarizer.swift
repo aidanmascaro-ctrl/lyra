@@ -25,24 +25,9 @@ public struct FluidDiarizer: SpeakerDiarizing {
         let turns = result.segments.map {
             SpeakerTurn(speaker: $0.speakerId, start: Double($0.startTimeSeconds), end: Double($0.endTimeSeconds))
         }
-        return Diarization(turns: turns, centroids: Self.centroids(result))
-    }
-
-    /// One unit-length fingerprint per speaker: FluidAudio's `speakerDatabase` (a plain, un-normalised mean,
-    /// keyed by `segment.speakerId`), else the mean of that speaker's segment embeddings. Empty or all-zero is skipped.
-    static func centroids(_ result: DiarizationResult) -> [String: [Float]] {
-        var out: [String: [Float]] = [:]
-        for speaker in Set(result.segments.map(\.speakerId)) {
-            var v = result.speakerDatabase?[speaker] ?? []
-            if v.isEmpty {
-                let embeddings = result.segments.filter { $0.speakerId == speaker && !$0.embedding.isEmpty }.map(\.embedding)
-                guard let first = embeddings.first, embeddings.allSatisfy({ $0.count == first.count }) else { continue }
-                v = embeddings.dropFirst().reduce(first) { zip($0, $1).map(+) }
-            }
-            let norm = v.reduce(0) { $0 + $1 * $1 }.squareRoot()
-            guard norm > 0, norm.isFinite else { continue }
-            out[speaker] = v.map { $0 / norm }
-        }
-        return out
+        // speakerDatabase is FluidAudio's plain (un-normalised) per-speaker mean, keyed by segment.speakerId.
+        let centroids = Diarization.normalisedCentroids(
+            database: result.speakerDatabase, segments: result.segments.map { ($0.speakerId, $0.embedding) })
+        return Diarization(turns: turns, centroids: centroids)
     }
 }
