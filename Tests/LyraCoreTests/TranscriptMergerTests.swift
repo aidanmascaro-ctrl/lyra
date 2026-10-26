@@ -48,7 +48,14 @@ final class TranscriptMergerTests: XCTestCase {
 
     func testKeepsMicLineOutsideWindowBoundary() {
         let m = [line("meeting:0", .meeting, 10, 13, "we move it to friday afternoon")]
-        let mic = [line("mic:0", .mic, 15.01, 17, "move it to friday afternoon")]
+        let mic = [line("mic:0", .mic, 13.51, 17, "move it to friday afternoon")]  // echo pad is 0.5 s
+        XCTAssertEqual(TranscriptMerger.merge(meeting: m, mic: mic).count, 2)
+    }
+
+    /// A real reply right after a question shares stopwords ("think we should do") but isn't an echo.
+    func testKeepsReplyThatReusesQuestionWords() {
+        let m = [line("meeting:0", .meeting, 10, 15, "do you think we should do the friday shoot or is that too soon for you")]
+        let mic = [line("mic:0", .mic, 15.5, 17, "yeah i think we should do that")]
         XCTAssertEqual(TranscriptMerger.merge(meeting: m, mic: mic).count, 2)
     }
 }

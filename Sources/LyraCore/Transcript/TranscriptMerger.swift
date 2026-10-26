@@ -1,15 +1,21 @@
 import Foundation
 
 public enum TranscriptMerger {
+    /// Echo reaches the mic at the same moment the call plays it, so only near-simultaneous lines can be echo.
+    static let echoPad = 0.5
+
     /// Merges both tracks, drops mic lines that are an echo of the call, and relabels speakers.
+    /// A mic line (3+ words) is echo when ≥ 60% of its word pairs appear in call lines overlapping it in time.
+    /// Word pairs, not single words: a reply reuses the question's stopwords, but not its phrasing.
     public static func merge(meeting: [TranscriptLine], mic: [TranscriptLine]) -> [TranscriptLine] {
-        let meetingWords = meeting.map { words($0.text) }
+        let meetingPairs = meeting.map { Set(bigrams(words($0.text))) }
         let keptMic = mic.filter { m in
             let mw = words(m.text)
             guard mw.count >= 3 else { return true }
-            let union = meeting.indices.filter { m.start <= meeting[$0].end + 2 && m.end >= meeting[$0].start - 2 }
-                .reduce(into: Set<String>()) { $0.formUnion(meetingWords[$1]) }
-            return Double(mw.intersection(union).count) / Double(mw.count) < 0.6
+            let heard = meeting.indices.filter { m.start <= meeting[$0].end + echoPad && m.end >= meeting[$0].start - echoPad }
+                .reduce(into: Set<String>()) { $0.formUnion(meetingPairs[$1]) }
+            let pairs = bigrams(mw)
+            return Double(pairs.filter(heard.contains).count) / Double(pairs.count) < 0.6
         }
         // Stable sort is not guaranteed by sort(by:), so break ties explicitly: meeting before mic.
         let sorted = (meeting + keptMic).enumerated().sorted { a, b in
@@ -28,8 +34,12 @@ public enum TranscriptMerger {
         }
     }
 
-    private static func words(_ text: String) -> Set<String> {
+    private static func words(_ text: String) -> [String] {
         let cleaned = text.lowercased().unicodeScalars.map { CharacterSet.alphanumerics.contains($0) || CharacterSet.whitespaces.contains($0) ? Character($0) : " " }
-        return Set(String(cleaned).split(whereSeparator: \.isWhitespace).map(String.init))
+        return String(cleaned).split(whereSeparator: \.isWhitespace).map(String.init)
+    }
+
+    private static func bigrams(_ words: [String]) -> [String] {
+        zip(words, words.dropFirst()).map { "\($0) \($1)" }
     }
 }
