@@ -5,7 +5,7 @@ import LyraCore
 import XCTest
 
 /// A file that stops delivering frames after its first read, without throwing: a short read mid-file.
-private final class StallingFile: AVAudioFile {
+private final class StallingFile: AVAudioFile, @unchecked Sendable {
     private var reads = 0
     override func read(into buffer: AVAudioPCMBuffer, frameCount frames: AVAudioFrameCount) throws {
         reads += 1

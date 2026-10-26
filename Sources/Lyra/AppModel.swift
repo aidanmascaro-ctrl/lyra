@@ -11,16 +11,20 @@ final class AppModel: ObservableObject {
     @Published private(set) var recordingSince: Date?
     @Published private(set) var state = RecordingState()
     @Published private(set) var processingCount = 0
-    @Published private(set) var lastNote: URL?
+    /// Newest processed meeting folder, for "Open last meeting". Found at launch and again as each meeting finishes.
+    @Published private(set) var lastMeeting: URL?
+    /// The meeting the meeting window shows; set just before it opens.
+    @Published var shownMeeting: URL?
     @Published private(set) var lastError: String?
     @Published private(set) var now = Date()
 
-    private let paths = MeetingPaths(recordingsRoot: MeetingPaths.defaultRecordingsRoot, notesDir: MeetingPaths.defaultNotesDir)
+    let paths = MeetingPaths(recordingsRoot: MeetingPaths.defaultRecordingsRoot, notesDir: MeetingPaths.defaultNotesDir)
+    /// The one people store: processing, enrolment and renames all share it, so a new voice is used by the next meeting.
+    /// An unreadable store loads as nobody (naming finds no one) and refuses writes with a plain-English error.
+    let people = PeopleStore(fileURL: PeopleStore.defaultURL)
     // One transcriber for the app's lifetime: it loads its models once.
-    // An unreadable people store loads as nobody, so naming just finds no one.
-    private let processor: MeetingProcessor = {
-        let people = PeopleStore(fileURL: PeopleStore.defaultURL)
-        return MeetingProcessor(
+    private lazy var processor: MeetingProcessor = { [people] in
+        MeetingProcessor(
             trackTranscriber: TrackTranscriber(diarizer: FluidDiarizer(), transcriber: FluidTranscriber()),
             loader: { try AudioLoader.load16kMono(url: $0) },
             convert: M4AConverter.convert,
@@ -35,6 +39,7 @@ final class AppModel: ObservableObject {
     private var poller: Task<Void, Never>?
 
     func launch() {
+        lastMeeting = MeetingOverview.lastFolder(in: paths.recordingsRoot)
         recoverUnprocessed()
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
@@ -174,7 +179,7 @@ final class AppModel: ObservableObject {
     private func finished(_ result: Result<URL, Error>, folder: URL) {
         processingCount -= 1
         switch result {
-        case .success(let note): lastNote = note
+        case .success: lastMeeting = MeetingOverview.lastFolder(in: paths.recordingsRoot)  // a recovered meeting may be older
         case .failure(let error): report("Processing \(folder.lastPathComponent) failed (will retry next launch): \(error.localizedDescription)")
         }
     }

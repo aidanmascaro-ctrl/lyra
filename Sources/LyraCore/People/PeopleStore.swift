@@ -1,7 +1,17 @@
 import Foundation
 
-public enum PeopleStoreError: Error, Equatable {
+public enum PeopleStoreError: Error, Equatable, LocalizedError {
     case badSample, emptyName, dimensionMismatch, unknownPerson, nameTaken
+
+    public var errorDescription: String? {
+        switch self {
+        case .badSample: "Lyra couldn't get a usable voice sample from that audio."
+        case .emptyName: "Type a name first."
+        case .dimensionMismatch: "This voice sample doesn't fit the ones already saved for that person."
+        case .unknownPerson: "That person isn't in Lyra's list of voices any more."
+        case .nameTaken: "Someone else already has that name."
+        }
+    }
 }
 
 /// Local voice-print database. Biometric data: lives only under Application Support, mode 0600.
