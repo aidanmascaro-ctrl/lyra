@@ -4,7 +4,7 @@ public enum TranscriptMerger {
     /// Echo reaches the mic at the same moment the call plays it, so only near-simultaneous lines can be echo.
     static let echoPad = 0.5
 
-    /// Merges both tracks, drops mic lines that are an echo of the call, and relabels speakers.
+    /// Merges both tracks, drops mic lines that are an echo of the call, and relabels speakers (the raw id stays in `speakerID`).
     /// A mic line (3+ words) is echo when ≥ 60% of its word pairs appear in call lines overlapping it in time.
     /// Word pairs, not single words: a reply reuses the question's stopwords, but not its phrasing.
     public static func merge(meeting: [TranscriptLine], mic: [TranscriptLine]) -> [TranscriptLine] {
@@ -27,6 +27,7 @@ public enum TranscriptMerger {
         var numbers: [String: Int] = [:]
         return sorted.map { line in
             var out = line
+            out.speakerID = line.speakerID ?? line.speakerLabel  // keep the raw id through the relabel
             let n = numbers[line.speakerLabel] ?? numbers.count + 1
             numbers[line.speakerLabel] = n
             out.speakerLabel = "Speaker \(n)"

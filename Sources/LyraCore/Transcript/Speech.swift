@@ -11,9 +11,20 @@ public struct SpeakerTurn: Sendable {
     }
 }
 
+/// Speaker turns plus one voice fingerprint per cluster.
+public struct Diarization: Sendable {
+    public let turns: [SpeakerTurn]
+    /// Raw cluster id (as in `SpeakerTurn.speaker`) → L2-normalised embedding.
+    public let centroids: [String: [Float]]
+
+    public init(turns: [SpeakerTurn], centroids: [String: [Float]]) {
+        self.turns = turns; self.centroids = centroids
+    }
+}
+
 /// Splits 16 kHz mono audio into speaker turns.
 public protocol SpeakerDiarizing: Sendable {
-    func diarize(samples: [Float]) async throws -> [SpeakerTurn]
+    func diarize(samples: [Float]) async throws -> Diarization
 }
 
 /// One recognised word. Times are seconds from the start of the samples passed in.

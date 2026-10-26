@@ -23,7 +23,7 @@ final class SpeechTests: XCTestCase {
 
         let started = Date()
         let lines = try await TrackTranscriber(diarizer: FluidDiarizer(), transcriber: FluidTranscriber())
-            .run(samples: samples, track: .meeting)
+            .run(samples: samples, track: .meeting).lines
         print("speech: \(Date().timeIntervalSince(started)) s")
         for line in lines {
             print(String(format: "speech: [%@] %.2f-%.2f %@", line.speakerLabel, line.start, line.end, line.text))
@@ -40,8 +40,32 @@ final class SpeechTests: XCTestCase {
     /// An all-zeros track (what a missing Audio Capture permission records) is no speakers, not an error.
     func testDiarizerOnSilenceIsEmpty() async throws {
         try requireIntegration()
-        let turns = try await FluidDiarizer().diarize(samples: [Float](repeating: 0, count: 160_000))
-        XCTAssertTrue(turns.isEmpty)
+        let result = try await FluidDiarizer().diarize(samples: [Float](repeating: 0, count: 160_000))
+        XCTAssertTrue(result.turns.isEmpty)
+        XCTAssertTrue(result.centroids.isEmpty)
+    }
+
+    /// Every speaker in the fixture gets a unit-length fingerprint of the engine's dimension.
+    func testFixtureClustersHaveCentroids() async throws {
+        try requireIntegration()
+        let url = try XCTUnwrap(Bundle.module.url(
+            forResource: "speaker-test-3-voices", withExtension: "wav", subdirectory: "Fixtures"))
+        let samples = try AudioLoader.load16kMono(url: url)
+        let raw = try await FluidDiarizer().diarize(samples: samples)
+        XCTAssertEqual(Set(raw.centroids.keys), Set(raw.turns.map(\.speaker)))
+
+        let clusters = try await TrackTranscriber(diarizer: FluidDiarizer(), transcriber: FluidTranscriber())
+            .run(samples: samples, track: .meeting).clusters
+        let dims = Set(clusters.map(\.centroid.count))
+        print("speech: clusters = \(clusters.count), centroid dimension = \(dims.sorted())")
+        XCTAssertGreaterThanOrEqual(clusters.count, 2)
+        XCTAssertEqual(dims.count, 1)
+        XCTAssertGreaterThan(dims.first ?? 0, 0)
+        for cluster in clusters {
+            XCTAssertTrue(cluster.id.hasPrefix("meeting:"), cluster.id)
+            XCTAssertEqual(cluster.centroid.reduce(0) { $0 + $1 * $1 }.squareRoot(), 1, accuracy: 1e-3, cluster.id)
+            XCTAssertGreaterThan(cluster.speechSeconds, 0)
+        }
     }
 
     func testLoadsStereo48kCAF() throws {

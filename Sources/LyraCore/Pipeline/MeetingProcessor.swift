@@ -1,7 +1,7 @@
 import Foundation
 
 /// Turns a finished recording folder into a transcript, a note and compressed audio.
-/// Order matters for crash safety: convert → note → transcript.json (the "done" marker) → delete CAFs.
+/// Order matters for crash safety: convert → note → speakers.json → transcript.json (the "done" marker) → delete CAFs.
 public struct MeetingProcessor: Sendable {
     public static let silentPeak: Float = 0.005
 
@@ -30,6 +30,7 @@ public struct MeetingProcessor: Sendable {
             meeting.warn(Self.noSoundWarning(appName: meeting.appName))
         }
         var lines: [TrackKind: [TranscriptLine]] = [:]
+        var clusters: [TrackKind: [SpeakerCluster]] = [:]
         for track in tracks {
             let samples: [Float]
             do { samples = try loader(track.url) } catch {
@@ -40,9 +41,9 @@ public struct MeetingProcessor: Sendable {
             // Engine failures (e.g. models not downloaded) throw, so the folder is retried next launch.
             // Shift onto the shared timeline: the tracks start recording at different moments.
             let offset = track.startOffset ?? 0
-            lines[track.kind] = try await trackTranscriber.run(samples: samples, track: track.kind).map {
-                TranscriptLine(speakerLabel: $0.speakerLabel, track: $0.track, start: $0.start + offset, end: $0.end + offset, text: $0.text)
-            }
+            let result = try await trackTranscriber.run(samples: samples, track: track.kind)
+            lines[track.kind] = result.lines.map { var l = $0; l.start += offset; l.end += offset; return l }
+            clusters[track.kind] = result.clusters
         }
         let merged = TranscriptMerger.merge(meeting: lines[.meeting] ?? [], mic: lines[.mic] ?? [])
 
@@ -71,6 +72,9 @@ public struct MeetingProcessor: Sendable {
             try Self.createExclusively(Data(note.utf8), at: noteURL)
         }
         try meeting.save(in: folder)
+        // Before transcript.json: a crash between the two leaves no done marker, so the folder is reprocessed.
+        let speakers = (clusters[.meeting] ?? []) + (clusters[.mic] ?? [])
+        try Self.encoder.encode(speakers).write(to: folder.appendingPathComponent("speakers.json"), options: .atomic)
         try Self.encoder.encode(merged).write(to: folder.appendingPathComponent("transcript.json"), options: .atomic)
         // Only now is the meeting safe without its CAFs; a crash before this point reprocesses the folder.
         for caf in converted { try? FileManager.default.removeItem(at: caf) }

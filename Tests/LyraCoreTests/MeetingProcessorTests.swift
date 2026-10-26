@@ -2,7 +2,9 @@ import LyraCore
 import XCTest
 
 private struct FakeDiarizer: SpeakerDiarizing {
-    func diarize(samples: [Float]) async throws -> [SpeakerTurn] { [SpeakerTurn(speaker: "A", start: 0, end: 100)] }
+    func diarize(samples: [Float]) async throws -> Diarization {
+        Diarization(turns: [SpeakerTurn(speaker: "A", start: 0, end: 100)], centroids: ["A": [0, 1]])
+    }
 }
 
 /// The first sample says which track this is: 1 = meeting, 2 = mic.
@@ -57,6 +59,10 @@ final class MeetingProcessorTests: XCTestCase {
         let lines = try JSONDecoder().decode([TranscriptLine].self, from: Data(contentsOf: folder.appendingPathComponent("transcript.json")))
         XCTAssertEqual(lines.map(\.text), ["hello from zoom", "hi back"])
         XCTAssertEqual(lines.map(\.speakerLabel), ["Speaker 1", "Speaker 2"])
+        XCTAssertEqual(lines.map(\.speakerID), ["meeting:A", "mic:A"])
+        let speakers = try JSONDecoder().decode([SpeakerCluster].self, from: Data(contentsOf: folder.appendingPathComponent("speakers.json")))
+        XCTAssertEqual(speakers, [SpeakerCluster(id: "meeting:A", track: .meeting, centroid: [0, 1], speechSeconds: 100),
+                                  SpeakerCluster(id: "mic:A", track: .mic, centroid: [0, 1], speechSeconds: 100)])
         XCTAssertEqual(try Meeting.load(from: folder).id, meeting.id)
         for kind in ["meeting", "mic"] {
             XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appendingPathComponent("\(kind).m4a").path))
