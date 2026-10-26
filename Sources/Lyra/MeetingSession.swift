@@ -12,7 +12,7 @@ final class MeetingSession {
     private let recorder: TwoTrackRecorder
 
     /// Reserves the folder, writes `meeting.json` (so a crash can be recovered), then starts recording.
-    /// Retries for ~3 s: the meeting app's Core Audio process object can take ~2 s to appear.
+    /// If the meeting app's audio can't be captured, records the mic alone and saves why in `meeting.json`.
     init(meeting: Meeting, target: MicUser?, paths: MeetingPaths) async throws {
         self.meeting = meeting
         self.target = target
@@ -20,13 +20,9 @@ final class MeetingSession {
         recorder = TwoTrackRecorder(target: target)
         do {
             try meeting.save(in: folder)
-            var attempt = 0
-            while true {
-                do { try recorder.start(in: folder); break } catch {
-                    attempt += 1
-                    guard attempt < 12 else { throw error }
-                    try await Task.sleep(for: .milliseconds(250))
-                }
+            if let warning = try await recorder.start(in: folder) {
+                self.meeting.warnings.append(warning)
+                try? self.meeting.save(in: folder)  // stop() saves it again
             }
         } catch {
             try? FileManager.default.removeItem(at: folder)  // nothing was recorded; free the name

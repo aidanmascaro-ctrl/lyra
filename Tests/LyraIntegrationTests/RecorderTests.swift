@@ -76,7 +76,8 @@ final class RecorderTests: XCTestCase {
 
     func testInPersonRecordsMicOnly() async throws {
         let recorder = TwoTrackRecorder(target: nil)
-        try recorder.start(in: folder)
+        let warning = try await recorder.start(in: folder)
+        XCTAssertNil(warning)
         try await Task.sleep(for: .seconds(1))
         let results = await recorder.stop()
         XCTAssertEqual(results.map(\.kind), [.mic])
@@ -135,5 +136,62 @@ final class FormatBridgeTests: XCTestCase {
         let file = try AVAudioFile(forReading: url)
         XCTAssertEqual(file.fileFormat.sampleRate, 48_000)
         XCTAssertEqual(file.fileFormat.channelCount, 2)
+    }
+}
+
+/// No hardware: fake recorders behind TwoTrackRecorder's seam.
+final class TwoTrackRecorderTests: XCTestCase {
+    private final class FakeRecorder: TrackRecorder {
+        let kind: TrackKind
+        let fails: Bool
+        var url: URL?
+        init(_ kind: TrackKind, fails: Bool) { self.kind = kind; self.fails = fails }
+        func start(writingTo url: URL) throws {
+            if fails {
+                FileManager.default.createFile(atPath: url.path, contents: nil)  // like a half-opened CAF
+                throw AudioError(description: "no Core Audio process for zoom.us")
+            }
+            self.url = url
+        }
+        func stop() async -> TrackResult { TrackResult(kind: kind, url: url!, seconds: 1, peakLevel: 0.5, error: nil) }
+    }
+
+    private let zoom = MicUser(pid: 100, bundleID: "us.zoom.xos", appName: "zoom.us")
+    private var folder: URL!
+
+    override func setUp() {
+        folder = FileManager.default.temporaryDirectory.appendingPathComponent("lyra-2t-\(UUID().uuidString)")
+    }
+
+    override func tearDown() { try? FileManager.default.removeItem(at: folder) }
+
+    func testMeetingTrackFailureRecordsMicOnlyWithWarning() async throws {
+        var meetingAttempts = 0
+        let recorder = TwoTrackRecorder(target: zoom, meeting: { _ in meetingAttempts += 1; return FakeRecorder(.meeting, fails: true) },
+                                        mic: { FakeRecorder(.mic, fails: false) }, retryDelay: .zero)
+        let warning = try await recorder.start(in: folder)
+        XCTAssertEqual(warning, "Couldn't capture zoom.us audio: no Core Audio process for zoom.us. Transcript is from your microphone only.")
+        XCTAssertEqual(meetingAttempts, 12)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.appendingPathComponent("meeting.caf").path))
+        let results = await recorder.stop()
+        XCTAssertEqual(results.map(\.kind), [.mic])
+    }
+
+    func testMeetingTrackRetriesThenRecordsBoth() async throws {
+        var meetingAttempts = 0
+        let recorder = TwoTrackRecorder(target: zoom, meeting: { _ in meetingAttempts += 1; return FakeRecorder(.meeting, fails: meetingAttempts < 3) },
+                                        mic: { FakeRecorder(.mic, fails: false) }, retryDelay: .zero)
+        let warning = try await recorder.start(in: folder)
+        XCTAssertNil(warning)
+        let results = await recorder.stop()
+        XCTAssertEqual(results.map(\.kind), [.meeting, .mic])
+    }
+
+    func testMicFailureThrows() async throws {
+        let recorder = TwoTrackRecorder(target: zoom, meeting: { _ in FakeRecorder(.meeting, fails: false) },
+                                        mic: { FakeRecorder(.mic, fails: true) }, retryDelay: .zero)
+        do { _ = try await recorder.start(in: folder); XCTFail("expected a throw") } catch {}
+        let results = await recorder.stop()
+        XCTAssertEqual(results.count, 0)
     }
 }
