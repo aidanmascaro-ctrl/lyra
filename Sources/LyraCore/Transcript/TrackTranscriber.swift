@@ -1,6 +1,6 @@
 import Foundation
 
-/// Diarizes one track, transcribes the whole track once, then gives each word to a speaker.
+/// Transcribes one track once, diarizes it, then gives each word to a speaker.
 /// Nothing the recogniser hears is dropped: a word outside every turn goes to the nearest one.
 public struct TrackTranscriber: Sendable {
     static let maxPause = 1.5  // seconds; a longer gap between words starts a new line
@@ -15,8 +15,9 @@ public struct TrackTranscriber: Sendable {
 
     /// `sampleRate` is kept for callers; word times come back from the transcriber in seconds.
     public func run(samples: [Float], track: TrackKind, sampleRate: Double = 16_000) async throws -> [TranscriptLine] {
-        let turns = try await diarizer.diarize(samples: samples)
         let words = try await transcriber.transcribe(samples: samples)
+        guard !words.isEmpty else { return [] }  // a silent track: nothing to attribute, so don't diarize
+        let turns = try await diarizer.diarize(samples: samples)
 
         var lines: [TranscriptLine] = []
         for word in words {

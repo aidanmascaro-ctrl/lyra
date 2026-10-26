@@ -27,6 +27,13 @@ final class SpeechTests: XCTestCase {
         XCTAssertTrue(text.contains("gear list"), text)
     }
 
+    /// An all-zeros track (what a missing Audio Capture permission records) is no speakers, not an error.
+    func testDiarizerOnSilenceIsEmpty() async throws {
+        try requireIntegration()
+        let turns = try await FluidDiarizer().diarize(samples: [Float](repeating: 0, count: 160_000))
+        XCTAssertTrue(turns.isEmpty)
+    }
+
     func testLoadsStereo48kCAF() throws {
         try requireIntegration()
         let wav = try XCTUnwrap(Bundle.module.url(

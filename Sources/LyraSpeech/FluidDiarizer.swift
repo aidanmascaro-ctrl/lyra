@@ -16,8 +16,12 @@ public struct FluidDiarizer: SpeakerDiarizing {
         // Keep one alive behind a lock if per-track load time ever matters.
         let manager = OfflineDiarizerManager(config: config)
         try await manager.prepareModels()
-        return try await manager.process(audio: samples).segments.map {
-            SpeakerTurn(speaker: $0.speakerId, start: Double($0.startTimeSeconds), end: Double($0.endTimeSeconds))
+        do {
+            return try await manager.process(audio: samples).segments.map {
+                SpeakerTurn(speaker: $0.speakerId, start: Double($0.startTimeSeconds), end: Double($0.endTimeSeconds))
+            }
+        } catch OfflineDiarizationError.noSpeechDetected {
+            return []  // silence (e.g. no Audio Capture permission) is an empty result, not a failure
         }
     }
 }

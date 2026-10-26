@@ -11,6 +11,14 @@ private struct FakeTranscriber: SpeechTranscribing {
     func transcribe(samples: [Float]) async throws -> [TimedWord] { words }
 }
 
+/// Fails the test if called: a track with no words must never reach the diarizer.
+private struct ExplodingDiarizer: SpeakerDiarizing {
+    func diarize(samples: [Float]) async throws -> [SpeakerTurn] {
+        XCTFail("diarizer called for a track with no words")
+        return []
+    }
+}
+
 private func w(_ text: String, _ start: Double, _ end: Double) -> TimedWord { TimedWord(text: text, start: start, end: end) }
 private func t(_ speaker: String, _ start: Double, _ end: Double) -> SpeakerTurn { SpeakerTurn(speaker: speaker, start: start, end: end) }
 
@@ -57,6 +65,12 @@ final class TrackTranscriberTests: XCTestCase {
 
     func testNoWordsIsEmpty() async throws {
         let lines = try await run([t("A", 0, 2)], [])
+        XCTAssertEqual(lines, [])
+    }
+
+    func testNoWordsNeverCallsDiarizer() async throws {
+        let lines = try await TrackTranscriber(diarizer: ExplodingDiarizer(), transcriber: FakeTranscriber(words: []))
+            .run(samples: [Float](repeating: 0, count: 160_000), track: .meeting)
         XCTAssertEqual(lines, [])
     }
 }
