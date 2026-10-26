@@ -92,3 +92,28 @@ pause > 1.5 s. Default diarizer config, Parakeet Ultra, `language: .english`.
   which keeps only the left channel. A file with silence left / 440 Hz right loaded as pure
   silence (peak 0.0). `AudioLoader` now averages all channels itself (peak 0.25 for 0 + 0.5).
 - Warm run: 1.6 s for the 43 s fixture.
+
+## Task 7 — Phase 2 handoff (2026-10-27)
+
+What Phase 2 needs to know about how Phase 1 ships:
+
+- **Quitting defers processing.** Quit only finalises the CAFs. The folder is picked up by
+  crash recovery (`MeetingProcessor.pendingFolders`) and processed on the next launch.
+- **`meeting.json` has a `tracks` field.** Each track's seconds, peak level and error, saved at
+  stop, so a recovered meeting still gets its silent-track warning. A missing `tracks` means
+  Lyra died mid-recording; recovery then assumes "not silent" rather than claim silence it
+  never measured.
+- **`transcript.json` keeps only "Speaker N".** The raw `track:cluster` ids
+  (`meeting:S1`, `mic:0`) are discarded by `TranscriptMerger`. Phase 2 rename and voice
+  fingerprints will want them — keep them alongside the display label before building either.
+- **Only M4A remains after processing.** The CAFs are deleted once the note and
+  `transcript.json` exist. `AudioLoader` fails at end-of-file on AAC (deferred). Fix that
+  before re-diarizing any past meeting.
+- **Models download on first processing.** FluidAudio fetches its ASR and diarizer models the
+  first time a meeting is processed. Offline on that first run, processing throws and the
+  folder is retried on the next launch.
+- **A meeting-audio tap that won't start no longer loses the meeting.** After ~3 s of retries
+  Lyra records the mic alone and the note carries "Couldn't capture <app> audio: … Transcript
+  is from your microphone only."
+- **Acceptance tip:** in a real call, stay muted in the call app for 30 s and check the meeting
+  doesn't end early. Detection rides on the app holding the mic, not on anyone speaking.
