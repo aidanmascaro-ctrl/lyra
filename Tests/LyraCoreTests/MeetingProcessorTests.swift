@@ -39,14 +39,15 @@ final class MeetingProcessorTests: XCTestCase {
         return result
     }
 
-    private func processor(convertFails: Bool = false) -> MeetingProcessor {
+    private func processor(convertFails: Bool = false, people: [Person] = []) -> MeetingProcessor {
         MeetingProcessor(
             trackTranscriber: TrackTranscriber(diarizer: FakeDiarizer(), transcriber: FakeTranscriber()),
             loader: { url in [Float(try Data(contentsOf: url).first ?? 0)] },
             convert: { from, to in
                 if convertFails { throw CocoaError(.fileWriteUnknown) }
                 try Data(contentsOf: from).write(to: to)
-            })
+            },
+            people: { people })
     }
 
     private let meeting = Meeting(title: "Call", appName: "zoom.us", startedAt: Date(timeIntervalSince1970: 1_800_000_000),
@@ -132,6 +133,18 @@ final class MeetingProcessorTests: XCTestCase {
         XCTAssertEqual(Meeting.title(window: "Noah - Arc - Plan — Safari", appName: "Safari"), "Noah - Arc - Plan")
         XCTAssertEqual(Meeting.title(window: "Sync - Microsoft Edge", appName: "Google Chrome"), "Sync - Microsoft Edge")
         XCTAssertEqual(Meeting.title(window: "Standup - Brave", appName: "Brave Browser"), "Standup")
+    }
+
+    /// A known voice is named in transcript.json and the note; speakers.json still lists every kept cluster.
+    func testNamesKnownVoice() async throws {
+        let marco = Person(name: "Marco", samples: [[0, 1]])
+        _ = try await processor(people: [marco]).process(meeting: meeting, tracks: [track(.meeting), track(.mic)], folder: folder, noteURL: note)
+        let lines = try JSONDecoder().decode([TranscriptLine].self, from: Data(contentsOf: folder.appendingPathComponent("transcript.json")))
+        XCTAssertEqual(lines.map(\.speakerLabel), ["Marco", "Marco"])
+        XCTAssertEqual(lines.map(\.personID), [marco.id, marco.id])
+        XCTAssertTrue(try String(contentsOf: note, encoding: .utf8).contains("**Marco** _(known voice)_ [00:00:00] hello from zoom"))
+        let speakers = try JSONDecoder().decode([SpeakerCluster].self, from: Data(contentsOf: folder.appendingPathComponent("speakers.json")))
+        XCTAssertEqual(speakers.map(\.id), ["meeting:A", "mic:A"])
     }
 
     func testMicOnlyMeeting() async throws {

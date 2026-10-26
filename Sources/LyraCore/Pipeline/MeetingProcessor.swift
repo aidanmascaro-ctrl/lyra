@@ -14,14 +14,20 @@ public struct MeetingProcessor: Sendable {
     private let loader: @Sendable (URL) throws -> [Float]
     private let convert: @Sendable (URL, URL) async throws -> Void
     private let timeZone: TimeZone
+    private let people: @Sendable () -> [Person]
+    private let policy: MatchPolicy
 
     /// `convert(caf, m4a)` must throw unless `m4a` ends up playable with a non-zero duration.
+    /// `people` is read once per meeting; naming only reads it, it never writes to the people store.
     public init(trackTranscriber: TrackTranscriber, loader: @escaping @Sendable (URL) throws -> [Float],
-                convert: @escaping @Sendable (URL, URL) async throws -> Void, timeZone: TimeZone = .current) {
+                convert: @escaping @Sendable (URL, URL) async throws -> Void, timeZone: TimeZone = .current,
+                people: @escaping @Sendable () -> [Person] = { [] }, policy: MatchPolicy = .init()) {
         self.trackTranscriber = trackTranscriber
         self.loader = loader
         self.convert = convert
         self.timeZone = timeZone
+        self.people = people
+        self.policy = policy
     }
 
     public func process(meeting: Meeting, tracks: [TrackResult], folder: URL, noteURL: URL) async throws -> URL {
@@ -45,7 +51,9 @@ public struct MeetingProcessor: Sendable {
             lines[track.kind] = result.lines.map { var l = $0; l.start += offset; l.end += offset; return l }
             clusters[track.kind] = result.clusters
         }
-        let merged = TranscriptMerger.merge(meeting: lines[.meeting] ?? [], mic: lines[.mic] ?? [])
+        let echoFree = TranscriptMerger.merge(meeting: lines[.meeting] ?? [], mic: lines[.mic] ?? [])
+        let allClusters = (clusters[.meeting] ?? []) + (clusters[.mic] ?? [])
+        let merged = SpeakerNamer.name(lines: echoFree, clusters: allClusters, people: people(), policy: policy)
 
         // Convert first (keeping the CAFs) so a failure can be warned about in the note itself.
         var converted: [URL] = []
@@ -74,8 +82,9 @@ public struct MeetingProcessor: Sendable {
         try meeting.save(in: folder)
         // Before transcript.json: a crash between the two leaves no done marker, so the folder is reprocessed.
         // Only clusters with a line left after the echo filter: an echo-only mic cluster is the remote voice leaking in.
-        let kept = Set(merged.compactMap(\.speakerID))
-        let speakers = ((clusters[.meeting] ?? []) + (clusters[.mic] ?? [])).filter { kept.contains($0.id) }
+        // Taken before naming: a join keeps only its first line's raw id, but both clusters still spoke.
+        let kept = Set(echoFree.compactMap(\.speakerID))
+        let speakers = allClusters.filter { kept.contains($0.id) }
         try Self.encoder.encode(speakers).write(to: folder.appendingPathComponent("speakers.json"), options: .atomic)
         try Self.encoder.encode(merged).write(to: folder.appendingPathComponent("transcript.json"), options: .atomic)
         // Only now is the meeting safe without its CAFs; a crash before this point reprocesses the folder.

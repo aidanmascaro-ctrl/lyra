@@ -17,10 +17,15 @@ final class AppModel: ObservableObject {
 
     private let paths = MeetingPaths(recordingsRoot: MeetingPaths.defaultRecordingsRoot, notesDir: MeetingPaths.defaultNotesDir)
     // One transcriber for the app's lifetime: it loads its models once.
-    private let processor = MeetingProcessor(
-        trackTranscriber: TrackTranscriber(diarizer: FluidDiarizer(), transcriber: FluidTranscriber()),
-        loader: { try AudioLoader.load16kMono(url: $0) },
-        convert: M4AConverter.convert)
+    // An unreadable people store loads as nobody, so naming just finds no one.
+    private let processor: MeetingProcessor = {
+        let people = PeopleStore(fileURL: PeopleStore.defaultURL)
+        return MeetingProcessor(
+            trackTranscriber: TrackTranscriber(diarizer: FluidDiarizer(), transcriber: FluidTranscriber()),
+            loader: { try AudioLoader.load16kMono(url: $0) },
+            convert: M4AConverter.convert,
+            people: { people.all() })
+    }()
     private let micUsage = CoreAudioMicUsage()
     private let detector = MeetingDetector(ownPID: ProcessInfo.processInfo.processIdentifier,
                                            ignoredBundleIDs: [Bundle.main.bundleIdentifier ?? "au.aidos.lyra"])

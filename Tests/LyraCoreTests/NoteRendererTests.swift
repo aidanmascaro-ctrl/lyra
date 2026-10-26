@@ -39,6 +39,21 @@ final class NoteRendererTests: XCTestCase {
         XCTAssertTrue(out.contains("> [!warning] A\n\n> [!warning] B\n"))
     }
 
+    func testRenderKnownVoiceBadge() {
+        var known = TranscriptLine(speakerLabel: "Marco", track: .meeting, start: 724, end: 730, text: "morning")
+        known.personID = UUID(); known.nameSource = .knownVoice; known.confidence = 0.8
+        var set = known
+        set.nameSource = .setByAidan
+        var odd = known
+        odd.speakerLabel = "Mr *Star* _x_"
+        let unknown = TranscriptLine(speakerLabel: "Speaker 2", track: .mic, start: 724, end: 730, text: "hi")
+        let out = NoteRenderer.render(meeting: meeting(), lines: [known, set, unknown, odd], recordingsFolder: folder)
+        XCTAssertTrue(out.contains("**Marco** _(known voice)_ [00:12:04] morning"))
+        XCTAssertTrue(out.contains("\n\n**Marco** [00:12:04] morning"))
+        XCTAssertTrue(out.contains("**Speaker 2** [00:12:04] hi"))
+        XCTAssertTrue(out.contains(#"**Mr \*Star\* \_x\_** _(known voice)_ [00:12:04] morning"#))
+    }
+
     func testEscapesMarkersAndFormatsLongTimestamp() {
         let l = [TranscriptLine(speakerLabel: "Speaker 1", track: .mic, start: 3725, end: 3730, text: "x <!-- lyra:transcript:end --> y")]
         let out = NoteRenderer.render(meeting: meeting(), lines: l, recordingsFolder: folder)
