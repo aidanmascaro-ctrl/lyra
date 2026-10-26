@@ -24,6 +24,12 @@ final class MeetingDetectorTests: XCTestCase {
 
     func testIgnoresSecondAppWhileRecording() {
         let d = detector()
+        d.isRecording = true
+        XCTAssertEqual(d.update(users: [chrome], now: t0), [])
+    }
+
+    func testIgnoresSecondAppWhileRecordingStartedByZoom() {
+        let d = detector()
         XCTAssertEqual(d.update(users: [zoom], now: t0), [.meetingStarted(zoom)])
         d.isRecording = true
         XCTAssertEqual(d.update(users: [zoom, chrome], now: t0.addingTimeInterval(1)), [])
@@ -48,7 +54,26 @@ final class MeetingDetectorTests: XCTestCase {
         d.isRecording = false
         XCTAssertEqual(d.update(users: [zoom], now: t0.addingTimeInterval(1)), [])
         XCTAssertEqual(d.update(users: [], now: t0.addingTimeInterval(2)), [])
-        XCTAssertEqual(d.update(users: [zoom], now: t0.addingTimeInterval(3)), [.meetingStarted(zoom)])
+        XCTAssertEqual(d.update(users: [zoom], now: t0.addingTimeInterval(13)), [.meetingStarted(zoom)])
+    }
+
+    func testBriefDropOfSuppressedAppDoesNotRepromptAfterStop() {
+        let d = detector()
+        d.isRecording = true
+        XCTAssertEqual(d.update(users: [zoom, chrome], now: t0), [])
+        XCTAssertEqual(d.update(users: [zoom], now: t0.addingTimeInterval(1)), [])
+        d.isRecording = false
+        XCTAssertEqual(d.update(users: [zoom, chrome], now: t0.addingTimeInterval(2)), [])
+    }
+
+    func testAppAbsentLongerThanGraceThenReturningPrompts() {
+        let d = detector()
+        d.isRecording = true
+        XCTAssertEqual(d.update(users: [zoom, chrome], now: t0), [])
+        XCTAssertEqual(d.update(users: [zoom], now: t0.addingTimeInterval(1)), [])
+        d.isRecording = false
+        XCTAssertEqual(d.update(users: [], now: t0.addingTimeInterval(12)), [])
+        XCTAssertEqual(d.update(users: [chrome], now: t0.addingTimeInterval(13)), [.meetingStarted(chrome)])
     }
 
     func testEndsAfterGrace() {
