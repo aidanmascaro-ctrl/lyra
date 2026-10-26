@@ -13,10 +13,14 @@ public enum RenameError: Error, LocalizedError {
     case notLearned(outcome: RenameOutcome, underlying: Error)
     /// The voice could not be learned and then the note could not be updated either; transcript.json was updated.
     case notLearnedAndNoteFailed(learnError: Error, noteError: Error)
+    /// transcript.json was updated, but the note isn't where Lyra put it (e.g. Aidan moved it).
+    case noteMissing(URL)
 
     public var errorDescription: String? {
         let voice = "The name was saved in the transcript, but Lyra couldn't remember this voice for future meetings. Renaming again won't retry it."
         switch self {
+        case .noteMissing:
+            return "The renamed transcript was saved, but the Obsidian note wasn't found at its original place, so it wasn't updated."
         case .noSuchSpeaker(let label): return "There is no one called “\(label)” in this meeting's transcript any more."
         case .notLearned(_, let e): return "\(voice) (\(e.localizedDescription))"
         case .notLearnedAndNoteFailed(let l, let n):
@@ -40,8 +44,12 @@ public struct RenameService: Sendable {
         let before = try JSONDecoder().decode([TranscriptLine].self, from: Data(contentsOf: transcriptURL))
         let picked = before.indices.filter { before[$0].speakerLabel == speakerLabel }
         guard !picked.isEmpty else { throw RenameError.noSuchSpeaker(speakerLabel) }
-        let existing = people.person(named: trimmed)
-        let display = existing?.name ?? trimmed
+        // "Speaker N" is Lyra's own placeholder for unknown voices: relabel only, never learn a person called that.
+        let isPlaceholder = trimmed.range(of: #"^speaker\s+\d+$"#, options: [.regularExpression, .caseInsensitive]) != nil
+        let existing = isPlaceholder ? nil : people.person(named: trimmed)
+        let display = isPlaceholder
+            ? "Speaker " + trimmed.split(whereSeparator: \.isWhitespace).last!
+            : existing?.name ?? trimmed
 
         if display == speakerLabel {  // same name: nothing to rename, but `.done` must still mean the note matches
             return try writeNote(lines: before, previous: before, folder: folder, note: note, overwrite: overwriteEditedNote)
@@ -61,7 +69,7 @@ public struct RenameService: Sendable {
 
         var learnError: Error?
         do {
-            if let person = try learn(from: picked.map { before[$0] }, all: before, as: display, in: folder),
+            if !isPlaceholder, let person = try learn(from: picked.map { before[$0] }, all: before, as: display, in: folder),
                person.id != existing?.id {
                 label(person.id)  // a new person: their id only exists now
                 try MeetingProcessor.encoder.encode(lines).write(to: transcriptURL, options: .atomic)
@@ -101,7 +109,9 @@ public struct RenameService: Sendable {
     private func writeNote(lines: [TranscriptLine], previous: [TranscriptLine], folder: URL, note: URL,
                            overwrite: Bool) throws -> RenameOutcome {
         var meeting = try Meeting.load(from: folder)
-        let text = try String(contentsOf: note, encoding: .utf8)
+        let text: String
+        do { text = try String(contentsOf: note, encoding: .utf8) }
+        catch let e as CocoaError where e.code == .fileReadNoSuchFile || e.code == .fileNoSuchFile { throw RenameError.noteMissing(note) }
         guard let current = NoteSections.transcriptBody(of: text) else { throw NoteSectionsError.missingTranscriptMarkers }
         // Old meetings have no hash: unedited only if the section still renders identically from the old transcript.
         let lyraWrote = meeting.transcriptSectionHash ?? NoteSections.hash(NoteRenderer.transcriptBody(lines: previous))

@@ -97,12 +97,17 @@ public final class PeopleStore: @unchecked Sendable {  // all state is behind `l
             try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         }
         try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)  // also tightens a pre-existing directory
-        // Temp file is born 0600 in the same directory, then renamed over the target: no window with looser perms.
-        let tmp = dir.appendingPathComponent(".\(fileURL.lastPathComponent).tmp-\(UUID().uuidString)")
-        guard fm.createFile(atPath: tmp.path, contents: try JSONEncoder().encode(list), attributes: [.posixPermissions: 0o600]) else {
+        try Self.writeOwnerOnly(try JSONEncoder().encode(list), to: fileURL)
+    }
+
+    /// Temp file is born 0600 in the same directory, then renamed over the target: no window with looser perms.
+    static func writeOwnerOnly(_ data: Data, to url: URL) throws {
+        let fm = FileManager.default
+        let tmp = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).tmp-\(UUID().uuidString)")
+        guard fm.createFile(atPath: tmp.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
             throw CocoaError(.fileWriteUnknown)
         }
-        if Darwin.rename(tmp.path, fileURL.path) != 0 {
+        if Darwin.rename(tmp.path, url.path) != 0 {
             let code = errno
             try? fm.removeItem(at: tmp)
             throw POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)

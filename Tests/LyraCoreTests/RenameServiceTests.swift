@@ -221,8 +221,38 @@ final class RenameServiceTests: XCTestCase {
         let (folder, note) = try makeMeeting()
         try FileManager.default.removeItem(at: note)
         XCTAssertThrowsError(try RenameService(people: store).rename(speakerLabel: "Speaker 2", to: "Marco", inMeetingFolder: folder, note: note)) {
-            guard case RenameError.notLearnedAndNoteFailed(PeopleStoreError.dimensionMismatch, _) = $0 else { return XCTFail("\($0)") }
+            guard case RenameError.notLearnedAndNoteFailed(PeopleStoreError.dimensionMismatch, RenameError.noteMissing) = $0 else { return XCTFail("\($0)") }
             XCTAssertTrue($0.localizedDescription.contains("won't retry"))
+        }
+        XCTAssertEqual(try lines(folder).map(\.speakerLabel), ["Speaker 1", "Marco", "Speaker 1", "Marco"])
+    }
+
+    /// Renaming to a "Speaker N" name just relabels: it must not create a person with that name.
+    func testRenameToSpeakerNumberLearnsNobody() throws {
+        let (folder, note) = try makeMeeting(lines: standardLines + [line("Speaker 3", "meeting:C", 8, "three")])
+        XCTAssertEqual(try RenameService(people: store).rename(speakerLabel: "Speaker 3", to: "  speaker   1 ", inMeetingFolder: folder, note: note), .done)
+        let out = try lines(folder)
+        XCTAssertEqual(out.map(\.speakerLabel), ["Speaker 1", "Speaker 2", "Speaker 1", "Speaker 2", "Speaker 1"])
+        XCTAssertEqual(out[4].nameSource, .setByAidan); XCTAssertNil(out[4].personID); XCTAssertNil(out[4].confidence)
+        XCTAssertTrue(store.all().isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: peopleURL.path))
+        XCTAssertEqual(NoteSections.transcriptBody(of: try String(contentsOf: note, encoding: .utf8)), NoteRenderer.transcriptBody(lines: out))
+    }
+
+    func testSpeakerLookalikeNamesAreNormalNames() throws {
+        for name in ["Speaker 1x", "Speakers 1"] {
+            let (folder, note) = try makeMeeting(name.replacingOccurrences(of: " ", with: "-"))
+            try RenameService(people: store).rename(speakerLabel: "Speaker 2", to: name, inMeetingFolder: folder, note: note)
+            XCTAssertNotNil(store.person(named: name), name)
+        }
+    }
+
+    func testMissingNoteHasPlainMessage() throws {
+        let (folder, note) = try makeMeeting()
+        try FileManager.default.removeItem(at: note)
+        XCTAssertThrowsError(try RenameService(people: store).rename(speakerLabel: "Speaker 2", to: "Marco", inMeetingFolder: folder, note: note)) {
+            guard case RenameError.noteMissing = $0 else { return XCTFail("\($0)") }
+            XCTAssertEqual($0.localizedDescription, "The renamed transcript was saved, but the Obsidian note wasn't found at its original place, so it wasn't updated.")
         }
         XCTAssertEqual(try lines(folder).map(\.speakerLabel), ["Speaker 1", "Marco", "Speaker 1", "Marco"])
     }

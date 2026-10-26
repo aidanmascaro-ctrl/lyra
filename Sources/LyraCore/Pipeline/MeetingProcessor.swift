@@ -89,7 +89,7 @@ public struct MeetingProcessor: Sendable {
         // Taken before naming: a join keeps only its first line's raw id, but both clusters still spoke.
         let kept = Set(echoFree.compactMap(\.speakerID))
         let speakers = allClusters.filter { kept.contains($0.id) }
-        try Self.encoder.encode(speakers).write(to: folder.appendingPathComponent("speakers.json"), options: .atomic)
+        try PeopleStore.writeOwnerOnly(Self.encoder.encode(speakers), to: folder.appendingPathComponent("speakers.json"))
         try Self.encoder.encode(merged).write(to: folder.appendingPathComponent("transcript.json"), options: .atomic)
         // Only now is the meeting safe without its CAFs; a crash before this point reprocesses the folder.
         for caf in converted { try? FileManager.default.removeItem(at: caf) }

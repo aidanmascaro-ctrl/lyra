@@ -68,6 +68,8 @@ final class MeetingProcessorTests: XCTestCase {
         XCTAssertEqual(speakers, [SpeakerCluster(id: "meeting:A", track: .meeting, centroid: [0, 1], speechSeconds: 100),
                                   SpeakerCluster(id: "mic:A", track: .mic, centroid: [1, 0], speechSeconds: 100)])
         XCTAssertEqual(try Meeting.load(from: folder).id, meeting.id)
+        let mode = try FileManager.default.attributesOfItem(atPath: folder.appendingPathComponent("speakers.json").path)[.posixPermissions] as? Int
+        XCTAssertEqual(mode, 0o600)  // voice fingerprints, like people.json
         let section = try XCTUnwrap(NoteSections.transcriptBody(of: String(contentsOf: note, encoding: .utf8)))
         XCTAssertEqual(try Meeting.load(from: folder).transcriptSectionHash, NoteSections.hash(section))
         for kind in ["meeting", "mic"] {
