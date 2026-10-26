@@ -1,8 +1,17 @@
 import AVFoundation
 import LyraAudio
 import LyraCore
-import LyraSpeech
+@testable import LyraSpeech
 import XCTest
+
+/// A file that stops delivering frames after its first read, without throwing: a short read mid-file.
+private final class StallingFile: AVAudioFile {
+    private var reads = 0
+    override func read(into buffer: AVAudioPCMBuffer, frameCount frames: AVAudioFrameCount) throws {
+        reads += 1
+        if reads == 1 { try super.read(into: buffer, frameCount: frames) } else { buffer.frameLength = 0 }
+    }
+}
 
 final class SpeechTests: XCTestCase {
     func testThreeVoiceFixture() async throws {
@@ -86,7 +95,19 @@ final class SpeechTests: XCTestCase {
         let data = try Data(contentsOf: caf)
         try data.prefix(data.count / 2).write(to: caf)
 
+        // Opens fine (length = the header's full 43 s) and throws on a read halfway: the read-time guard.
+        let file = try AVAudioFile(forReading: caf)
+        XCTAssertEqual(Double(file.length) / 48_000, 43, accuracy: 1)
         XCTAssertThrowsError(try AudioLoader.load16kMono(url: caf))
+    }
+
+    /// A read that returns no frames long before `length` must throw too, not end the loop quietly.
+    func testZeroFrameReadMidFileThrows() throws {
+        try requireIntegration()
+        let wav = try XCTUnwrap(Bundle.module.url(
+            forResource: "speaker-test-3-voices", withExtension: "wav", subdirectory: "Fixtures"))
+        let file = try StallingFile(forReading: wav)
+        XCTAssertThrowsError(try AudioLoader.load16kMono(file: file))
     }
 
     /// A call where only the right channel carries sound must not load as silence.

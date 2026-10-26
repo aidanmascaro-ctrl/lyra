@@ -7,7 +7,11 @@ public enum AudioLoader {
     /// Channels are averaged here: FluidAudio's own file path hands stereo to AVAudioConverter,
     /// which keeps only the left channel — the right one (e.g. a remote caller) would be lost.
     public static func load16kMono(url: URL) throws -> [Float] {
-        let file = try AVAudioFile(forReading: url)
+        try load16kMono(file: AVAudioFile(forReading: url))
+    }
+
+    /// Takes the open file so tests can hand in one whose reads misbehave.
+    static func load16kMono(file: AVAudioFile) throws -> [Float] {
         let format = file.processingFormat  // deinterleaved Float32
         let channels = Int(format.channelCount)
         let chunk: AVAudioFrameCount = 1 << 16
@@ -27,6 +31,13 @@ public enum AudioLoader {
                 for c in 0..<channels { sum += data[c][i] }
                 mono.append(sum / Float(channels))
             }
+        }
+        // A read that stopped delivering frames well before the end is damage, not end-of-file:
+        // say so rather than hand back a shorter meeting. Same bound as the catch above.
+        if file.length - file.framePosition > AVAudioFramePosition(chunk) {
+            throw CocoaError(.fileReadCorruptFile, userInfo: [
+                NSFilePathErrorKey: file.url.path,
+                NSLocalizedDescriptionKey: "audio stopped at \(file.framePosition) of \(file.length) frames"])
         }
         return try AudioConverter().resample(mono, from: format.sampleRate)
     }
