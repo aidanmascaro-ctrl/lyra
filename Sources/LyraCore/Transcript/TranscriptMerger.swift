@@ -6,10 +6,10 @@ public enum TranscriptMerger {
         let meetingWords = meeting.map { words($0.text) }
         let keptMic = mic.filter { m in
             let mw = words(m.text)
-            return !meeting.indices.contains { i in
-                let l = meeting[i]
-                return m.start <= l.end + 2 && m.end >= l.start - 2 && jaccard(mw, meetingWords[i]) >= 0.6
-            }
+            guard mw.count >= 3 else { return true }
+            let union = meeting.indices.filter { m.start <= meeting[$0].end + 2 && m.end >= meeting[$0].start - 2 }
+                .reduce(into: Set<String>()) { $0.formUnion(meetingWords[$1]) }
+            return Double(mw.intersection(union).count) / Double(mw.count) < 0.6
         }
         // Stable sort is not guaranteed by sort(by:), so break ties explicitly: meeting before mic.
         let sorted = (meeting + keptMic).enumerated().sorted { a, b in
@@ -31,10 +31,5 @@ public enum TranscriptMerger {
     private static func words(_ text: String) -> Set<String> {
         let cleaned = text.lowercased().unicodeScalars.map { CharacterSet.alphanumerics.contains($0) || CharacterSet.whitespaces.contains($0) ? Character($0) : " " }
         return Set(String(cleaned).split(whereSeparator: \.isWhitespace).map(String.init))
-    }
-
-    private static func jaccard(_ a: Set<String>, _ b: Set<String>) -> Double {
-        let union = a.union(b).count
-        return union == 0 ? 0 : Double(a.intersection(b).count) / Double(union)
     }
 }

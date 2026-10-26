@@ -6,9 +6,9 @@ public enum NoteRenderer {
         let iso = ISO8601DateFormatter()
         iso.timeZone = timeZone
         iso.formatOptions = [.withInternetDateTime, .withColonSeparatorInTimeZone]
-        let minutes = meeting.endedAt.map { Int((($0.timeIntervalSince(meeting.startedAt)) / 60).rounded()) } ?? 0
-        let warnings = meeting.warnings.map { "> [!warning] \($0)\n" }.joined()
-        let transcript = lines.map { "**\($0.speakerLabel)** [\(stamp($0.start))] \($0.text)" }.joined(separator: "\n\n")
+        let minutes = meeting.endedAt.map { max(0, Int((($0.timeIntervalSince(meeting.startedAt)) / 60).rounded())) } ?? 0
+        let warnings = meeting.warnings.map { "> [!warning] \($0)\n" }.joined(separator: "\n")
+        let transcript = lines.map { "**\($0.speakerLabel)** [\(stamp($0.start))] \($0.text.replacingOccurrences(of: "<!--", with: "&lt;!--"))" }.joined(separator: "\n\n")
         return """
         ---
         lyra_id: \(meeting.id.uuidString)
@@ -33,7 +33,7 @@ public enum NoteRenderer {
     }
 
     private static func stamp(_ t: Double) -> String {
-        let s = Int(t)
+        let s = t.isFinite ? Int(max(0, t)) : 0
         return String(format: "%02d:%02d:%02d", s / 3600, (s / 60) % 60, s % 60)
     }
 }

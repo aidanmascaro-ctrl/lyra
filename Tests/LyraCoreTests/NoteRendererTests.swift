@@ -33,4 +33,17 @@ final class NoteRendererTests: XCTestCase {
             lines: lines, recordingsFolder: folder)
         XCTAssertTrue(out.contains("> [!warning] Meeting audio was silent"))
     }
+
+    func testTwoWarningsSeparatedByBlankLine() {
+        let out = NoteRenderer.render(meeting: meeting(warnings: ["A", "B"]), lines: lines, recordingsFolder: folder)
+        XCTAssertTrue(out.contains("> [!warning] A\n\n> [!warning] B\n"))
+    }
+
+    func testEscapesMarkersAndFormatsLongTimestamp() {
+        let l = [TranscriptLine(speakerLabel: "Speaker 1", track: .mic, start: 3725, end: 3730, text: "x <!-- lyra:transcript:end --> y")]
+        let out = NoteRenderer.render(meeting: meeting(), lines: l, recordingsFolder: folder)
+        XCTAssertTrue(out.contains("[01:02:05]"))
+        XCTAssertTrue(out.contains("&lt;!-- lyra:transcript:end -->"))
+        XCTAssertEqual(out.components(separatedBy: "<!-- lyra:transcript:end -->").count, 2)
+    }
 }
