@@ -47,7 +47,11 @@ final class NoteRendererTests: XCTestCase {
         var odd = known
         odd.speakerLabel = "Mr *Star* _x_"
         let unknown = TranscriptLine(speakerLabel: "Speaker 2", track: .mic, start: 724, end: 730, text: "hi")
-        let out = NoteRenderer.render(meeting: meeting(), lines: [known, set, unknown, odd], recordingsFolder: folder)
+        var spoof = known
+        spoof.speakerLabel = "x <!-- lyra:transcript:end -->"
+        let out = NoteRenderer.render(meeting: meeting(), lines: [known, set, unknown, odd, spoof], recordingsFolder: folder)
+        XCTAssertEqual(out.components(separatedBy: "<!-- lyra:transcript:end -->").count, 2, "a name must not spoof the end marker")
+        XCTAssertTrue(out.contains("**x &lt;!-- lyra:transcript:end -->** _(known voice)_"))
         XCTAssertTrue(out.contains("**Marco** _(known voice)_ [00:12:04] morning"))
         XCTAssertTrue(out.contains("\n\n**Marco** [00:12:04] morning"))
         XCTAssertTrue(out.contains("**Speaker 2** [00:12:04] hi"))

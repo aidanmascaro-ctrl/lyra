@@ -58,4 +58,40 @@ final class TranscriptMergerTests: XCTestCase {
         let mic = [line("mic:0", .mic, 15.5, 17, "yeah i think we should do that")]
         XCTAssertEqual(TranscriptMerger.merge(meeting: m, mic: mic).count, 2)
     }
+
+    // MARK: voice echo
+
+    private func cl(_ id: String, _ degrees: Double) -> SpeakerCluster {
+        let r = degrees * .pi / 180
+        return SpeakerCluster(id: id, track: id.hasPrefix("mic") ? .mic : .meeting, centroid: [Float(cos(r)), Float(sin(r))], speechSeconds: 5)
+    }
+    private func raw(_ id: String, _ s: Double) -> TranscriptLine {
+        TranscriptLine(speakerLabel: "Speaker 1", speakerID: id, track: id.hasPrefix("mic") ? .mic : .meeting, start: s, end: s + 1, text: id)
+    }
+
+    /// cos 31.8° ≈ 0.85: the call's voice leaking into the mic. Its lines and cluster go.
+    func testDropsMicClusterThatSoundsLikeTheCall() {
+        let out = TranscriptMerger.dropVoiceEcho(lines: [raw("meeting:S1", 0), raw("mic:S1", 1), raw("mic:S2", 2)],
+                                                 clusters: [cl("meeting:S1", 0), cl("mic:S1", 31.8), cl("mic:S2", 90)],
+                                                 people: [], policy: .init())
+        XCTAssertEqual(out.lines.map(\.speakerID), ["meeting:S1", "mic:S2"])
+        XCTAssertEqual(out.clusters.map(\.id), ["meeting:S1", "mic:S2"])
+    }
+
+    /// cos 72.5° ≈ 0.30: a different voice. Kept.
+    func testKeepsMicClusterUnlikeTheCall() {
+        let out = TranscriptMerger.dropVoiceEcho(lines: [raw("meeting:S1", 0), raw("mic:S1", 1)],
+                                                 clusters: [cl("meeting:S1", 0), cl("mic:S1", 72.5)], people: [], policy: .init())
+        XCTAssertEqual(out.lines.count, 2)
+        XCTAssertEqual(out.clusters.count, 2)
+    }
+
+    /// Aidan's own voice is never echo, even when it sounds like a call voice.
+    func testKeepsMicClusterOfAKnownPerson() {
+        let aidan = Person(name: "Aidan", samples: [[Float(cos(31.8 * Double.pi / 180)), Float(sin(31.8 * Double.pi / 180))]])
+        let out = TranscriptMerger.dropVoiceEcho(lines: [raw("meeting:S1", 0), raw("mic:S1", 1)],
+                                                 clusters: [cl("meeting:S1", 0), cl("mic:S1", 31.8)], people: [aidan], policy: .init())
+        XCTAssertEqual(out.lines.map(\.speakerID), ["meeting:S1", "mic:S1"])
+        XCTAssertEqual(out.clusters.map(\.id), ["meeting:S1", "mic:S1"])
+    }
 }

@@ -1,13 +1,16 @@
 import LyraCore
 import XCTest
 
+/// The call's voice is [0, 1]; Aidan's mic voice is [1, 0]. Sample 4 is a mic hearing the call's voice
+/// but transcribing it differently, so only the voice check can tell it is echo.
 private struct FakeDiarizer: SpeakerDiarizing {
     func diarize(samples: [Float]) async throws -> Diarization {
-        Diarization(turns: [SpeakerTurn(speaker: "A", start: 0, end: 100)], centroids: ["A": [0, 1]])
+        Diarization(turns: [SpeakerTurn(speaker: "A", start: 0, end: 100)],
+                    centroids: ["A": samples.first == 2 ? [1, 0] : [0, 1]])
     }
 }
 
-/// The first sample says which track this is: 1 = meeting, 2 = mic, 3 = mic hearing only the call's echo.
+/// The first sample says which track this is: 1 = meeting, 2 = mic, 3 = mic hearing only the call's echo, 4 = see FakeDiarizer.
 private struct FakeTranscriber: SpeechTranscribing {
     func transcribe(samples: [Float]) async throws -> [TimedWord] {
         samples.first == 1 || samples.first == 3
@@ -63,7 +66,7 @@ final class MeetingProcessorTests: XCTestCase {
         XCTAssertEqual(lines.map(\.speakerID), ["meeting:A", "mic:A"])
         let speakers = try JSONDecoder().decode([SpeakerCluster].self, from: Data(contentsOf: folder.appendingPathComponent("speakers.json")))
         XCTAssertEqual(speakers, [SpeakerCluster(id: "meeting:A", track: .meeting, centroid: [0, 1], speechSeconds: 100),
-                                  SpeakerCluster(id: "mic:A", track: .mic, centroid: [0, 1], speechSeconds: 100)])
+                                  SpeakerCluster(id: "mic:A", track: .mic, centroid: [1, 0], speechSeconds: 100)])
         XCTAssertEqual(try Meeting.load(from: folder).id, meeting.id)
         for kind in ["meeting", "mic"] {
             XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appendingPathComponent("\(kind).m4a").path))
@@ -140,11 +143,22 @@ final class MeetingProcessorTests: XCTestCase {
         let marco = Person(name: "Marco", samples: [[0, 1]])
         _ = try await processor(people: [marco]).process(meeting: meeting, tracks: [track(.meeting), track(.mic)], folder: folder, noteURL: note)
         let lines = try JSONDecoder().decode([TranscriptLine].self, from: Data(contentsOf: folder.appendingPathComponent("transcript.json")))
-        XCTAssertEqual(lines.map(\.speakerLabel), ["Marco", "Marco"])
-        XCTAssertEqual(lines.map(\.personID), [marco.id, marco.id])
+        XCTAssertEqual(lines.map(\.speakerLabel), ["Marco", "Speaker 1"])
+        XCTAssertEqual(lines.map(\.personID), [marco.id, nil])
         XCTAssertTrue(try String(contentsOf: note, encoding: .utf8).contains("**Marco** _(known voice)_ [00:00:00] hello from zoom"))
         let speakers = try JSONDecoder().decode([SpeakerCluster].self, from: Data(contentsOf: folder.appendingPathComponent("speakers.json")))
         XCTAssertEqual(speakers.map(\.id), ["meeting:A", "mic:A"])
+    }
+
+    /// The call's voice on the mic, transcribed differently: the text filter keeps it, the voice check drops it.
+    func testVoiceEchoMicClusterDropped() async throws {
+        let mic = try track(.mic)
+        try Data([4]).write(to: mic.url)
+        _ = try await processor().process(meeting: meeting, tracks: [track(.meeting), mic], folder: folder, noteURL: note)
+        let lines = try JSONDecoder().decode([TranscriptLine].self, from: Data(contentsOf: folder.appendingPathComponent("transcript.json")))
+        XCTAssertEqual(lines.map(\.speakerID), ["meeting:A"])
+        let speakers = try JSONDecoder().decode([SpeakerCluster].self, from: Data(contentsOf: folder.appendingPathComponent("speakers.json")))
+        XCTAssertEqual(speakers.map(\.id), ["meeting:A"])
     }
 
     func testMicOnlyMeeting() async throws {

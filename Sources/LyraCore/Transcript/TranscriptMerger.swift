@@ -35,6 +35,25 @@ public enum TranscriptMerger {
         }
     }
 
+    /// A mic cluster this close (cosine) to any call cluster is the call leaking into the mic.
+    /// Measured 2026-10-27 (docs/notes/phase2-findings.md): a speaker leak scored 0.852 against the call's
+    /// voice; different voices scored at most 0.243; the same voice across meetings 0.858-0.866.
+    public static let voiceEchoSimilarity = 0.75
+
+    /// Second echo pass, by voice instead of words: catches leaked call audio the text filter missed because
+    /// the mic heard it differently. Drops the leaking mic cluster and all its lines. A mic cluster that
+    /// `VoiceMatcher` names as a known person is never dropped (Aidan's own voice is never echo).
+    public static func dropVoiceEcho(lines: [TranscriptLine], clusters: [SpeakerCluster], people: [Person], policy: MatchPolicy)
+        -> (lines: [TranscriptLine], clusters: [SpeakerCluster]) {
+        let call = clusters.filter { $0.track == .meeting }.map(\.centroid)
+        let echo = Set(clusters.filter { c in
+            c.track == .mic
+                && call.contains { $0.count == c.centroid.count && zip($0, c.centroid).reduce(0.0) { $0 + Double($1.0 * $1.1) } >= voiceEchoSimilarity }
+                && VoiceMatcher.match(c.centroid, people: people, policy: policy) == nil
+        }.map(\.id))
+        return (lines.filter { !echo.contains($0.speakerID ?? "") }, clusters.filter { !echo.contains($0.id) })
+    }
+
     private static func words(_ text: String) -> [String] {
         let cleaned = text.lowercased().unicodeScalars.map { CharacterSet.alphanumerics.contains($0) || CharacterSet.whitespaces.contains($0) ? Character($0) : " " }
         return String(cleaned).split(whereSeparator: \.isWhitespace).map(String.init)

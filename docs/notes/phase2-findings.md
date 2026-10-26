@@ -34,9 +34,7 @@ none of the fixture's sentences, made at test time.
   the speakers into the mic. **It gets past the echo filter** (all 6 of its lines are kept), so
   without naming it shows as an extra "Speaker N" on the mic track. The echo filter matches
   text, and the mic's transcript of the leaked audio evidently differs too much from the call
-  track's. With Aidan enrolled, his real mic cluster is named, and the leak stays an unnamed
-  speaker. A voice check (mic cluster ≥ ~0.8 against a call cluster → echo) would catch it;
-  not done here, it is the merger's job.
+  track's. Fixed in fix round 1, see below.
 - **Fixture, Daniel enrolled:** lines in Daniel's sentences (0–6.8 s, 18.9–24.6 s) are named
   Daniel at 0.866. Flo's lines stay "Speaker 1". Fred's "I can make Saturday" (13.4–14.8 s) is
   **named Daniel**, and his closing line is joined with Daniel's last line (30.2–42.0 s, one
@@ -44,3 +42,23 @@ none of the fixture's sentences, made at test time.
   turns are inside Daniel's cluster, so they carry Daniel's fingerprint. The integration test
   asserts Daniel's and Flo's lines and leaves Fred unasserted until Lyra passes a speaker
   count to the diarizer.
+
+### Fix round 1 — voice-based echo removal (2026-10-27)
+
+`TranscriptMerger.dropVoiceEcho` runs after the text echo filter and before naming. It drops
+every mic cluster, with all its lines, when that cluster scores ≥ `voiceEchoSimilarity` = **0.75**
+against any call-track cluster. A mic cluster that matches a known person is never dropped.
+Why 0.75: the leak scored 0.852 against the call; different voices scored ≤ 0.243.
+
+Re-run on 0409 with Aidan and Daniel enrolled (temp store), using the processor's order as
+pure calls (nothing written beside the recording):
+
+| Step | 0409 mic:S1 (leak) | 0409 mic:S2 (Aidan) |
+| --- | --- | --- |
+| Lines from the track transcriber | 6 | 4 |
+| After the text echo filter | 6 kept | 4 kept |
+| Max similarity to a call cluster | 0.852 | -0.013 |
+| After the voice echo pass | **dropped** (lines and cluster) | kept |
+| After naming | — | 4 lines, all "Aidan" |
+
+The final transcript's mic track carries one label only: "Aidan".

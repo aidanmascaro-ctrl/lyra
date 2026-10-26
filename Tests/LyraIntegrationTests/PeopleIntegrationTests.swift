@@ -86,13 +86,12 @@ final class PeopleIntegrationTests: XCTestCase {
             XCTAssertEqual(l.personID, danielPerson.id, "\(l.start)-\(l.end) \(l.text)")
             XCTAssertEqual(l.nameSource, .knownVoice)
         }
-        // No line inside Flo's sentences is named Daniel. Fred: see the strictness note below.
-        for (who, a, b) in others {
-            for l in lines where inside(l, (a, b)) {
-                print("people: \(who) line named \(l.speakerLabel)")
-                if who == "Flo" { XCTAssertNil(l.personID, "\(who): \(l.text)") }
-            }
-        }
+        // Daniel's cluster is the one his first sentence came from; every line of every other cluster stays unnamed.
+        let danielCluster = try XCTUnwrap(lines.first { inside($0, daniel[0]) }?.speakerID)
+        let otherLines = lines.filter { $0.speakerID != danielCluster }
+        XCTAssertFalse(otherLines.isEmpty, "the check below must not pass vacuously")
+        for l in otherLines { XCTAssertNil(l.personID, "\(l.speakerID ?? "-"): \(l.text)") }
+        for (who, a, b) in others { for l in lines where inside(l, (a, b)) { print("people: \(who) line named \(l.speakerLabel)") } }
         // ponytail: Fred is not asserted. The diarizer (default config) folds Fred into Daniel's cluster (phase1-findings),
         // so his words carry Daniel's fingerprint and get Daniel's name. Assert him once Lyra passes a speaker count.
     }
@@ -137,13 +136,25 @@ final class PeopleIntegrationTests: XCTestCase {
             found += r.clusters
         }
         report("0409", found)
-        let kept = Set(TranscriptMerger.merge(meeting: lines[.meeting] ?? [], mic: lines[.mic] ?? []).compactMap(\.speakerID))
+        let textFiltered = TranscriptMerger.merge(meeting: lines[.meeting] ?? [], mic: lines[.mic] ?? [])
+        let kept = Set(textFiltered.compactMap(\.speakerID))
         let call = found.filter { $0.track == .meeting }
         for c in found where c.track == .mic {
             let n = lines[.mic]?.filter { $0.speakerID == c.id }.count ?? 0
             print(String(format: "calib: 0409 %@ lines=%d survivesEchoFilter=%@ maxSim(call clusters)=%.3f", c.id, n,
                          kept.contains(c.id) ? "yes" : "no", call.map { cosine(c.centroid, $0.centroid) }.max() ?? .nan))
         }
+        // The processor's own order, as pure calls (nothing is written next to Aidan's recording).
+        let voice = TranscriptMerger.dropVoiceEcho(lines: textFiltered, clusters: found, people: store.all(), policy: .init())
+        let named = SpeakerNamer.name(lines: voice.lines, clusters: voice.clusters, people: store.all(), policy: .init())
+        print("calib: 0409 after voice echo: clusters=\(voice.clusters.map(\.id).sorted()) dropped=\(Set(found.map(\.id)).subtracting(voice.clusters.map(\.id)).sorted())")
+        for c in found where c.track == .mic {
+            let mine = named.filter { $0.speakerID == c.id }
+            print("calib: 0409 \(c.id) lines after naming=\(mine.count) labels=\(Set(mine.map(\.speakerLabel)).sorted())")
+        }
+        let micLabels = Set(named.filter { $0.track == .mic }.map(\.speakerLabel))
+        print("calib: 0409 mic labels in final transcript=\(micLabels.sorted())")
+        XCTAssertEqual(micLabels, ["Aidan"])
         report("fixture", try await clusters(try fixture, .meeting))
     }
 }

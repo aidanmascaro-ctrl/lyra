@@ -51,9 +51,11 @@ public struct MeetingProcessor: Sendable {
             lines[track.kind] = result.lines.map { var l = $0; l.start += offset; l.end += offset; return l }
             clusters[track.kind] = result.clusters
         }
-        let echoFree = TranscriptMerger.merge(meeting: lines[.meeting] ?? [], mic: lines[.mic] ?? [])
-        let allClusters = (clusters[.meeting] ?? []) + (clusters[.mic] ?? [])
-        let merged = SpeakerNamer.name(lines: echoFree, clusters: allClusters, people: people(), policy: policy)
+        let known = people()
+        let (echoFree, allClusters) = TranscriptMerger.dropVoiceEcho(
+            lines: TranscriptMerger.merge(meeting: lines[.meeting] ?? [], mic: lines[.mic] ?? []),
+            clusters: (clusters[.meeting] ?? []) + (clusters[.mic] ?? []), people: known, policy: policy)
+        let merged = SpeakerNamer.name(lines: echoFree, clusters: allClusters, people: known, policy: policy)
 
         // Convert first (keeping the CAFs) so a failure can be warned about in the note itself.
         var converted: [URL] = []

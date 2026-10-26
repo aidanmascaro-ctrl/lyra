@@ -38,7 +38,8 @@ public enum NoteRenderer {
     /// Backslash-escapes what would break the bold or start a link/tag; a newline would end the line, so it becomes a space.
     private static func escapeName(_ name: String) -> String {
         var out = ""
-        for ch in name {
+        // `<!--` first, as in transcript text, so a name can't spoof the lyra markers.
+        for ch in name.replacingOccurrences(of: "<!--", with: "&lt;!--") {
             if ch.isNewline { out.append(" "); continue }
             if "\\*_`[]<".contains(ch) { out.append("\\") }
             out.append(ch)
