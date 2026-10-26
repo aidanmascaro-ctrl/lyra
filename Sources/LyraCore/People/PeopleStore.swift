@@ -15,10 +15,12 @@ public final class PeopleStore: @unchecked Sendable {  // all state is behind `l
     private let fileURL: URL
     private let lock = NSLock()
     private var people: [Person]
+    /// Set when an existing file could not be read or set aside; writes then refuse so its bytes are never replaced.
+    private let loadFailure: Error?
 
     public init(fileURL: URL) {
         self.fileURL = fileURL
-        self.people = Self.load(fileURL)
+        (self.people, self.loadFailure) = Self.load(fileURL)
     }
 
     public func all() -> [Person] { lock.withLock { people } }
@@ -32,6 +34,7 @@ public final class PeopleStore: @unchecked Sendable {  // all state is behind `l
     public func learn(name: String, sample: [Float], isOwner: Bool = false) throws -> Person {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw PeopleStoreError.emptyName }
+        if let loadFailure { throw loadFailure }
         guard !sample.isEmpty, sample.allSatisfy(\.isFinite) else { throw PeopleStoreError.badSample }
         return try lock.withLock {
             var next = people
@@ -57,6 +60,7 @@ public final class PeopleStore: @unchecked Sendable {  // all state is behind `l
     public func rename(_ id: UUID, to name: String) throws {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw PeopleStoreError.emptyName }
+        if let loadFailure { throw loadFailure }
         try lock.withLock {
             guard let i = people.firstIndex(where: { $0.id == id }) else { throw PeopleStoreError.unknownPerson }
             let key = Self.key(trimmed)
@@ -80,19 +84,36 @@ public final class PeopleStore: @unchecked Sendable {  // all state is behind `l
         let fm = FileManager.default
         let dir = fileURL.deletingLastPathComponent()
         if !fm.fileExists(atPath: dir.path) {
-            try fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         }
-        try JSONEncoder().encode(list).write(to: fileURL, options: .atomic)
-        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)  // also tightens a pre-existing directory
+        // Temp file is born 0600 in the same directory, then renamed over the target: no window with looser perms.
+        let tmp = dir.appendingPathComponent(".\(fileURL.lastPathComponent).tmp-\(UUID().uuidString)")
+        guard fm.createFile(atPath: tmp.path, contents: try JSONEncoder().encode(list), attributes: [.posixPermissions: 0o600]) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        if Darwin.rename(tmp.path, fileURL.path) != 0 {
+            let code = errno
+            try? fm.removeItem(at: tmp)
+            throw POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
+        }
     }
 
-    private static func load(_ url: URL) -> [Person] {
-        guard let data = try? Data(contentsOf: url) else { return [] }  // missing file: start empty
-        if let list = try? JSONDecoder().decode([Person].self, from: data) { return list }
+    /// Missing file: empty. Unreadable file, or corrupt file that can't be set aside: empty plus a failure that blocks writes.
+    private static func load(_ url: URL) -> ([Person], Error?) {
+        let data: Data
+        do { data = try Data(contentsOf: url) }
+        catch let e as CocoaError where e.code == .fileReadNoSuchFile || e.code == .fileNoSuchFile { return ([], nil) }
+        catch { return ([], error) }
+        if let list = try? JSONDecoder().decode([Person].self, from: data) { return (list, nil) }
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyyMMdd-HHmmss"
-        let aside = url.deletingLastPathComponent().appendingPathComponent("\(url.lastPathComponent).corrupt-\(f.string(from: Date()))")
-        try? FileManager.default.moveItem(at: url, to: aside)
-        return []
+        let base = "\(url.lastPathComponent).corrupt-\(f.string(from: Date()))"
+        let dir = url.deletingLastPathComponent()
+        var aside = dir.appendingPathComponent(base)
+        var n = 1
+        while FileManager.default.fileExists(atPath: aside.path) { aside = dir.appendingPathComponent("\(base)-\(n)"); n += 1 }
+        do { try FileManager.default.moveItem(at: url, to: aside) } catch { return ([], error) }
+        return ([], nil)
     }
 }

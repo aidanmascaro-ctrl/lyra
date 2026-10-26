@@ -8,7 +8,9 @@ final class PeopleStoreTests: XCTestCase {
     override func setUpWithError() throws {
         dir = FileManager.default.temporaryDirectory.appendingPathComponent("lyra-people-\(UUID().uuidString)")
     }
-    override func tearDownWithError() throws { try? FileManager.default.removeItem(at: dir) }
+    override func tearDownWithError() throws {
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        try? FileManager.default.removeItem(at: dir) }
 
     func testLearnCreatesThenAppends() throws {
         let store = PeopleStore(fileURL: url)
@@ -87,5 +89,58 @@ final class PeopleStoreTests: XCTestCase {
         func mode(_ u: URL) throws -> Int { (try FileManager.default.attributesOfItem(atPath: u.path)[.posixPermissions] as! NSNumber).intValue }
         XCTAssertEqual(try mode(url), 0o600)
         XCTAssertEqual(try mode(url.deletingLastPathComponent()), 0o700)
+    }
+
+    func testSecondWriteStillOwnerOnlyAndLooseDirTightened() throws {
+        let sub = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: sub, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
+        let store = PeopleStore(fileURL: url)
+        try store.learn(name: "Sam", sample: [1, 0])
+        try store.learn(name: "Sam", sample: [0, 1])
+        func mode(_ u: URL) throws -> Int { (try FileManager.default.attributesOfItem(atPath: u.path)[.posixPermissions] as! NSNumber).intValue }
+        XCTAssertEqual(try mode(url), 0o600)
+        XCTAssertEqual(try mode(sub), 0o700)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: sub.path), ["people.json"], "no temp files left")
+    }
+
+    func testSecondCorruptionSameSecondKeepsBothAsides() throws {
+        let sub = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: sub, withIntermediateDirectories: true)
+        var blobs: [Data] = []
+        for i in 0..<3 {  // rapid-fire: stamps will collide
+            let junk = Data("junk \(i)".utf8); blobs.append(junk)
+            try junk.write(to: url)
+            XCTAssertTrue(PeopleStore(fileURL: url).all().isEmpty)
+        }
+        let asides = try FileManager.default.contentsOfDirectory(atPath: sub.path).filter { $0.hasPrefix("people.json.corrupt-") }
+        let found = try asides.map { try Data(contentsOf: sub.appendingPathComponent($0)) }
+        XCTAssertEqual(Set(found), Set(blobs))
+    }
+
+    func testUnreadableFileIsNotWiped() throws {
+        let sub = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: sub, withIntermediateDirectories: true)
+        let seed = PeopleStore(fileURL: url)
+        try seed.learn(name: "Sam", sample: [1, 0])
+        let before = try Data(contentsOf: url)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: url.path)
+        let store = PeopleStore(fileURL: url)
+        XCTAssertThrowsError(try store.learn(name: "Kim", sample: [0, 1]))
+        XCTAssertThrowsError(try store.rename(UUID(), to: "X"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        XCTAssertEqual(try Data(contentsOf: url), before)
+        XCTAssertEqual(PeopleStore(fileURL: url).all().count, 1)
+    }
+
+    func testCorruptFileThatCannotBeMovedBlocksWrites() throws {
+        let sub = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: sub, withIntermediateDirectories: true)
+        let junk = Data("junk".utf8)
+        try junk.write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: sub.path)  // rename needs dir write
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: sub.path) }
+        let store = PeopleStore(fileURL: url)
+        XCTAssertThrowsError(try store.learn(name: "Sam", sample: [1, 0]))
+        XCTAssertEqual(try Data(contentsOf: url), junk)
     }
 }
