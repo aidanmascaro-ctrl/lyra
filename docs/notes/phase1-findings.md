@@ -56,3 +56,39 @@ each diarized turn on its own. Models live in `~/Library/Application Support/Flu
   otherwise word-perfect. Not redesigned (per brief).
 - **Runtime:** first run 124.5 s (both model downloads + Core ML compile). Warm run 1.6 s
   for the 43 s fixture, including model loads.
+
+### Fix round 1 — whole-track ASR, words aligned to speakers (2026-10-27)
+
+The track is now transcribed once, end to end, and each word goes to the diarized turn it
+overlaps most (or the nearest turn if it falls in a gap). Lines split on speaker change or a
+pause > 1.5 s. Default diarizer config, Parakeet Ultra, `language: .english`.
+
+- **"Could we" is back.** Every slice-edge error from the per-turn run is gone: "gear list"
+  (was "gail list"), "Friday at 2" (was "Friday add 2"), "Could we move it…" whole.
+- **Speaker count: still 2.** Fred is still merged — this is the diarizer, not the alignment.
+  His first line ("I can make Saturday") goes to Daniel (S1), "Could we move it…" to Flo (S2),
+  and his second line ("I'll book the cafe…") to Daniel, where it joins Daniel's closing line
+  because same-speaker words < 1.5 s apart form one line. The `numSpeakers` follow-up stands.
+- Remaining ASR error: "I can make Saturday" → "I can't wait Saturday".
+- Transcript:
+
+  ```
+  [meeting:S1] 0.00-6.80   Thanks for jumping on, everyone. Today we need to lock the shoot dates for the coffee roaster campaign.
+  [meeting:S2] 6.80-13.36  Sounds good. I can do the second Saturday, but I need the gear list by Wednesday.
+  [meeting:S1] 13.36-14.80 I can't wait Saturday.
+  [meeting:S2] 15.44-18.88 Could we move it to the Friday afternoon instead?
+  [meeting:S1] 18.88-24.56 Friday works for me, Flo. Does Friday still give you enough time for the gear list?
+  [meeting:S2] 24.88-30.24 Yes, Friday is fine. I'll send the list on Tuesday night.
+  [meeting:S1] 30.24-42.00 Great. I'll book the cafe for 2 o'clock and confirm with the owner. Perfect. So Friday at 2, gear list Tuesday. And Fred confirms the venue. Thanks all.
+  ```
+- **FluidAudio long-input handling:** the model window is 15 s (`ASRConstants.maxModelSamples`
+  = 240 000). `AsrManager.transcribe` routes longer input through its own `ChunkProcessor`,
+  which returns token times already offset to the input start (confirmed: the 43 s fixture's
+  times run 0–42 s). Lyra does no chunking. Inputs < 0.3 s (`minimumRequiredSamples`) throw
+  `invalidAudioData`; `FluidTranscriber` returns `[]` for those instead.
+- **Word merging:** token timings are SentencePiece sub-words; FluidAudio's public
+  `buildWordTimings(from:)` merges them on the `▁` / leading-space marker. Lyra uses it.
+- **Stereo → mono:** FluidAudio's `resampleAudioFile` hands stereo to `AVAudioConverter`,
+  which keeps only the left channel. A file with silence left / 440 Hz right loaded as pure
+  silence (peak 0.0). `AudioLoader` now averages all channels itself (peak 0.25 for 0 + 0.5).
+- Warm run: 1.6 s for the 43 s fixture.

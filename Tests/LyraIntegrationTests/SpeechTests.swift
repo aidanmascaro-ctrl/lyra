@@ -1,3 +1,4 @@
+import AVFoundation
 import LyraCore
 import LyraSpeech
 import XCTest
@@ -42,5 +43,29 @@ final class SpeechTests: XCTestCase {
         let samples = try AudioLoader.load16kMono(url: caf)
         XCTAssertEqual(Double(samples.count) / 16_000, 43, accuracy: 1)
         XCTAssertGreaterThan(samples.map(abs).max() ?? 0, 0.1)
+    }
+
+    /// A call where only the right channel carries sound must not load as silence.
+    func testStereoRightChannelOnlyIsHeard() throws {
+        try requireIntegration()
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("lyra-\(UUID().uuidString).caf")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 48_000))
+        buffer.frameLength = 48_000
+        let data = try XCTUnwrap(buffer.floatChannelData)
+        for i in 0..<48_000 {
+            data[0][i] = 0
+            data[1][i] = 0.5 * sin(2 * .pi * 440 * Float(i) / 48_000)
+        }
+        do {
+            let file = try AVAudioFile(forWriting: url, settings: format.settings)
+            try file.write(from: buffer)
+        }
+
+        let samples = try AudioLoader.load16kMono(url: url)
+        XCTAssertEqual(samples.count, 16_000, accuracy: 50)
+        let peak = samples.map(abs).max() ?? 0
+        XCTAssertEqual(peak, 0.25, accuracy: 0.05)  // true average of 0 and 0.5
     }
 }

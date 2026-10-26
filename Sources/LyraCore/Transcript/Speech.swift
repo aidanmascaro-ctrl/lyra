@@ -16,7 +16,18 @@ public protocol SpeakerDiarizing: Sendable {
     func diarize(samples: [Float]) async throws -> [SpeakerTurn]
 }
 
-/// Turns 16 kHz mono audio into text.
+/// One recognised word. Times are seconds from the start of the samples passed in.
+public struct TimedWord: Sendable, Equatable {
+    public let text: String
+    public let start: Double
+    public let end: Double
+
+    public init(text: String, start: Double, end: Double) {
+        self.text = text; self.start = start; self.end = end
+    }
+}
+
+/// Turns 16 kHz mono audio into timed words.
 public protocol SpeechTranscribing: Sendable {
-    func transcribe(samples: [Float]) async throws -> String
+    func transcribe(samples: [Float]) async throws -> [TimedWord]
 }

@@ -1,9 +1,9 @@
 import Foundation
 
-/// Diarizes one track, then transcribes each speaker turn on its own.
+/// Diarizes one track, transcribes the whole track once, then gives each word to a speaker.
+/// Nothing the recogniser hears is dropped: a word outside every turn goes to the nearest one.
 public struct TrackTranscriber: Sendable {
-    static let minTurn = 0.3   // seconds; shorter turns are noise
-    static let mergeGap = 0.5  // seconds; same-speaker turns closer than this become one
+    static let maxPause = 1.5  // seconds; a longer gap between words starts a new line
 
     private let diarizer: SpeakerDiarizing
     private let transcriber: SpeechTranscribing
@@ -13,30 +13,30 @@ public struct TrackTranscriber: Sendable {
         self.transcriber = transcriber
     }
 
+    /// `sampleRate` is kept for callers; word times come back from the transcriber in seconds.
     public func run(samples: [Float], track: TrackKind, sampleRate: Double = 16_000) async throws -> [TranscriptLine] {
         let turns = try await diarizer.diarize(samples: samples)
-            .filter { $0.end - $0.start >= Self.minTurn }
-            .sorted { $0.start < $1.start }
-
-        var merged: [SpeakerTurn] = []
-        for turn in turns {
-            if let last = merged.last, last.speaker == turn.speaker, turn.start - last.end < Self.mergeGap {
-                merged[merged.count - 1] = SpeakerTurn(speaker: last.speaker, start: last.start, end: max(last.end, turn.end))
-            } else {
-                merged.append(turn)
-            }
-        }
+        let words = try await transcriber.transcribe(samples: samples)
 
         var lines: [TranscriptLine] = []
-        for turn in merged {
-            let lo = max(0, min(samples.count, Int(turn.start * sampleRate)))
-            let hi = max(lo, min(samples.count, Int(turn.end * sampleRate)))
-            let text = try await transcriber.transcribe(samples: Array(samples[lo..<hi]))
-            lines.append(TranscriptLine(
-                speakerLabel: "\(track.rawValue):\(turn.speaker)", track: track,
-                start: turn.start, end: turn.end,
-                text: text.trimmingCharacters(in: .whitespacesAndNewlines)))
+        for word in words {
+            let label = "\(track.rawValue):\(Self.speaker(of: word, in: turns) ?? "0")"
+            if let last = lines.last, last.speakerLabel == label, word.start - last.end <= Self.maxPause {
+                lines[lines.count - 1] = TranscriptLine(
+                    speakerLabel: label, track: track, start: last.start, end: word.end,
+                    text: last.text + " " + word.text)
+            } else {
+                lines.append(TranscriptLine(speakerLabel: label, track: track, start: word.start, end: word.end, text: word.text))
+            }
         }
         return lines
+    }
+
+    /// The turn overlapping the word most; if none overlaps, the nearest turn in time.
+    static func speaker(of word: TimedWord, in turns: [SpeakerTurn]) -> String? {
+        func overlap(_ t: SpeakerTurn) -> Double { min(word.end, t.end) - max(word.start, t.start) }
+        func distance(_ t: SpeakerTurn) -> Double { max(t.start - word.end, word.start - t.end, 0) }
+        if let best = turns.max(by: { overlap($0) < overlap($1) }), overlap(best) > 0 { return best.speaker }
+        return turns.min(by: { distance($0) < distance($1) })?.speaker
     }
 }

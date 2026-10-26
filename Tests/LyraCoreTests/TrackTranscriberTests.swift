@@ -6,65 +6,57 @@ private struct FakeDiarizer: SpeakerDiarizing {
     func diarize(samples: [Float]) async throws -> [SpeakerTurn] { turns }
 }
 
-private actor SliceLog {
-    var lengths: [Int] = []
-    func add(_ n: Int) { lengths.append(n) }
+private struct FakeTranscriber: SpeechTranscribing {
+    let words: [TimedWord]
+    func transcribe(samples: [Float]) async throws -> [TimedWord] { words }
 }
 
-private struct FakeTranscriber: SpeechTranscribing {
-    let log = SliceLog()
-    func transcribe(samples: [Float]) async throws -> String {
-        await log.add(samples.count)
-        return "text\(samples.count)"
-    }
-}
+private func w(_ text: String, _ start: Double, _ end: Double) -> TimedWord { TimedWord(text: text, start: start, end: end) }
+private func t(_ speaker: String, _ start: Double, _ end: Double) -> SpeakerTurn { SpeakerTurn(speaker: speaker, start: start, end: end) }
 
 final class TrackTranscriberTests: XCTestCase {
-    private let tenSeconds = [Float](repeating: 0, count: 160_000)
-
-    private func run(_ turns: [SpeakerTurn], transcriber: FakeTranscriber = FakeTranscriber()) async throws -> [TranscriptLine] {
-        try await TrackTranscriber(diarizer: FakeDiarizer(turns: turns), transcriber: transcriber)
-            .run(samples: tenSeconds, track: .meeting)
+    private func run(_ turns: [SpeakerTurn], _ words: [TimedWord], track: TrackKind = .meeting) async throws -> [TranscriptLine] {
+        try await TrackTranscriber(diarizer: FakeDiarizer(turns: turns), transcriber: FakeTranscriber(words: words))
+            .run(samples: [Float](repeating: 0, count: 160_000), track: track)
     }
 
-    func testOneLinePerTurn() async throws {
-        let lines = try await run([
-            SpeakerTurn(speaker: "A", start: 0, end: 2),
-            SpeakerTurn(speaker: "B", start: 2, end: 4),
-            SpeakerTurn(speaker: "A", start: 4, end: 6),
-        ])
+    func testWordsAssignedByLargestOverlap() async throws {
+        // "there" straddles the boundary but sits mostly in B's turn.
+        let lines = try await run([t("A", 0, 2), t("B", 2, 4)], [w("hi", 0.2, 0.5), w("there", 1.9, 2.4), w("yes", 3, 3.3)])
+        XCTAssertEqual(lines.map(\.speakerLabel), ["meeting:A", "meeting:B"])
+        XCTAssertEqual(lines.map(\.text), ["hi", "there yes"])
+        XCTAssertEqual(lines.map(\.track), [.meeting, .meeting])
+    }
+
+    func testWordInGapGoesToNearestTurn() async throws {
+        let lines = try await run([t("A", 0, 1), t("B", 5, 6)], [w("could", 4.0, 4.3), w("we", 4.3, 4.5), w("go", 5.1, 5.4)])
+        XCTAssertEqual(lines.map(\.speakerLabel), ["meeting:B"])
+        XCTAssertEqual(lines.first?.text, "could we go")
+        XCTAssertEqual(lines.first?.start, 4.0)
+        XCTAssertEqual(lines.first?.end, 5.4)
+    }
+
+    func testNoTurnsIsSingleSpeakerZero() async throws {
+        let lines = try await run([], [w("hello", 0, 0.4), w("world", 0.5, 0.9)], track: .mic)
+        XCTAssertEqual(lines, [TranscriptLine(speakerLabel: "mic:0", track: .mic, start: 0, end: 0.9, text: "hello world")])
+    }
+
+    func testSpeakerChangeSplitsLines() async throws {
+        let lines = try await run([t("A", 0, 1), t("B", 1, 2), t("A", 2, 3)],
+                                  [w("one", 0.1, 0.5), w("two", 1.1, 1.5), w("three", 2.1, 2.5)])
         XCTAssertEqual(lines.map(\.speakerLabel), ["meeting:A", "meeting:B", "meeting:A"])
-        XCTAssertEqual(lines.map(\.text), ["text32000", "text32000", "text32000"])
-        XCTAssertEqual(lines.map(\.track), [.meeting, .meeting, .meeting])
+        XCTAssertEqual(lines.map(\.text), ["one", "two", "three"])
     }
 
-    func testMergesSameSpeakerTurns() async throws {
-        let lines = try await run([
-            SpeakerTurn(speaker: "A", start: 0, end: 2),
-            SpeakerTurn(speaker: "A", start: 2.2, end: 4),
-        ])
-        XCTAssertEqual(lines.count, 1)
-        XCTAssertEqual(lines.first?.start, 0)
-        XCTAssertEqual(lines.first?.end, 4)
+    func testLongPauseSplitsLines() async throws {
+        let lines = try await run([t("A", 0, 10)], [w("a", 0, 0.5), w("b", 1.9, 2.0), w("c", 3.6, 4.0)])
+        XCTAssertEqual(lines.map(\.text), ["a b", "c"])  // 1.4 s gap joins, 1.6 s gap splits
+        XCTAssertEqual(lines.map(\.start), [0, 3.6])
+        XCTAssertEqual(lines.map(\.end), [2.0, 4.0])
     }
 
-    func testSkipsBlips() async throws {
-        let lines = try await run([SpeakerTurn(speaker: "A", start: 0, end: 0.2)])
+    func testNoWordsIsEmpty() async throws {
+        let lines = try await run([t("A", 0, 2)], [])
         XCTAssertEqual(lines, [])
-    }
-
-    func testSliceUsesSampleRate() async throws {
-        let fake = FakeTranscriber()
-        _ = try await run([SpeakerTurn(speaker: "A", start: 1, end: 2)], transcriber: fake)
-        let lengths = await fake.log.lengths
-        XCTAssertEqual(lengths, [16_000])
-    }
-
-    func testMicTrackPrefix() async throws {
-        let lines = try await TrackTranscriber(
-            diarizer: FakeDiarizer(turns: [SpeakerTurn(speaker: "1", start: 0, end: 1)]),
-            transcriber: FakeTranscriber()
-        ).run(samples: tenSeconds, track: .mic)
-        XCTAssertEqual(lines.map(\.speakerLabel), ["mic:1"])
     }
 }
