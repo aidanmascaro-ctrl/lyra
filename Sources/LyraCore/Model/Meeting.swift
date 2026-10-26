@@ -10,6 +10,8 @@ public struct Meeting: Codable, Sendable {
     public let startedAt: Date
     public var endedAt: Date?
     public var warnings: [String]
+    /// Each track's level and error, saved at stop so crash recovery can still spot a silent meeting track.
+    public var tracks: [TrackResult]? = nil
 
     public init(id: UUID = UUID(), title: String, appName: String, bundleID: String? = nil,
                 startedAt: Date, endedAt: Date? = nil, warnings: [String] = []) {

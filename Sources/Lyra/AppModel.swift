@@ -9,7 +9,7 @@ import LyraSpeech
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var recordingSince: Date?
-    @Published private(set) var starting = false
+    @Published private(set) var state = RecordingState()
     @Published private(set) var processingCount = 0
     @Published private(set) var lastNote: URL?
     @Published private(set) var lastError: String?
@@ -27,7 +27,6 @@ final class AppModel: ObservableObject {
     private let panel = AllowPanel()
     private var session: MeetingSession?
     private var prompted: MicUser?
-    private var stopWhenStarted = false
     private var poller: Task<Void, Never>?
 
     func launch() {
@@ -46,6 +45,7 @@ final class AppModel: ObservableObject {
     }
 
     var isRecording: Bool { session != nil }
+    var starting: Bool { if case .starting = state.phase { true } else { false } }
 
     var elapsed: String {
         let s = Int(now.timeIntervalSince(recordingSince ?? now))
@@ -66,7 +66,7 @@ final class AppModel: ObservableObject {
                            onIgnore: { [weak self] in self?.prompted = nil })
             case .meetingEnded(let user):
                 if prompted == user { panel.close(); prompted = nil }
-                if session?.target == user { stopRecording() }
+                if state.meetingEnded(user) { stopSession() }
             }
         }
     }
@@ -87,53 +87,65 @@ final class AppModel: ObservableObject {
     func startInPerson() { startRecording(target: nil, title: "In-person meeting") }
 
     private func startRecording(target: MicUser?, title: String) {
-        guard session == nil, !starting else { return }
-        starting = true
+        guard state.begin(target: target) else { return }
         detector.isRecording = true
         lastError = nil
         let meeting = Meeting(title: title, appName: target?.appName ?? "In person",
                               bundleID: target.map(\.bundleID), startedAt: Date())
         Task {
             do {
-                session = try await MeetingSession(meeting: meeting, target: target, paths: paths)
+                let started = try await MeetingSession(meeting: meeting, target: target, paths: paths)
+                session = started
                 recordingSince = meeting.startedAt
+                // The call ended (or Stop was clicked) while we were still starting.
+                if state.started() { stopSession() }
             } catch {
+                state.failed()
                 detector.isRecording = false
                 lastError = "Couldn't start recording: \(error)"
             }
-            starting = false
-            if stopWhenStarted { stopWhenStarted = false; stopRecording() }
         }
     }
 
-    /// Stop button, the call ending, and sleep all land here: stop, then process in the background.
+    /// Stop button and sleep land here; a stop during the start window is applied once recording runs.
     func stopRecording() {
-        guard !starting else { stopWhenStarted = true; return }
+        if state.requestStop() { stopSession() }
+    }
+
+    /// Stops the running session and processes it in the background.
+    private func stopSession() {
         guard let session else { return }
         self.session = nil
         recordingSince = nil
         detector.isRecording = false
         Task {
             let tracks = await session.stop()
-            process(session.meeting, tracks: tracks, folder: session.folder, note: session.noteURL)
+            run([(session.meeting, tracks, session.folder, session.noteURL)])
         }
     }
 
     /// On quit: only finalise the CAFs. Processing is left to crash recovery on the next launch.
     func stopForQuit() async {
-        guard let session else { return }
+        while starting { try? await Task.sleep(for: .milliseconds(100)) }  // let a start finish (≤ ~3 s), then stop it
+        guard state.requestStop(), let session else { return }
         self.session = nil
         _ = await session.stop()
     }
 
     // MARK: processing
 
-    private func process(_ meeting: Meeting, tracks: [TrackResult], folder: URL, note: URL) {
-        processingCount += 1
+    private typealias Job = (meeting: Meeting, tracks: [TrackResult], folder: URL, note: URL)
+
+    /// Processes jobs one at a time, off the main actor; each result hops back here.
+    private func run(_ jobs: [Job]) {
+        guard !jobs.isEmpty else { return }
+        processingCount += jobs.count
         let processor = processor
         Task.detached {
-            let result = await Result { try await processor.process(meeting: meeting, tracks: tracks, folder: folder, noteURL: note) }
-            await self.finished(result, folder: folder)
+            for job in jobs {
+                let result = await Result { try await processor.process(meeting: job.meeting, tracks: job.tracks, folder: job.folder, noteURL: job.note) }
+                await self.finished(result, folder: job.folder)
+            }
         }
     }
 
@@ -141,32 +153,27 @@ final class AppModel: ObservableObject {
         processingCount -= 1
         switch result {
         case .success(let note): lastNote = note
-        case .failure(let error):
-            lastError = "Processing \(folder.lastPathComponent) failed (will retry next launch): \(error)"
+        case .failure(let error): report("Processing \(folder.lastPathComponent) failed (will retry next launch): \(error.localizedDescription)")
         }
     }
 
+    private func report(_ message: String) {
+        lastError = [lastError, message].compactMap { $0 }.joined(separator: "\n")
+    }
+
     /// Any folder with `.caf` files but no `transcript.json` was cut short by a crash or quit.
+    /// A folder that can't be recovered is reported, never skipped silently.
     private func recoverUnprocessed() {
+        var jobs: [Job] = []
         for folder in MeetingProcessor.pendingFolders(in: paths.recordingsRoot) {
-            guard var meeting = try? Meeting.load(from: folder) else { continue }
-            let note = paths.notesDir.appendingPathComponent(folder.lastPathComponent + ".md")
-            // A note already there means a run died between note and transcript.json; never overwrite it.
-            guard !FileManager.default.fileExists(atPath: note.path) else { continue }
-            let cafs = ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [])
-                .filter { $0.pathExtension == "caf" }
-            let tracks = cafs.compactMap { url -> TrackResult? in
-                guard let kind = TrackKind(rawValue: url.deletingPathExtension().lastPathComponent) else { return nil }
-                // Peak is unknown after a crash; don't claim silence we didn't measure.
-                return TrackResult(kind: kind, url: url, seconds: 0, peakLevel: 1, error: nil)
+            do {
+                let job = try MeetingProcessor.recoveryJob(folder: folder, notesDir: paths.notesDir)
+                jobs.append((job.meeting, job.tracks, folder, job.note))
+            } catch {
+                report("Couldn't recover \(folder.lastPathComponent): \(error.localizedDescription)")
             }
-            guard !tracks.isEmpty else { continue }
-            if meeting.endedAt == nil {
-                meeting.endedAt = cafs.compactMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }.max()
-                meeting.warnings.append("Recovered after Lyra stopped unexpectedly — the end of the meeting may be missing.")
-            }
-            process(meeting, tracks: tracks, folder: folder, note: note)
         }
+        run(jobs)
     }
 }
 

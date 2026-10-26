@@ -22,7 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Quit while recording: finalise the CAFs first; the next launch processes them.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard model.isRecording else { return .terminateNow }
+        guard model.isRecording || model.starting else { return .terminateNow }
         Task {
             await model.stopForQuit()
             sender.reply(toApplicationShouldTerminate: true)

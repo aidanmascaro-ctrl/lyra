@@ -1,7 +1,7 @@
 import Foundation
 
 /// What one track recorder produced. `error` is nil when the whole track was captured cleanly.
-public struct TrackResult: Sendable {
+public struct TrackResult: Codable, Sendable {
     public let kind: TrackKind
     public let url: URL
     public let seconds: Double

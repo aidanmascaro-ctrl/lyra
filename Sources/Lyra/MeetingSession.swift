@@ -34,10 +34,12 @@ final class MeetingSession {
         }
     }
 
-    /// Stops both tracks (CAFs are finalised) and records the end time in `meeting.json`.
+    /// Stops both tracks (CAFs are finalised) and saves the end time and track levels in `meeting.json`,
+    /// so a meeting recovered on a later launch still gets its silent-track warning.
     func stop() async -> [TrackResult] {
         let tracks = await recorder.stop()
         meeting.endedAt = Date()
+        meeting.tracks = tracks
         try? meeting.save(in: folder)
         return tracks
     }

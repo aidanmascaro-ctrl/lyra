@@ -110,3 +110,60 @@ final class MeetingProcessorTests: XCTestCase {
         XCTAssertEqual(MeetingProcessor.pendingFolders(in: root).map(\.lastPathComponent), [folder.lastPathComponent])
     }
 }
+
+final class MeetingProcessorRecoveryTests: XCTestCase {
+    private var dir: URL!
+    private var folder: URL!
+    private var notes: URL!
+
+    override func setUpWithError() throws {
+        dir = FileManager.default.temporaryDirectory.appendingPathComponent("lyra-rec-\(UUID().uuidString)")
+        folder = dir.appendingPathComponent("rec/2026-10-27 1000 — Call")
+        notes = dir.appendingPathComponent("notes")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: notes, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws { try? FileManager.default.removeItem(at: dir) }
+
+    private let processor = MeetingProcessor(
+        trackTranscriber: TrackTranscriber(diarizer: FakeDiarizer(), transcriber: FakeTranscriber()),
+        loader: { url in [Float(try Data(contentsOf: url).first ?? 0)] },
+        convert: { from, to in try Data(contentsOf: from).write(to: to) })
+
+    private func writeCAFs() throws {
+        try Data([1]).write(to: folder.appendingPathComponent("meeting.caf"))
+        try Data([2]).write(to: folder.appendingPathComponent("mic.caf"))
+    }
+
+    func testCompletesWhenOurNoteAlreadyExists() async throws {
+        let meeting = Meeting(title: "Call", appName: "zoom.us", startedAt: Date(), endedAt: Date())
+        try writeCAFs()
+        let note = notes.appendingPathComponent(folder.lastPathComponent + ".md")
+        let original = Data("---\nlyra_id: \(meeting.id.uuidString)\n---\nedited by Aidan\n".utf8)
+        try original.write(to: note)
+        let job = try { try meeting.save(in: folder); return try MeetingProcessor.recoveryJob(folder: folder, notesDir: notes) }()
+        _ = try await processor.process(meeting: job.meeting, tracks: job.tracks, folder: folder, noteURL: job.note)
+        XCTAssertEqual(try Data(contentsOf: note), original)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appendingPathComponent("transcript.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.appendingPathComponent("mic.caf").path))
+    }
+
+    func testRecoveryUsesSavedTrackLevels() async throws {
+        var meeting = Meeting(title: "Call", appName: "zoom.us", startedAt: Date(), endedAt: Date())
+        meeting.tracks = [TrackResult(kind: .meeting, url: folder.appendingPathComponent("meeting.caf"), seconds: 60, peakLevel: 0, error: nil),
+                          TrackResult(kind: .mic, url: folder.appendingPathComponent("mic.caf"), seconds: 60, peakLevel: 0.4, error: nil)]
+        try meeting.save(in: folder)
+        try writeCAFs()
+        let job = try MeetingProcessor.recoveryJob(folder: folder, notesDir: notes)
+        XCTAssertEqual(job.tracks.first { $0.kind == .meeting }?.peakLevel, 0)
+        _ = try await processor.process(meeting: job.meeting, tracks: job.tracks, folder: folder, noteURL: job.note)
+        let text = try String(contentsOf: job.note, encoding: .utf8)
+        XCTAssertEqual(text.components(separatedBy: "Meeting audio was silent").count, 2)  // exactly once
+    }
+
+    func testRecoveryJobThrowsWithoutMeetingJSON() throws {
+        try writeCAFs()
+        XCTAssertThrowsError(try MeetingProcessor.recoveryJob(folder: folder, notesDir: notes))
+    }
+}
