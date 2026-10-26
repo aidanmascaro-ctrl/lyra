@@ -41,15 +41,18 @@ public enum TranscriptMerger {
     public static let voiceEchoSimilarity = 0.75
 
     /// Second echo pass, by voice instead of words: catches leaked call audio the text filter missed because
-    /// the mic heard it differently. Drops the leaking mic cluster and all its lines. A mic cluster that
-    /// `VoiceMatcher` names as a known person is never dropped (Aidan's own voice is never echo).
+    /// the mic heard it differently. Drops the leaking mic cluster and all its lines. Only a mic cluster that
+    /// `VoiceMatcher` names as the owner is kept (Aidan's own voice is never echo); any other known person on
+    /// the mic who sounds like the call is the call leaking, so it goes. Centroids are unit-normalised here.
     public static func dropVoiceEcho(lines: [TranscriptLine], clusters: [SpeakerCluster], people: [Person], policy: MatchPolicy)
         -> (lines: [TranscriptLine], clusters: [SpeakerCluster]) {
-        let call = clusters.filter { $0.track == .meeting }.map(\.centroid)
+        let call = clusters.filter { $0.track == .meeting }.compactMap { VoiceMatcher.unit($0.centroid) }
         let echo = Set(clusters.filter { c in
-            c.track == .mic
-                && call.contains { $0.count == c.centroid.count && zip($0, c.centroid).reduce(0.0) { $0 + Double($1.0 * $1.1) } >= voiceEchoSimilarity }
-                && VoiceMatcher.match(c.centroid, people: people, policy: policy) == nil
+            guard c.track == .mic, let v = VoiceMatcher.unit(c.centroid),
+                  call.contains(where: { $0.count == v.count && zip($0, v).reduce(0.0) { $0 + Double($1.0 * $1.1) } >= voiceEchoSimilarity })
+            else { return false }
+            let match = VoiceMatcher.match(c.centroid, people: people, policy: policy)
+            return !(people.first { $0.id == match?.personID }?.isOwner ?? false)
         }.map(\.id))
         return (lines.filter { !echo.contains($0.speakerID ?? "") }, clusters.filter { !echo.contains($0.id) })
     }

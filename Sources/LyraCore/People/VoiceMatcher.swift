@@ -31,7 +31,7 @@ public enum VoiceMatcher {
         return VoiceMatch(personID: b.id, similarity: b.sim)
     }
 
-    private static func unit(_ v: [Float]) -> [Float]? {
+    static func unit(_ v: [Float]) -> [Float]? {
         let norm = v.reduce(0) { $0 + $1 * $1 }.squareRoot()
         guard !v.isEmpty, norm > 0, norm.isFinite else { return nil }
         return v.map { $0 / norm }

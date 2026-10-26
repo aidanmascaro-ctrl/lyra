@@ -47,7 +47,7 @@ none of the fixture's sentences, made at test time.
 
 `TranscriptMerger.dropVoiceEcho` runs after the text echo filter and before naming. It drops
 every mic cluster, with all its lines, when that cluster scores ≥ `voiceEchoSimilarity` = **0.75**
-against any call-track cluster. A mic cluster that matches a known person is never dropped.
+against any call-track cluster. A mic cluster that matches the owner (`isOwner`) is never dropped; any other known person who sounds like the call is dropped (fix round 2).
 Why 0.75: the leak scored 0.852 against the call; different voices scored ≤ 0.243.
 
 Re-run on 0409 with Aidan and Daniel enrolled (temp store), using the processor's order as

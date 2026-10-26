@@ -141,10 +141,11 @@ final class MeetingProcessorTests: XCTestCase {
     /// A known voice is named in transcript.json and the note; speakers.json still lists every kept cluster.
     func testNamesKnownVoice() async throws {
         let marco = Person(name: "Marco", samples: [[0, 1]])
-        _ = try await processor(people: [marco]).process(meeting: meeting, tracks: [track(.meeting), track(.mic)], folder: folder, noteURL: note)
+        let aidan = Person(name: "Aidan", isOwner: true, samples: [[1, 0]])
+        _ = try await processor(people: [marco, aidan]).process(meeting: meeting, tracks: [track(.meeting), track(.mic)], folder: folder, noteURL: note)
         let lines = try JSONDecoder().decode([TranscriptLine].self, from: Data(contentsOf: folder.appendingPathComponent("transcript.json")))
-        XCTAssertEqual(lines.map(\.speakerLabel), ["Marco", "Speaker 1"])
-        XCTAssertEqual(lines.map(\.personID), [marco.id, nil])
+        XCTAssertEqual(lines.map(\.speakerLabel), ["Marco", "Aidan"])
+        XCTAssertEqual(lines.map(\.personID), [marco.id, aidan.id])
         XCTAssertTrue(try String(contentsOf: note, encoding: .utf8).contains("**Marco** _(known voice)_ [00:00:00] hello from zoom"))
         let speakers = try JSONDecoder().decode([SpeakerCluster].self, from: Data(contentsOf: folder.appendingPathComponent("speakers.json")))
         XCTAssertEqual(speakers.map(\.id), ["meeting:A", "mic:A"])
