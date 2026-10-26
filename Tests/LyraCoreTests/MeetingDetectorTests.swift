@@ -24,8 +24,31 @@ final class MeetingDetectorTests: XCTestCase {
 
     func testIgnoresSecondAppWhileRecording() {
         let d = detector()
+        XCTAssertEqual(d.update(users: [zoom], now: t0), [.meetingStarted(zoom)])
         d.isRecording = true
-        XCTAssertEqual(d.update(users: [chrome], now: t0), [])
+        XCTAssertEqual(d.update(users: [zoom, chrome], now: t0.addingTimeInterval(1)), [])
+    }
+
+    func testAppPresentWhenRecordingStopsDoesNotReprompt() {
+        let d = detector()
+        _ = d.update(users: [zoom], now: t0)
+        d.isRecording = true
+        _ = d.update(users: [zoom, chrome], now: t0.addingTimeInterval(1))
+        _ = d.update(users: [chrome], now: t0.addingTimeInterval(2))
+        XCTAssertEqual(d.update(users: [chrome], now: t0.addingTimeInterval(13)), [.meetingEnded(zoom)])
+        d.isRecording = false
+        XCTAssertEqual(d.update(users: [chrome], now: t0.addingTimeInterval(14)), [])
+        XCTAssertEqual(d.update(users: [chrome], now: t0.addingTimeInterval(15)), [])
+    }
+
+    func testManualStartWithAppPresentDoesNotPromptAfterStop() {
+        let d = detector()
+        d.isRecording = true
+        XCTAssertEqual(d.update(users: [zoom], now: t0), [])
+        d.isRecording = false
+        XCTAssertEqual(d.update(users: [zoom], now: t0.addingTimeInterval(1)), [])
+        XCTAssertEqual(d.update(users: [], now: t0.addingTimeInterval(2)), [])
+        XCTAssertEqual(d.update(users: [zoom], now: t0.addingTimeInterval(3)), [.meetingStarted(zoom)])
     }
 
     func testEndsAfterGrace() {
