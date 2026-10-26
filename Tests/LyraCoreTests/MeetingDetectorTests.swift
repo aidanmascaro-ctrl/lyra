@@ -95,4 +95,17 @@ final class MeetingDetectorTests: XCTestCase {
         let memos = MicUser(pid: 300, bundleID: "com.apple.VoiceMemos", appName: "Voice Memos")
         XCTAssertEqual(detector(ignored: ["com.apple.VoiceMemos"]).update(users: [memos], now: t0), [])
     }
+
+    /// Ignoring a long-running mic user must not block detection of every other app.
+    func testDismissLetsOtherAppsPromptButNotTheIgnoredOne() {
+        let d = detector()
+        XCTAssertEqual(d.update(users: [zoom], now: t0), [.meetingStarted(zoom)])
+        d.dismiss()
+        XCTAssertEqual(d.update(users: [zoom], now: t0.addingTimeInterval(1)), [])
+        XCTAssertEqual(d.update(users: [zoom, chrome], now: t0.addingTimeInterval(2)), [.meetingStarted(chrome)])
+        d.dismiss()
+        var later: [DetectorEvent] = []  // both keep the mic, polled every second as the app does
+        for i in 3...30 { later += d.update(users: [zoom, chrome], now: t0.addingTimeInterval(Double(i))) }
+        XCTAssertEqual(later, [])
+    }
 }

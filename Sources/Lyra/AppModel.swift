@@ -63,7 +63,8 @@ final class AppModel: ObservableObject {
                 let title = Self.windowTitle(for: user)
                 panel.show(app: user.appName, title: title,
                            onAllow: { [weak self] in self?.prompted = nil; self?.startRecording(target: user, title: title) },
-                           onIgnore: { [weak self] in self?.prompted = nil })
+                           // Also the 60 s timeout. Frees the detector so other apps can still prompt.
+                           onIgnore: { [weak self] in self?.prompted = nil; self?.detector.dismiss() })
             case .meetingEnded(let user):
                 if prompted == user { panel.close(); prompted = nil }
                 if state.meetingEnded(user) { stopSession() }

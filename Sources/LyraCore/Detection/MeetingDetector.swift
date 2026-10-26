@@ -24,6 +24,10 @@ public final class MeetingDetector {
         self.endGrace = endGrace
     }
 
+    /// The prompt was ignored: stop tracking this meeting so other apps can prompt. The ignored app
+    /// stays in `known` while it holds the mic, so it won't prompt again until it releases it.
+    public func dismiss() { active = nil }
+
     public func update(users: [MicUser], now: Date) -> [DetectorEvent] {
         let eligible = users.filter { $0.pid != ownPID && !ignoredBundleIDs.contains($0.bundleID) }
 
