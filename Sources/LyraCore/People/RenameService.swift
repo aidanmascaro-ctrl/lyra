@@ -2,19 +2,31 @@ import Foundation
 
 public enum RenameOutcome: Equatable, Sendable {
     case done
-    /// Aidan edited the note's transcript section in Obsidian; the note was left alone. Ask, then call again with
-    /// `speakerLabel` = the new name, `to:` the same name and `overwriteEditedNote: true` (that call only rewrites the note).
+    /// Aidan edited the note's transcript section in Obsidian; the note was left alone (transcript.json and people.json
+    /// are already updated). If he agrees to overwrite it, call `RenameService.rewriteNote` — that is the confirm action.
     case needsConfirmation
 }
 
-public enum RenameError: Error {
+public enum RenameError: Error, LocalizedError {
     case noSuchSpeaker(String)
     /// transcript.json (and the note, per `outcome`) were updated, but the voice could not be learned.
     case notLearned(outcome: RenameOutcome, underlying: Error)
+    /// The voice could not be learned and then the note could not be updated either; transcript.json was updated.
+    case notLearnedAndNoteFailed(learnError: Error, noteError: Error)
+
+    public var errorDescription: String? {
+        let voice = "The name was saved in the transcript, but Lyra couldn't remember this voice for future meetings. Renaming again won't retry it."
+        switch self {
+        case .noSuchSpeaker(let label): return "There is no one called “\(label)” in this meeting's transcript any more."
+        case .notLearned(_, let e): return "\(voice) (\(e.localizedDescription))"
+        case .notLearnedAndNoteFailed(let l, let n):
+            return "\(voice) (\(l.localizedDescription)) The Obsidian note couldn't be updated either: \(n.localizedDescription)"
+        }
+    }
 }
 
 /// Renames one speaker in one meeting and learns their voice. Writes, in order: transcript.json → people.json → note.
-public struct RenameService {
+public struct RenameService: Sendable {
     private let people: PeopleStore
 
     public init(people: PeopleStore) { self.people = people }
@@ -31,8 +43,8 @@ public struct RenameService {
         let existing = people.person(named: trimmed)
         let display = existing?.name ?? trimmed
 
-        if display == speakerLabel {  // same name: nothing to change, except the note when Aidan confirmed overwriting it
-            return overwriteEditedNote ? try writeNote(lines: before, previous: before, folder: folder, note: note, overwrite: true) : .done
+        if display == speakerLabel {  // same name: nothing to rename, but `.done` must still mean the note matches
+            return try writeNote(lines: before, previous: before, folder: folder, note: note, overwrite: overwriteEditedNote)
         }
 
         var lines = before
@@ -56,9 +68,18 @@ public struct RenameService {
             }
         } catch { learnError = error }
 
-        let outcome = try writeNote(lines: lines, previous: before, folder: folder, note: note, overwrite: overwriteEditedNote)
+        let outcome: RenameOutcome
+        do { outcome = try writeNote(lines: lines, previous: before, folder: folder, note: note, overwrite: overwriteEditedNote) }
+        catch { throw learnError.map { RenameError.notLearnedAndNoteFailed(learnError: $0, noteError: error) } ?? error }
         if let learnError { throw RenameError.notLearned(outcome: outcome, underlying: learnError) }
         return outcome
+    }
+
+    /// The confirm action for `.needsConfirmation`: re-renders the note's transcript section from the current
+    /// transcript.json, overwriting Aidan's edits inside it (text outside the section is kept), and records the new hash.
+    public func rewriteNote(inMeetingFolder folder: URL, note: URL) throws {
+        let lines = try JSONDecoder().decode([TranscriptLine].self, from: Data(contentsOf: folder.appendingPathComponent("transcript.json")))
+        _ = try writeNote(lines: lines, previous: lines, folder: folder, note: note, overwrite: true)
     }
 
     /// Learns each of the speaker's clusters that speakers.json has. A join keeps only its first cluster's id, so for a
@@ -84,11 +105,16 @@ public struct RenameService {
         guard let current = NoteSections.transcriptBody(of: text) else { throw NoteSectionsError.missingTranscriptMarkers }
         // Old meetings have no hash: unedited only if the section still renders identically from the old transcript.
         let lyraWrote = meeting.transcriptSectionHash ?? NoteSections.hash(NoteRenderer.transcriptBody(lines: previous))
-        guard overwrite || NoteSections.hash(current) == lyraWrote else { return .needsConfirmation }
         let body = NoteRenderer.transcriptBody(lines: lines)
-        try NoteSections.replaceTranscript(in: text, with: body).write(to: note, atomically: true, encoding: .utf8)
-        meeting.transcriptSectionHash = NoteSections.hash(body)
-        try meeting.save(in: folder)
+        // Already matching (e.g. Aidan made the same change himself): no write, just record the hash.
+        if current != body {
+            guard overwrite || NoteSections.hash(current) == lyraWrote else { return .needsConfirmation }
+            try NoteSections.replaceTranscript(in: text, with: body).write(to: note, atomically: true, encoding: .utf8)
+        }
+        if meeting.transcriptSectionHash != NoteSections.hash(body) {
+            meeting.transcriptSectionHash = NoteSections.hash(body)
+            try meeting.save(in: folder)
+        }
         return .done
     }
 }

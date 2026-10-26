@@ -1,7 +1,13 @@
 import CryptoKit
 import Foundation
 
-public enum NoteSectionsError: Error, Equatable { case missingTranscriptMarkers }
+public enum NoteSectionsError: Error, Equatable, LocalizedError {
+    case missingTranscriptMarkers
+
+    public var errorDescription: String? {
+        "Lyra couldn't find where the transcript starts and ends in this note (the lyra:transcript markers were removed), so it didn't change the note."
+    }
+}
 
 /// The note's Lyra-owned transcript section: everything between the two marker lines. Text outside it is Aidan's.
 public enum NoteSections {

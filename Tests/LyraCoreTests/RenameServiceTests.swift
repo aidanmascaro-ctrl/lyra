@@ -116,26 +116,39 @@ final class RenameServiceTests: XCTestCase {
     }
 
     func testOverwriteWhenConfirmed() throws {
+        try store.learn(name: "Marco", sample: [0, 1, 0])
         let (folder, note) = try makeMeeting()
         try editNote(note, "] two", "] two (edited)")
         try editNote(note, "<!-- lyra:notes:start -->\n", "<!-- lyra:notes:start -->\nmy notes\n")
         let service = RenameService(people: store)
-        XCTAssertEqual(try service.rename(speakerLabel: "Speaker 2", to: "Marco", inMeetingFolder: folder, note: note), .needsConfirmation)
-        // Aidan confirms: the lines now carry the new name, so the same-name call only rewrites the note.
-        XCTAssertEqual(try service.rename(speakerLabel: "Marco", to: "Marco", inMeetingFolder: folder, note: note,
-                                          overwriteEditedNote: true), .done)
+        XCTAssertEqual(try service.rename(speakerLabel: "Speaker 2", to: "marco", inMeetingFolder: folder, note: note), .needsConfirmation)
+        // Aidan confirms: rewriteNote is the confirm action; it doesn't learn again.
+        try service.rewriteNote(inMeetingFolder: folder, note: note)
         let text = try String(contentsOf: note, encoding: .utf8)
         let out = try lines(folder)
+        XCTAssertEqual(out.map(\.speakerLabel), ["Speaker 1", "Marco", "Speaker 1", "Marco"])
         XCTAssertEqual(NoteSections.transcriptBody(of: text), NoteRenderer.transcriptBody(lines: out))
         XCTAssertTrue(text.contains("<!-- lyra:notes:start -->\nmy notes\n"))
-        XCTAssertEqual(store.person(named: "Marco")?.samples.count, 1)  // confirming doesn't learn twice
+        XCTAssertEqual(store.person(named: "Marco")?.samples.count, 2)
         XCTAssertEqual(try Meeting.load(from: folder).transcriptSectionHash, NoteSections.hash(NoteRenderer.transcriptBody(lines: out)))
+        // Now the note matches, a later rename goes straight through.
+        XCTAssertEqual(try service.rename(speakerLabel: "Speaker 1", to: "Ann", inMeetingFolder: folder, note: note), .done)
 
         // Overwrite straight away also works.
         let (f2, n2) = try makeMeeting("m2")
         try editNote(n2, "] one", "] one!")
         XCTAssertEqual(try service.rename(speakerLabel: "Speaker 1", to: "Ann", inMeetingFolder: f2, note: n2, overwriteEditedNote: true), .done)
         XCTAssertTrue(try String(contentsOf: n2, encoding: .utf8).contains("**Ann** [00:00:00] hi"))
+    }
+
+    /// `.done` always means the note matches: a same-name rename over an edited section still asks.
+    func testSameNameWithEditedSectionNeedsConfirmation() throws {
+        let (folder, note) = try makeMeeting()
+        try editNote(note, "] two", "] two!")
+        let before = try Data(contentsOf: note)
+        XCTAssertEqual(try RenameService(people: store).rename(speakerLabel: "Speaker 2", to: "Speaker 2", inMeetingFolder: folder, note: note),
+                       .needsConfirmation)
+        XCTAssertEqual(try Data(contentsOf: note), before)
     }
 
     func testSameNameIsNoOp() throws {
@@ -190,5 +203,27 @@ final class RenameServiceTests: XCTestCase {
         XCTAssertEqual(try lines(folder).map(\.speakerLabel), ["Speaker 1", "Marco", "Speaker 1", "Marco"])
         XCTAssertTrue(try String(contentsOf: note, encoding: .utf8).contains("**Marco** [00:00:02] one"))
         XCTAssertEqual(store.person(named: "Marco")?.samples, [[1, 0]])
+    }
+
+    /// A known person's other line with a different label (Aidan relabelled one line set earlier) still counts.
+    func testLearnsEveryClusterOfTheKnownPerson() throws {
+        let marco = try store.learn(name: "Marco", sample: [0, 1, 0])
+        var a = line("Marco", "meeting:B", 0, "x"), b = line("J.", "meeting:C", 2, "y")
+        a.personID = marco.id; b.personID = marco.id
+        let (folder, note) = try makeMeeting(lines: [a, b, line("Speaker 1", "meeting:A", 4, "z")])
+        try RenameService(people: store).rename(speakerLabel: "Marco", to: "Paul", inMeetingFolder: folder, note: note)
+        XCTAssertEqual(store.person(named: "Paul")?.samples, [[0, 1, 0], [0, 0, 1]])
+        XCTAssertEqual(try lines(folder).map(\.speakerLabel), ["Paul", "J.", "Speaker 1"])
+    }
+
+    func testLearnAndNoteFailuresBothSurface() throws {
+        try store.learn(name: "Marco", sample: [1, 0])
+        let (folder, note) = try makeMeeting()
+        try FileManager.default.removeItem(at: note)
+        XCTAssertThrowsError(try RenameService(people: store).rename(speakerLabel: "Speaker 2", to: "Marco", inMeetingFolder: folder, note: note)) {
+            guard case RenameError.notLearnedAndNoteFailed(PeopleStoreError.dimensionMismatch, _) = $0 else { return XCTFail("\($0)") }
+            XCTAssertTrue($0.localizedDescription.contains("won't retry"))
+        }
+        XCTAssertEqual(try lines(folder).map(\.speakerLabel), ["Speaker 1", "Marco", "Speaker 1", "Marco"])
     }
 }
