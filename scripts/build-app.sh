@@ -14,7 +14,7 @@ cp Resources/Info.plist "$APP/Contents/Info.plist"
 ID="${LYRA_SIGN_ID:-Lyra Local}"
 # Captured first: `grep -q` exits on the first match, and under pipefail the SIGPIPE it gives
 # `security` would fail the pipeline and force a false ad-hoc fallback.
-IDENTITIES="$(security find-identity -v -p codesigning)"
+IDENTITIES="$(security find-identity -v -p codesigning || true)"
 if grep -qF "\"$ID\"" <<<"$IDENTITIES"; then
     codesign --force --deep -s "$ID" "$APP"
 else
