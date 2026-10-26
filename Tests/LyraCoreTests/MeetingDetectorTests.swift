@@ -1,0 +1,50 @@
+import XCTest
+@testable import LyraCore
+
+final class MeetingDetectorTests: XCTestCase {
+    let zoom = MicUser(pid: 100, bundleID: "us.zoom.xos", appName: "zoom.us")
+    let chrome = MicUser(pid: 200, bundleID: "com.google.Chrome", appName: "Google Chrome")
+    let t0 = Date(timeIntervalSince1970: 1_000_000)
+
+    func detector(ignored: Set<String> = []) -> MeetingDetector {
+        MeetingDetector(ownPID: 1, ignoredBundleIDs: ignored, endGrace: 10)
+    }
+
+    func testStartsOnceForNewMicUser() {
+        let d = detector()
+        var events: [DetectorEvent] = []
+        for i in 0..<3 { events += d.update(users: [zoom], now: t0.addingTimeInterval(Double(i))) }
+        XCTAssertEqual(events, [.meetingStarted(zoom)])
+    }
+
+    func testIgnoresOwnProcess() {
+        let own = MicUser(pid: 1, bundleID: "app.lyra", appName: "Lyra")
+        XCTAssertEqual(detector().update(users: [own], now: t0), [])
+    }
+
+    func testIgnoresSecondAppWhileRecording() {
+        let d = detector()
+        d.isRecording = true
+        XCTAssertEqual(d.update(users: [chrome], now: t0), [])
+    }
+
+    func testEndsAfterGrace() {
+        let d = detector()
+        _ = d.update(users: [zoom], now: t0)
+        XCTAssertEqual(d.update(users: [], now: t0.addingTimeInterval(5)), [])
+        XCTAssertEqual(d.update(users: [], now: t0.addingTimeInterval(11)), [.meetingEnded(zoom)])
+    }
+
+    func testBriefDropDoesNotEnd() {
+        let d = detector()
+        _ = d.update(users: [zoom], now: t0)
+        XCTAssertEqual(d.update(users: [], now: t0.addingTimeInterval(5)), [])
+        XCTAssertEqual(d.update(users: [zoom], now: t0.addingTimeInterval(6)), [])
+        XCTAssertEqual(d.update(users: [], now: t0.addingTimeInterval(12)), [])
+    }
+
+    func testIgnoredBundle() {
+        let memos = MicUser(pid: 300, bundleID: "com.apple.VoiceMemos", appName: "Voice Memos")
+        XCTAssertEqual(detector(ignored: ["com.apple.VoiceMemos"]).update(users: [memos], now: t0), [])
+    }
+}
