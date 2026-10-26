@@ -1,6 +1,7 @@
 import Foundation
 
-/// One speaker-attributed line of a meeting transcript. Times are seconds from the track start.
+/// One speaker-attributed line of a meeting transcript. Times are seconds on the shared meeting timeline
+/// (the track's start offset applied), not seconds into that track's own audio file.
 public struct TranscriptLine: Codable, Equatable, Sendable {
     public var speakerLabel: String
     public let track: TrackKind

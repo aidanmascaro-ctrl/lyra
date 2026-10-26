@@ -69,6 +69,26 @@ final class SpeechTests: XCTestCase {
         XCTAssertEqual(Double(samples.count) / 16_000, 43, accuracy: 1)
     }
 
+    /// A CAF cut off halfway (a crash-damaged master) must throw, not load as a shorter meeting.
+    func testTruncatedCAFThrows() throws {
+        try requireIntegration()
+        let wav = try XCTUnwrap(Bundle.module.url(
+            forResource: "speaker-test-3-voices", withExtension: "wav", subdirectory: "Fixtures"))
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("lyra-cut-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let caf = dir.appendingPathComponent("meeting.caf")
+        let convert = Process()
+        convert.executableURL = URL(fileURLWithPath: "/usr/bin/afconvert")
+        convert.arguments = ["-f", "caff", "-d", "LEF32@48000", "-c", "2", wav.path, caf.path]
+        try convert.run()
+        convert.waitUntilExit()
+        let data = try Data(contentsOf: caf)
+        try data.prefix(data.count / 2).write(to: caf)
+
+        XCTAssertThrowsError(try AudioLoader.load16kMono(url: caf))
+    }
+
     /// A call where only the right channel carries sound must not load as silence.
     func testStereoRightChannelOnlyIsHeard() throws {
         try requireIntegration()

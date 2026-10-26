@@ -19,11 +19,13 @@ public struct Meeting: Codable, Sendable {
         self.startedAt = startedAt; self.endedAt = endedAt; self.warnings = warnings
     }
 
-    /// A meeting title from the app's window name: browser suffixes (" - Google Chrome", with or without
-    /// a trailing " - <Profile>") are dropped; nothing left means the app name.
+    /// A meeting title from the app's window name. When the app is a browser, its own suffix
+    /// (" - Google Chrome", with or without a trailing " - <Profile>") is dropped; nothing left means the app name.
     public static func title(window: String?, appName: String) -> String {
         var title = window ?? ""
-        search: for browser in ["Google Chrome", "Microsoft Edge", "Brave", "Arc", "Safari"] {
+        // Only the meeting app's own suffix: " - Arc - " inside a Safari title is part of the title.
+        let browsers = ["Google Chrome", "Microsoft Edge", "Brave", "Arc", "Safari"].filter { appName == $0 || appName.hasPrefix($0 + " ") }  // "Brave Browser"
+        search: for browser in browsers {
             for dash in [" - ", " – ", " — "] {
                 if title.hasSuffix(dash + browser) {
                     title.removeLast((dash + browser).count)

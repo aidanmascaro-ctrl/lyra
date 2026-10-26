@@ -111,6 +111,10 @@ final class MeetingProcessorTests: XCTestCase {
         XCTAssertEqual(Meeting.title(window: " - Brave", appName: "Brave Browser"), "Brave Browser")
         XCTAssertEqual(Meeting.title(window: nil, appName: "zoom.us"), "zoom.us")
         XCTAssertEqual(Meeting.title(window: "Zoom Meeting", appName: "zoom.us"), "Zoom Meeting")
+        // Only the meeting app's own suffix is stripped.
+        XCTAssertEqual(Meeting.title(window: "Noah - Arc - Plan — Safari", appName: "Safari"), "Noah - Arc - Plan")
+        XCTAssertEqual(Meeting.title(window: "Sync - Microsoft Edge", appName: "Google Chrome"), "Sync - Microsoft Edge")
+        XCTAssertEqual(Meeting.title(window: "Standup - Brave", appName: "Brave Browser"), "Standup")
     }
 
     func testMicOnlyMeeting() async throws {

@@ -64,7 +64,8 @@ final class AppModel: ObservableObject {
                 panel.show(app: user.appName, title: title,
                            onAllow: { [weak self] in
                                self?.prompted = nil
-                               self?.startRecording(target: user, title: title)
+                               // Read again: the user may have switched tabs while the prompt showed.
+                               self?.startRecording(target: user, title: Self.windowTitle(for: user))
                                Self.askForWindowTitlesOnce()
                            },
                            // Also the 60 s timeout. Frees the detector so other apps can still prompt.
