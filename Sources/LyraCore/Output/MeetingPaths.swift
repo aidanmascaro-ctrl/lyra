@@ -27,8 +27,8 @@ public struct MeetingPaths: @unchecked Sendable {
         f.timeZone = timeZone
         f.dateFormat = "yyyy-MM-dd HHmm"
         let prefix = "\(f.string(from: startedAt)) — "
-        // Cap the whole name at 120 (brief's test); only the title portion is truncated.
-        return prefix + Self.sanitise(title, limit: 120 - prefix.count)
+        // Whole name <= 120 Characters and <= 200 bytes (255 max, room for " (nn)" and ".md").
+        return prefix + Self.sanitise(title, limit: 120 - prefix.count, byteLimit: 200 - prefix.utf8.count)
     }
 
     public func reserve(for meeting: Meeting, timeZone: TimeZone) throws -> (folder: URL, note: URL) {
@@ -53,12 +53,24 @@ public struct MeetingPaths: @unchecked Sendable {
         }
     }
 
-    /// Replace filesystem-hostile characters with "-", collapse spaces, trim, cap at `limit` Characters.
-    static func sanitise(_ title: String, limit: Int = 120) -> String {
-        let bad = Set("/:\\?*\"<>|\n\r")
-        var s = String(title.map { bad.contains($0) ? "-" : $0 })
+    /// Replace forbidden and control scalars with "-", collapse spaces, trim, then cap at `limit`
+    /// Characters and `byteLimit` UTF-8 bytes (cut on a Character boundary).
+    static func sanitise(_ title: String, limit: Int = 120, byteLimit: Int = 200) -> String {
+        let bad = Set("/:\\?*\"<>|".unicodeScalars)
+        var scalars = String.UnicodeScalarView()
+        for u in title.unicodeScalars {
+            scalars.append(bad.contains(u) || u.properties.generalCategory == .control ? "-" : u)
+        }
+        var s = String(scalars)
         while s.contains("  ") { s = s.replacingOccurrences(of: "  ", with: " ") }
         s = s.trimmingCharacters(in: .whitespaces)
-        return String(s.prefix(limit)).trimmingCharacters(in: .whitespaces)
+        var out = ""
+        var bytes = 0
+        for ch in s.prefix(limit) {
+            let b = String(ch).utf8.count
+            if bytes + b > byteLimit { break }
+            out.append(ch); bytes += b
+        }
+        return out.trimmingCharacters(in: .whitespaces)
     }
 }

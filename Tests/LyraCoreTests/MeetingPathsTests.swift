@@ -55,4 +55,21 @@ final class MeetingPathsTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: a.folder.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: a.note.path))
     }
+
+    func testHostileScalarsAreNeutralised() {
+        for title in ["a\r\nb", "x/\u{0301}y", "t\tab\u{0}z"] {
+            let n = paths.folderName(title: title, startedAt: date, timeZone: perth)
+            for bad in ["\r", "\n", "/", "\t", "\u{0}"] { XCTAssertFalse(n.unicodeScalars.contains { String($0) == bad }, "\(title)") }
+        }
+    }
+
+    func testReserveSucceedsWithOverlongByteTitles() throws {
+        for title in [String(repeating: "🚀", count: 200), String(repeating: "漢", count: 200)] {
+            let r = try paths.reserve(for: meeting(title), timeZone: perth)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: r.folder.path))
+            let r2 = try paths.reserve(for: meeting(title), timeZone: perth)
+            XCTAssertTrue(r2.folder.lastPathComponent.hasSuffix(" (2)"))
+            XCTAssertLessThanOrEqual(r2.note.lastPathComponent.utf8.count, 255)
+        }
+    }
 }
