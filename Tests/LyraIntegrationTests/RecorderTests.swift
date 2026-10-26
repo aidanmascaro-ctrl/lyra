@@ -52,16 +52,20 @@ final class RecorderTests: XCTestCase {
     func testMicResumesAfterConfigurationChange() async throws {
         let recorder = MicRecorder()
         try recorder.start(writingTo: folder.appendingPathComponent("mic.caf"))
+        let started = Date()  // once capture runs; engine setup before it isn't recording time
         try await Task.sleep(for: .seconds(1))
-        // Simulate a device change: the engine stops itself, then posts the notification.
+        // Simulate a device change: the engine stops itself, stays down for a while, then posts the notification.
         let engine = try XCTUnwrap(recorder.session?.engine)
         engine.stop()
+        try await Task.sleep(for: .seconds(1))
         NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: engine)
         try await Task.sleep(for: .seconds(2))
         let result = await recorder.stop()
-        print("config change: seconds=\(result.seconds) error=\(result.error ?? "nil")")
+        let elapsed = Date().timeIntervalSince(started)
+        print("config change: seconds=\(result.seconds) elapsed=\(elapsed) error=\(result.error ?? "nil")")
         XCTAssertNil(result.error)
-        XCTAssertGreaterThanOrEqual(result.seconds, 2.7)
+        // The stopped second is kept as silence, so the mic track stays aligned with the meeting track.
+        XCTAssertEqual(result.seconds, elapsed, accuracy: 0.2)
     }
 
     func testSecondStartThrows() throws {

@@ -41,6 +41,7 @@ final class MicSession: @unchecked Sendable {
     private var resumeError: String?
     private var bridge: FormatBridge?
     private var observer: NSObjectProtocol?
+    private var startedAt: TimeInterval = 0  // systemUptime: monotonic; recording stops before the Mac sleeps
 
     init(url: URL) throws {
         let format = engine.inputNode.outputFormat(forBus: 0)
@@ -50,6 +51,7 @@ final class MicSession: @unchecked Sendable {
     }
 
     func start() throws {
+        startedAt = ProcessInfo.processInfo.systemUptime
         try lock.withLock { try installTapAndStart() }
         observer = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self] _ in
             self?.resume()
@@ -60,18 +62,43 @@ final class MicSession: @unchecked Sendable {
     private func resume() {
         lock.withLock {
             guard !finished else { return }
+            removeTap()  // no tap may write while the gap is filled
+            padToWallClock()
             do { try installTapAndStart() } catch where resumeError == nil {
                 resumeError = "Microphone input changed at t=\(String(format: "%.1f", writer.seconds))s and could not be resumed: \(error)"
             } catch {}
         }
     }
 
-    private func installTapAndStart() throws {
+    /// Writes silence for the time the engine was down, so every later mic line keeps its place
+    /// against the meeting track. Runs on the notification thread, so allocating here is fine.
+    /// ponytail: "down time" = wall clock minus frames written, so engine start latency is padded too (~tens of ms).
+    private func padToWallClock() {
+        let rate = fileFormat.sampleRate
+        var missing = Int((ProcessInfo.processInfo.systemUptime - startedAt - writer.seconds) * rate)
+        // Tap-sized chunks: one 1 s write overflowed the async writer's ring (OSStatus -66570).
+        guard missing > Int(0.05 * rate), let silence = AVAudioPCMBuffer(pcmFormat: fileFormat, frameCapacity: 4096) else { return }
+        silence.frameLength = silence.frameCapacity
+        for buffer in UnsafeMutableAudioBufferListPointer(silence.mutableAudioBufferList) {
+            if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) }
+        }
+        while missing > 0 {
+            silence.frameLength = AVAudioFrameCount(min(missing, Int(silence.frameCapacity)))
+            writer.write(silence.audioBufferList)
+            missing -= Int(silence.frameLength)
+        }
+    }
+
+    private func removeTap() {
         engine.stop()
-        let input = engine.inputNode
-        input.removeTap(onBus: 0)
+        engine.inputNode.removeTap(onBus: 0)
         bridge?.flush()
         bridge = nil
+    }
+
+    private func installTapAndStart() throws {
+        removeTap()
+        let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else { throw AudioError(description: "no microphone input available") }
         if format == fileFormat {
@@ -90,10 +117,7 @@ final class MicSession: @unchecked Sendable {
         if let observer { NotificationCenter.default.removeObserver(observer) }
         let error = lock.withLock {
             finished = true
-            engine.stop()
-            engine.inputNode.removeTap(onBus: 0)
-            bridge?.flush()
-            bridge = nil
+            removeTap()
             return resumeError
         }
         return writer.finish(kind: .mic, extraError: error)
