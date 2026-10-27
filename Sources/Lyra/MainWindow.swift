@@ -15,6 +15,7 @@ struct MainWindow: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .top) { TitleBarStrip().frame(height: Chrome.topInset).ignoresSafeArea() }
         .overlay(alignment: .topLeading) {
             if app.route != .home { BackPill { app.route = .home } }
         }
