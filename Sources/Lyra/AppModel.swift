@@ -57,6 +57,8 @@ final class AppModel: ObservableObject {
     }()
     /// The tail of the background queue: processing and after-meeting work run one at a time, in order.
     private var pipeline: Task<Void, Never>?
+    /// Meeting folders with processing, expansion or re-expansion queued or running (count per folder path).
+    private var busyFolders: [String: Int] = [:]
     private let micUsage = CoreAudioMicUsage()
     private let ignoredApps = IgnoredApps(defaults: .standard)
     private let detector: MeetingDetector
@@ -226,7 +228,7 @@ final class AppModel: ObservableObject {
         processingCount += jobs.count
         let processor = processor
         for job in jobs {
-            enqueue {
+            enqueue(folder: job.folder) {
                 let result = await Result { try await processor.process(meeting: job.meeting, tracks: job.tracks, folder: job.folder, noteURL: job.note) }
                 await self.finished(result, folder: job.folder)
                 if case .success = result { await self.expand(folder: job.folder, id: job.meeting.id) }
@@ -236,7 +238,7 @@ final class AppModel: ObservableObject {
 
     /// Runs the after-meeting step again for an already processed meeting (the meeting window's Retry).
     func runAfterMeeting(folder: URL) {
-        enqueue {
+        enqueue(folder: folder) {
             do { await self.expand(folder: folder, id: try Meeting.load(from: folder).id) } catch {
                 await self.report("Couldn't read \(folder.lastPathComponent): \(error.localizedDescription)")
             }
@@ -247,16 +249,35 @@ final class AppModel: ObservableObject {
     /// English; the note is left as it was on failure.
     func reExpand(folder: URL, id: UUID) async throws {
         let after = afterMeeting
-        defer { showExpansion(nil, for: id); revision += 1 }
+        busyFolders[folder.standardizedFileURL.path, default: 0] += 1
+        defer { showExpansion(nil, for: id); endBusy(folder); revision += 1 }
         try await after.reExpand(folder: folder) { blocks in await self.showExpansion(blocks, for: id) }
     }
 
-    private func enqueue(_ work: @escaping @Sendable () async -> Void) {
+    private func enqueue(folder: URL, _ work: @escaping @Sendable () async -> Void) {
+        busyFolders[folder.standardizedFileURL.path, default: 0] += 1
         let previous = pipeline
         pipeline = Task.detached {
             await previous?.value
             await work()
+            await self.release(folder)
         }
+    }
+
+    private func release(_ folder: URL) { endBusy(folder) }
+
+    private func endBusy(_ folder: URL) {
+        let key = folder.standardizedFileURL.path
+        busyFolders[key] = (busyFolders[key] ?? 1) > 1 ? (busyFolders[key] ?? 1) - 1 : nil
+    }
+
+    /// True while this meeting is being recorded, processed, queued or expanded: it can't be moved to the Trash then.
+    func isBusy(folder: URL?, id: UUID?) -> Bool {
+        if let id, liveExpansion[id] != nil { return true }
+        guard let folder else { return false }
+        let key = folder.standardizedFileURL.path
+        return busyFolders[key] != nil || session?.folder.standardizedFileURL.path == key
+            || liveMeeting?.folder.standardizedFileURL.path == key
     }
 
     /// Title, tags, rename and Claude's expansion. A failure is saved in meeting.json for the meeting window.

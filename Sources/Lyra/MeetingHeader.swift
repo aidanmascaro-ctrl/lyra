@@ -7,6 +7,7 @@ struct MeetingHeader: View {
     @ObservedObject var model: MeetingModel
     @FocusState private var titleFocused: Bool
     @State private var newSeries: String?
+    @State private var confirmTrash = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -23,6 +24,10 @@ struct MeetingHeader: View {
             tabs.padding(.top, 6)
         }
         .padding(.bottom, 6)
+        .alert("Move “\(model.titleDraft.isEmpty ? "Untitled" : model.titleDraft)” to the Trash?", isPresented: $confirmTrash) {
+            Button("Move to Trash", role: .destructive) { model.trash() }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("The Obsidian note and its recordings go to the Mac's Trash. You can put them back from the Trash in Finder.") }
         .alert("New series", isPresented: Binding(get: { newSeries != nil }, set: { if !$0 { newSeries = nil } })) {
             TextField("Series name", text: Binding(get: { newSeries ?? "" }, set: { newSeries = $0 }))
             Button("Add") { if let name = newSeries?.trimmingCharacters(in: .whitespaces), !name.isEmpty { model.move(to: name) } }
@@ -87,6 +92,8 @@ struct MeetingHeader: View {
             Menu {
                 Button("Re-expand") { model.reExpand() }.disabled(model.working != nil || model.lines.isEmpty)
                 Button("Open in Obsidian") { if let url = model.loaded?.url { NSWorkspace.shared.open(url) } }
+                Divider()
+                Button("Move to Trash", role: .destructive) { confirmTrash = true }
             } label: {
                 Image(systemName: "ellipsis").foregroundStyle(.secondary).frame(width: 24, height: 20)
             }

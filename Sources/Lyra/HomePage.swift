@@ -9,6 +9,7 @@ struct HomePage: View {
     @StateObject private var model: HomeModel
     @State private var renaming: String?
     @State private var newName = ""
+    @State private var trashing: MeetingSummary?
     /// New note started a recording: its meeting opens as soon as it exists.
     @State private var openWhenStarted = false
 
@@ -52,6 +53,10 @@ struct HomePage: View {
             model.notice = app.lastError
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in model.refresh() }
+        .alert("Move “\(trashing?.title ?? "")” to the Trash?", isPresented: Binding(get: { trashing != nil }, set: { if !$0 { trashing = nil } })) {
+            Button("Move to Trash", role: .destructive) { if let s = trashing { model.trash(s) } }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("The Obsidian note and its recordings go to the Mac's Trash. You can put them back from the Trash in Finder.") }
         .alert("Rename series", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Series name", text: $newName)
             Button("Rename") { if let old = renaming { model.rename(series: old, to: newName) } }
@@ -145,6 +150,7 @@ struct HomePage: View {
         }
         .buttonStyle(RowButtonStyle())
         .help(s.folder == nil ? "Open in Obsidian" : "Open this meeting")
+        .contextMenu { Button("Move to Trash", role: .destructive) { trashing = s } }
     }
 
     /// In this same window: Lyra has one window, and the back pill returns here.

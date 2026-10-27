@@ -45,6 +45,17 @@ final class HomeModel: ObservableObject {
         vaultWork { try SeriesActions.rename(series, to: name, index: index) }
     }
 
+    /// Confirmed "Move to Trash": refused while Lyra is still working on the meeting; otherwise note and recordings
+    /// go to the Trash off the main actor, the open page (if it is this meeting) returns home, and the list refreshes.
+    func trash(_ summary: MeetingSummary) {
+        guard !app.isBusy(folder: summary.folder, id: summary.id) else { notice = Self.stillWorking; return }
+        let (index, folder, id) = (app.notes, summary.folder, summary.id)
+        vaultWork { MeetingTrash.trash(id: id, folder: folder, index: index) }
+        if let folder, app.route == .meeting(folder) { app.route = .home }
+    }
+
+    static let stillWorking = "Lyra is still working on this meeting. Try again when it's finished."
+
     /// Moving notes and rewriting links touches the whole vault: done off the main actor, then the list re-read.
     private func vaultWork(_ work: @escaping @Sendable () throws -> [String]) {
         Task {

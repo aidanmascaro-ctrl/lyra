@@ -104,7 +104,7 @@ public enum SeriesLibrary {
         return folder
     }
 
-    private static func isSeriesPage(_ text: String) -> Bool {
+    static func isSeriesPage(_ text: String) -> Bool {
         guard text.hasPrefix("---\n"), let close = text.range(of: "\n---\n", range: text.index(text.startIndex, offsetBy: 3)..<text.endIndex)
         else { return false }
         return text[..<close.lowerBound].split(separator: "\n").contains("lyra_series: true")

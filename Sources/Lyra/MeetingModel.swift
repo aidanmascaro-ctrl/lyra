@@ -231,6 +231,16 @@ final class MeetingModel: ObservableObject {
         vaultWork { try SeriesActions.move(loaded, to: series, index: notes).problems }
     }
 
+    /// Confirmed "Move to Trash": back to Home once the note and recordings are in the Trash; problems stay here.
+    func trash() {
+        guard let meeting, !app.isBusy(folder: folder, id: meeting.id) else { notice = HomeModel.stillWorking; return }
+        let (id, folder, notes) = (meeting.id, folder, notes)
+        Task {
+            let problems = await Task.detached { MeetingTrash.trash(id: id, folder: folder, index: notes) }.value
+            if problems.isEmpty { app.route = .home } else { notice = problems.joined(separator: "\n") }
+        }
+    }
+
     func notRelated() {
         let folder = folder
         vaultWork { try SeriesActions.reject(meetingFolder: folder); return [] }
