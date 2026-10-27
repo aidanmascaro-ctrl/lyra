@@ -202,7 +202,7 @@ public struct NoteIndex: Sendable {
     }
 
     /// Temp file in the same folder, then swapped in, so a reader never sees half a note.
-    private static func writeAtomically(_ data: Data, to url: URL) throws {
+    static func writeAtomically(_ data: Data, to url: URL) throws {
         let temp = url.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).lyra-tmp")
         do {
             try data.write(to: temp)

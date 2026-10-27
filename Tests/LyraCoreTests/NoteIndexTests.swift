@@ -184,3 +184,14 @@ final class NoteIndexTests: XCTestCase {
         XCTAssertEqual(ids, [a.front.lyraID, b.front.lyraID])
     }
 }
+
+extension NoteIndexTests {
+    func testAllNotesSkipsSeriesPages() throws {
+        let dir = meetings.appendingPathComponent("Weekly")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try "---\nlyra_series: true\n---\n# Weekly\n\n".write(to: dir.appendingPathComponent("Weekly.md"), atomically: true, encoding: .utf8)
+        let doc = makeDocument(title: "Real")
+        try writeNote(doc, name: prefix + "Real", in: dir)
+        XCTAssertEqual(index.allNotes().map(\.document.front.lyraID), [doc.front.lyraID])
+    }
+}
