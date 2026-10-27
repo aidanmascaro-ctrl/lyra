@@ -69,6 +69,20 @@ final class RecorderTests: XCTestCase {
         XCTAssertEqual(result.seconds, elapsed, accuracy: 0.2)
     }
 
+    /// Pausing lets go of the mic and writes nothing; resuming carries on in the same file.
+    func testPausedTimeIsLeftOutOfTheMicTrack() async throws {
+        let recorder = MicRecorder()
+        try recorder.start(writingTo: folder.appendingPathComponent("mic.caf"))
+        try await Task.sleep(for: .seconds(1))
+        recorder.pause()
+        try await Task.sleep(for: .seconds(2))
+        try recorder.resume()
+        try await Task.sleep(for: .seconds(1))
+        let result = await recorder.stop()
+        XCTAssertNil(result.error)
+        XCTAssertEqual(result.seconds, 2, accuracy: 0.5)
+    }
+
     func testSecondStartThrows() throws {
         let mic = MicRecorder()
         try mic.start(writingTo: folder.appendingPathComponent("a.caf"))
@@ -152,7 +166,14 @@ final class TwoTrackRecorderTests: XCTestCase {
         let kind: TrackKind
         let fails: Bool
         var url: URL?
+        var events: [String] = []
+        var resumeFails = false
         init(_ kind: TrackKind, fails: Bool) { self.kind = kind; self.fails = fails }
+        func pause() throws { events.append("pause") }
+        func resume() throws {
+            events.append("resume")
+            if resumeFails { throw AudioError(description: "\(kind.rawValue) wouldn't restart") }
+        }
         func start(writingTo url: URL) throws {
             if fails {
                 FileManager.default.createFile(atPath: url.path, contents: nil)  // like a half-opened CAF
@@ -192,6 +213,35 @@ final class TwoTrackRecorderTests: XCTestCase {
         XCTAssertNil(warning)
         let results = await recorder.stop()
         XCTAssertEqual(results.map(\.kind), [.meeting, .mic])
+    }
+
+    func testPauseAndResumeReachBothTracks() async throws {
+        let meeting = FakeRecorder(.meeting, fails: false), mic = FakeRecorder(.mic, fails: false)
+        let recorder = TwoTrackRecorder(target: zoom, meeting: { _ in meeting }, mic: { mic }, retryDelay: .zero)
+        _ = try await recorder.start(in: folder)
+        try recorder.pause()
+        XCTAssertNil(try recorder.resume())
+        XCTAssertEqual(meeting.events, ["pause", "resume"])
+        XCTAssertEqual(mic.events, ["pause", "resume"])
+    }
+
+    func testMeetingTrackThatWontResumeIsAWarningNotAFailure() async throws {
+        let meeting = FakeRecorder(.meeting, fails: false), mic = FakeRecorder(.mic, fails: false)
+        meeting.resumeFails = true
+        let recorder = TwoTrackRecorder(target: zoom, meeting: { _ in meeting }, mic: { mic }, retryDelay: .zero)
+        _ = try await recorder.start(in: folder)
+        try recorder.pause()
+        XCTAssertEqual(try recorder.resume(), "Couldn't capture zoom.us audio after resuming: meeting wouldn't restart. Transcript after that is from your microphone only.")
+        XCTAssertEqual(mic.events, ["pause", "resume"])
+    }
+
+    func testMicThatWontResumeThrows() async throws {
+        let meeting = FakeRecorder(.meeting, fails: false), mic = FakeRecorder(.mic, fails: false)
+        mic.resumeFails = true
+        let recorder = TwoTrackRecorder(target: zoom, meeting: { _ in meeting }, mic: { mic }, retryDelay: .zero)
+        _ = try await recorder.start(in: folder)
+        try recorder.pause()
+        XCTAssertThrowsError(try recorder.resume())
     }
 
     func testMicFailureThrows() async throws {

@@ -16,6 +16,7 @@ final class MeetingSession {
     let folder: URL
     let noteURL: URL
     private let recorder: TwoTrackRecorder
+    private(set) var isPaused = false
     private var screenReader: Task<Void, Never>?
     private var live: LiveTranscriber?
     private var liveReader: Task<Void, Never>?
@@ -43,10 +44,7 @@ final class MeetingSession {
         }
         do {
             try self.meeting.save(in: folder)
-            if let warning = try await recorder.start(in: folder) {
-                self.meeting.warnings.append(warning)
-                try? self.meeting.save(in: folder)  // stop() saves it again
-            }
+            try await startRecorder()
         } catch {
             // Nothing was recorded (and nothing typed yet): free the name.
             try? FileManager.default.removeItem(at: folder)
@@ -55,6 +53,64 @@ final class MeetingSession {
         }
         if let target { readScreenText(pid: target.pid) }
         transcribeLive()
+    }
+
+    /// Records into a note that already exists — one New note made, or one ended and written up — keeping its
+    /// folder, note and meeting.json. A written-up part is filed under parts/ first, and joined back on when this
+    /// part is written up. If recording can't start, the note is left exactly as it was.
+    init(recordingInto folder: URL, noteURL: URL, meeting: Meeting,
+         onLive: @escaping @MainActor (_ lines: [LiveLine], _ error: String?) -> Void) async throws {
+        var meeting = meeting
+        var previous: Meeting?
+        if FileManager.default.fileExists(atPath: folder.appendingPathComponent("transcript.json").path) {
+            previous = try RecordingParts.archive(folder: folder)
+            meeting = try Meeting.load(from: folder)
+        }
+        meeting.recordingStartedAt = Date()
+        self.meeting = meeting
+        self.target = nil
+        self.onLive = onLive
+        self.folder = folder
+        self.noteURL = noteURL
+        recorder = TwoTrackRecorder(target: nil)
+        do { try await startRecorder() } catch {
+            // A half-opened file would make crash recovery treat this note as a recording.
+            for kind in [TrackKind.mic, .meeting] { try? FileManager.default.removeItem(at: folder.appendingPathComponent("\(kind.rawValue).caf")) }
+            if let previous {
+                do { try RecordingParts.restore(folder: folder, previous: previous) } catch let restoreError {
+                    throw CocoaError(.fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey:
+                        "\(error.localizedDescription) The earlier recording is filed under “parts” in the recording folder and couldn't be put back: \(restoreError.localizedDescription)"])
+                }
+            }
+            throw error
+        }
+        transcribeLive()
+    }
+
+    private func startRecorder() async throws {
+        try meeting.save(in: folder)  // with recordingStartedAt, before any audio, so a crash knows when it began
+        if let warning = try await recorder.start(in: folder) {
+            meeting.warnings.append(warning)
+            try? meeting.save(in: folder)  // stop() saves it again
+        }
+    }
+
+    /// Lets go of the mic and the call audio; nothing is recorded or read off the screen until `resume`.
+    /// Throws if a track couldn't be let go of — it may still be capturing.
+    func pause() throws {
+        guard !isPaused else { return }
+        isPaused = true
+        try recorder.pause()
+    }
+
+    /// Carries on in the same files. Throws only if the mic won't restart; a call track that won't is a warning.
+    func resume() throws {
+        guard isPaused else { return }
+        if let warning = try recorder.resume() {
+            meeting.warn(warning)
+            try? meeting.save(in: folder)
+        }
+        isPaused = false
     }
 
     /// Stops both tracks (CAFs are finalised) and saves the end time, track levels and screen text in `meeting.json`,
@@ -78,9 +134,11 @@ final class MeetingSession {
     private func readScreenText(pid: pid_t) {
         screenReader = Task { [weak self] in
             while !Task.isCancelled {
-                let lines = await ScreenText.read(pid: pid)
-                guard !Task.isCancelled else { return }
-                self?.keep(lines)
+                if self?.isPaused == false {
+                    let lines = await ScreenText.read(pid: pid)
+                    guard !Task.isCancelled else { return }
+                    self?.keep(lines)
+                }
                 try? await Task.sleep(for: Self.screenTextInterval)
             }
         }

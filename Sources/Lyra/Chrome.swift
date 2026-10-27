@@ -10,6 +10,9 @@ enum Chrome {
     static let pill = Color(nsColor: dynamic(dark: NSColor(white: 1, alpha: 0.07), light: NSColor(white: 0, alpha: 0.05)))
     static let hover = Color(nsColor: dynamic(dark: NSColor(white: 1, alpha: 0.05), light: NSColor(white: 0, alpha: 0.04)))
     static let live = Color(red: 0.30, green: 0.80, blue: 0.45)
+    static let record = Color(red: 0.92, green: 0.30, blue: 0.27)
+    /// Aidan's own bubbles in the transcript panel: a step darker than the other speakers' pills.
+    static let bubbleMine = Color(nsColor: dynamic(dark: NSColor(white: 0.10, alpha: 1), light: NSColor(white: 0.90, alpha: 1)))
     static let titleFont = Font.system(size: 28, weight: .regular, design: .serif)
     /// Room for the floating traffic lights above the first line.
     static let topInset: CGFloat = 44

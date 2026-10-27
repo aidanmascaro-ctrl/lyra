@@ -30,6 +30,16 @@ public final class MicRecorder: TrackRecorder {
         self.session = session
     }
 
+    public func pause() {
+        session?.pause()
+        deviceSession?.pause()
+    }
+
+    public func resume() throws {
+        try session?.resume()
+        try deviceSession?.resume()
+    }
+
     nonisolated(nonsending) public func stop() async -> TrackResult {
         if let deviceSession {
             self.deviceSession = nil
@@ -60,6 +70,7 @@ final class MicSession: @unchecked Sendable {
     private var bridge: FormatBridge?
     private var observer: NSObjectProtocol?
     private var startedAt: TimeInterval = 0  // systemUptime: monotonic; recording stops before the Mac sleeps
+    private var pausedAt: TimeInterval?
 
     init(url: URL) throws {
         let format = engine.inputNode.outputFormat(forBus: 0)
@@ -72,14 +83,33 @@ final class MicSession: @unchecked Sendable {
         startedAt = ProcessInfo.processInfo.systemUptime
         try lock.withLock { try installTapAndStart() }
         observer = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self] _ in
-            self?.resume()
+            self?.restartAfterConfigurationChange()
         }
     }
 
-    /// The engine has stopped itself; restart it on the (possibly different) new input.
-    private func resume() {
+    /// Stops the engine (the mic is let go) and writes nothing until `resume`.
+    func pause() {
         lock.withLock {
-            guard !finished else { return }
+            guard !finished, pausedAt == nil else { return }
+            removeTap()
+            pausedAt = ProcessInfo.processInfo.systemUptime
+        }
+    }
+
+    /// Carries on in the same file. The paused time is left out of the wall clock the gap padding measures against.
+    func resume() throws {
+        try lock.withLock {
+            guard !finished, let pausedAt else { return }
+            startedAt += ProcessInfo.processInfo.systemUptime - pausedAt
+            self.pausedAt = nil
+            try installTapAndStart()
+        }
+    }
+
+    /// The engine has stopped itself; restart it on the (possibly different) new input. Not while paused.
+    private func restartAfterConfigurationChange() {
+        lock.withLock {
+            guard !finished, pausedAt == nil else { return }
             removeTap()  // no tap may write while the gap is filled
             padToWallClock()
             do { try installTapAndStart() } catch where resumeError == nil {

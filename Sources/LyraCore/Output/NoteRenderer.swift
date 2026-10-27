@@ -9,9 +9,14 @@ public enum NoteRenderer {
                             transcript: transcriptBody(lines: lines)).render(timeZone: timeZone)
     }
 
-    /// Whole minutes from start to end; 0 while the meeting is still being recorded.
+    /// Whole minutes recorded, earlier parts included: the latest part's longest track, so paused time (and time in a New note before Record) is left
+    /// out. Start to end when no track lengths were saved (or a crash lost them); 0 while the meeting is still being recorded.
     public static func durationMinutes(of meeting: Meeting) -> Int {
-        meeting.endedAt.map { max(0, Int((($0.timeIntervalSince(meeting.startedAt)) / 60).rounded())) } ?? 0
+        guard let end = meeting.endedAt else { return 0 }
+        // A recording recovered after a crash has no saved lengths (0): fall back to the clock.
+        let seconds = meeting.tracks?.map(\.seconds).filter { $0 > 0 }.max()
+            ?? end.timeIntervalSince(meeting.recordingStartedAt ?? meeting.startedAt)
+        return max(0, Int(((seconds + (meeting.recordedBefore ?? 0)) / 60).rounded()))
     }
 
     /// What goes between the lyra transcript markers. Rename re-renders the section with this, so both paths share one format.

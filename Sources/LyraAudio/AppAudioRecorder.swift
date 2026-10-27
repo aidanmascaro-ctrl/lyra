@@ -11,6 +11,7 @@ public final class AppAudioRecorder: TrackRecorder {
     private var deviceID = AudioObjectID(kAudioObjectUnknown)
     private var procID: AudioDeviceIOProcID?
     private var writer: CAFWriter?
+    private var paused = false
 
     public init(target: MicUser) { self.target = target }
 
@@ -53,6 +54,19 @@ public final class AppAudioRecorder: TrackRecorder {
         }
     }
 
+    public func pause() throws {
+        guard let procID, !paused else { return }
+        try check(AudioDeviceStop(deviceID, procID), "pause aggregate device")
+        paused = true
+    }
+
+    public func resume() throws {
+        guard let procID else { throw AudioError(description: "app audio recorder isn't running") }
+        guard paused else { return }
+        try check(AudioDeviceStart(deviceID, procID), "restart aggregate device")
+        paused = false
+    }
+
     nonisolated(nonsending) public func stop() async -> TrackResult {
         teardown() ?? TrackResult(kind: .meeting, url: URL(fileURLWithPath: "/dev/null"), seconds: 0, peakLevel: 0, error: "not recording")
     }
@@ -75,7 +89,8 @@ public final class AppAudioRecorder: TrackRecorder {
     private func teardown() -> TrackResult? {
         var problems: [String] = []
         if let procID {
-            if AudioDeviceStop(deviceID, procID) != noErr { problems.append("stop device failed") }
+            if !paused, AudioDeviceStop(deviceID, procID) != noErr { problems.append("stop device failed") }
+            paused = false
             AudioDeviceDestroyIOProcID(deviceID, procID)
             self.procID = nil
         }

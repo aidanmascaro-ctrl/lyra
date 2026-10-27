@@ -9,6 +9,12 @@ import LyraSpeech
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var recordingSince: Date?
+    /// When the running recording was paused; nil while it records.
+    @Published private(set) var pausedSince: Date?
+    /// Paused time before the current pause, left out of the elapsed time.
+    private var pausedBefore: TimeInterval = 0
+    /// The note Record was pressed in, while its recording starts.
+    @Published private(set) var startingFolder: URL?
     @Published private(set) var state = RecordingState()
     @Published private(set) var processingCount = 0
     /// Goes up whenever processing or the after-meeting step finishes a meeting, so open windows re-read it.
@@ -99,9 +105,12 @@ final class AppModel: ObservableObject {
 
     var isRecording: Bool { session != nil }
     var starting: Bool { if case .starting = state.phase { true } else { false } }
+    var isPaused: Bool { if case .paused = state.phase { true } else { false } }
 
+    /// Recorded time so far: paused time doesn't count.
     var elapsed: String {
-        let s = Int(now.timeIntervalSince(recordingSince ?? now))
+        let paused = pausedBefore + (pausedSince.map { now.timeIntervalSince($0) } ?? 0)
+        let s = max(0, Int(now.timeIntervalSince(recordingSince ?? now) - paused))
         return String(format: "%02d:%02d", s / 60, s % 60)
     }
 
@@ -163,22 +172,78 @@ final class AppModel: ObservableObject {
 
     func startInPerson() { startRecording(target: nil, title: "In-person meeting") }
 
+    /// New note: a plain note with nothing recording. Its folder is reserved like a recording's, so Record can
+    /// record into it later. Nil (with the reason in `lastError`) if the note couldn't be made.
+    func newNote() -> URL? {
+        var meeting = Meeting(title: "", appName: "In person", startedAt: Date())
+        do {
+            let (folder, note) = try paths.reserve(for: meeting, timeZone: .current)
+            do {
+                try MeetingProcessor.createSkeletonNote(for: meeting, recordingsFolder: folder, at: note)
+                meeting.notePath = note.path
+                try meeting.save(in: folder)
+            } catch {
+                try? FileManager.default.removeItem(at: folder)
+                try? FileManager.default.removeItem(at: note)
+                throw error
+            }
+            return folder
+        } catch {
+            lastError = ErrorBrief.sentence("Couldn't make a new note", error)
+            return nil
+        }
+    }
+
+    /// True when Record can start in this note: nothing else records, and the note isn't waiting to be written
+    /// up (an unprocessed .caf) or being written up. Never recorded (New note) or ended and written up both qualify.
+    func canRecord(in folder: URL) -> Bool {
+        guard session == nil, state.phase == .idle, !isBusy(folder: folder, id: nil) else { return false }
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        return names.contains("meeting.json") && !names.contains { $0.hasSuffix(".caf") }
+    }
+
+    /// Record (or Resume, after End) in a note: records into that note rather than a new one.
+    func record(in folder: URL) {
+        guard canRecord(in: folder) else { return }
+        do {
+            let meeting = try Meeting.load(from: folder)
+            let note = meeting.notePath.map { URL(fileURLWithPath: $0) }
+                ?? paths.notesDir.appendingPathComponent(folder.lastPathComponent + ".md")
+            startRecording(target: nil, meeting: meeting, into: (folder, note))
+        } catch {
+            lastError = ErrorBrief.sentence("Couldn't start recording", error)
+        }
+    }
+
     private func startRecording(target: MicUser?, title: String) {
+        let meeting = Meeting(title: title, appName: target?.appName ?? "In person",
+                              bundleID: target.map(\.bundleID), startedAt: Date())
+        startRecording(target: target, meeting: meeting, into: nil)
+    }
+
+    private func startRecording(target: MicUser?, meeting: Meeting, into existing: (folder: URL, note: URL)?) {
         guard state.begin(target: target) else { return }
         detector.isRecording = true
         lastError = nil
         liveLines = []
         liveError = nil
-        let meeting = Meeting(title: title, appName: target?.appName ?? "In person",
-                              bundleID: target.map(\.bundleID), startedAt: Date())
+        startingFolder = existing?.folder
         Task {
+            defer { startingFolder = nil }
             do {
-                let started = try await MeetingSession(meeting: meeting, target: target, paths: paths) { [weak self = self] lines, error in
+                let onLive: @MainActor ([LiveLine], String?) -> Void = { [weak self = self] lines, error in
                     self?.liveLines = lines
                     self?.liveError = error
                 }
+                let started = if let existing {
+                    try await MeetingSession(recordingInto: existing.folder, noteURL: existing.note, meeting: meeting, onLive: onLive)
+                } else {
+                    try await MeetingSession(meeting: meeting, target: target, paths: paths, onLive: onLive)
+                }
                 session = started
-                recordingSince = meeting.startedAt
+                recordingSince = Date()
+                pausedSince = nil
+                pausedBefore = 0
                 liveMeeting = LiveMeeting(folder: started.folder, appName: meeting.appName)
                 // The call ended (or Stop was clicked) while we were still starting.
                 if state.started() { stopSession() }
@@ -187,6 +252,28 @@ final class AppModel: ObservableObject {
                 detector.isRecording = false
                 lastError = ErrorBrief.sentence("Couldn't start recording", error)
             }
+        }
+    }
+
+    /// Pause: the mic and call audio are let go until Resume.
+    /// If the call audio or mic can't be let go of, the recording is ended rather than claim a pause it isn't.
+    func pauseRecording() {
+        guard let session, state.pause() else { return }
+        pausedSince = Date()
+        do { try session.pause() } catch {
+            lastError = ErrorBrief.sentence("Couldn't pause recording, so it was ended", error)
+            if state.requestStop() { stopSession() }
+        }
+    }
+
+    /// Resume carries on in the same recording. If the mic won't restart, the recording ends there and is written up.
+    func resumeRecording() {
+        guard let session, state.resume() else { return }
+        pausedBefore += pausedSince.map { Date().timeIntervalSince($0) } ?? 0
+        pausedSince = nil
+        do { try session.resume() } catch {
+            lastError = ErrorBrief.sentence("Couldn't resume recording, so it was ended", error)
+            if state.requestStop() { stopSession() }
         }
     }
 
@@ -200,6 +287,8 @@ final class AppModel: ObservableObject {
         guard let session else { return }
         self.session = nil
         recordingSince = nil
+        pausedSince = nil
+        pausedBefore = 0
         liveMeeting = nil
         liveLines = []  // the live draft is thrown away; the full transcript comes from processing
         liveError = nil
@@ -277,7 +366,7 @@ final class AppModel: ObservableObject {
         guard let folder else { return false }
         let key = folder.standardizedFileURL.path
         return busyFolders[key] != nil || session?.folder.standardizedFileURL.path == key
-            || liveMeeting?.folder.standardizedFileURL.path == key
+            || liveMeeting?.folder.standardizedFileURL.path == key || startingFolder?.standardizedFileURL.path == key
     }
 
     /// Title, tags, rename and Claude's expansion. A failure is saved in meeting.json for the meeting window.
