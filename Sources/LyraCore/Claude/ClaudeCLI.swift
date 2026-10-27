@@ -157,14 +157,16 @@ public struct ClaudeCLI: ClaudeRunning {
             defer { timer.cancel(); writer.cancel() }
 
             var resultError: String?
-            var sawResult = false
+            var resultText: String?
+            var yieldedDelta = false
             do {
                 for try await line in stdout.fileHandleForReading.bytes.lines {
                     switch ClaudeStreamLine.parse(line) {
-                    case .delta(let text): continuation.yield(text)
+                    case .delta(let text):
+                        yieldedDelta = true
+                        continuation.yield(text)
                     case .result(let isError, let text):
-                        sawResult = true
-                        if isError { resultError = text }
+                        if isError { resultError = text } else { resultText = text }
                     case .ignored: break
                     }
                 }
@@ -178,11 +180,16 @@ public struct ClaudeCLI: ClaudeRunning {
 
             if let resultError {
                 continuation.finish(throwing: ClaudeError.failed(resultError))
-            } else if status != 0 && !sawResult {
-                let tail = String(errText.trimmingCharacters(in: .whitespacesAndNewlines).suffix(ClaudeCLI.stderrTailLength))
-                continuation.finish(throwing: ClaudeError.failed(tail.isEmpty ? "exit code \(status)" : tail))
-            } else {
+            } else if let resultText {
+                // Insurance in case the CLI sends no partial deltas.
+                if !yieldedDelta && !resultText.isEmpty { continuation.yield(resultText) }
                 continuation.finish()
+            } else {
+                // No result event: the stream was cut short, whatever the exit status.
+                let tail = String(errText.trimmingCharacters(in: .whitespacesAndNewlines).suffix(ClaudeCLI.stderrTailLength))
+                let detail = tail.isEmpty ? (status == 0 ? "" : "exit code \(status)") : tail
+                let message = "Claude stopped before finishing its answer."
+                continuation.finish(throwing: ClaudeError.failed(detail.isEmpty ? message : "\(message) \(detail)"))
             }
         }
     }

@@ -62,14 +62,36 @@ final class ClaudeCLITests: XCTestCase {
         XCTAssertEqual(text, "Hello")
     }
 
+    func testExitZeroWithoutResultEventThrows() async throws {
+        let exe = try fakeExecutable("\(delta("partial"))")
+        do {
+            _ = try await collect(ClaudeCLI(executable: exe))
+            XCTFail("expected failure")
+        } catch let error as ClaudeError {
+            XCTAssertEqual(error, .failed("Claude stopped before finishing its answer."))
+        }
+    }
+
+    func testResultTextIsUsedWhenNoDeltasArrive() async throws {
+        let exe = try fakeExecutable(okResult)
+        let text = try await ClaudeCLI(executable: exe).complete(system: "s", prompt: "p")
+        XCTAssertEqual(text, "abc")
+    }
+
+    func testResultTextNotDuplicatedWhenDeltasArrived() async throws {
+        let exe = try fakeExecutable("\(delta("ab"))\n\(delta("c"))\n\(okResult)")
+        let text = try await ClaudeCLI(executable: exe).complete(system: "s", prompt: "p")
+        XCTAssertEqual(text, "abc")
+    }
+
     func testNonZeroExitThrowsPlainError() async throws {
         let exe = try fakeExecutable("echo 'login required' >&2\nexit 3")
         do {
             _ = try await collect(ClaudeCLI(executable: exe))
             XCTFail("expected failure")
         } catch let error as ClaudeError {
-            XCTAssertEqual(error, .failed("login required"))
-            XCTAssertEqual(error.errorDescription, "Claude couldn't answer: login required")
+            XCTAssertEqual(error, .failed("Claude stopped before finishing its answer. login required"))
+            XCTAssertEqual(error.errorDescription, "Claude couldn't answer: Claude stopped before finishing its answer. login required")
         }
     }
 
