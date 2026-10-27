@@ -8,6 +8,12 @@ struct MenuContent: View {
 
     var body: some View {
         Button("Open Lyra") { show(.home) }
+        // Stop also covers the few seconds a recording takes to start; the stop is applied once it runs.
+        if model.isRecording || model.starting {
+            Button("Stop Recording") { model.stopRecording() }
+        } else {
+            Button("Start Recording") { model.recordNewNote() }
+        }
         if let live = model.liveMeeting {
             Button("New note — \(live.appName)") { show(.meeting(live.folder)) }
         }
@@ -18,7 +24,6 @@ struct MenuContent: View {
             } else {
                 Button("Pause recording") { model.pauseRecording() }
             }
-            Button("End recording") { model.stopRecording() }
         }
         if model.processingCount > 0 { Text("Processing…") }
         if !model.ignoredList.isEmpty {

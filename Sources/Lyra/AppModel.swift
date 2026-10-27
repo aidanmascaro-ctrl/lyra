@@ -224,6 +224,13 @@ final class AppModel: ObservableObject {
         return names.contains("meeting.json") && !names.contains { $0.hasSuffix(".caf") }
     }
 
+    /// Start Recording in the menu-bar menu: New note then Record, without opening the window. Makes no note
+    /// while something else records or starts.
+    func recordNewNote() {
+        guard session == nil, state.phase == .idle, let folder = newNote() else { return }
+        record(in: folder)
+    }
+
     /// Record (or Resume, after End) in a note: records into that note rather than a new one.
     func record(in folder: URL) {
         guard canRecord(in: folder) else { return }
