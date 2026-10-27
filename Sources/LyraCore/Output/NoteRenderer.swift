@@ -22,7 +22,11 @@ public enum NoteRenderer {
     /// What goes between the lyra transcript markers. Rename re-renders the section with this, so both paths share one format.
     public static func transcriptBody(lines: [TranscriptLine]) -> String {
         lines.map { line in
-            let badge = line.nameSource == .knownVoice ? " _(known voice)_" : ""
+            let badge = switch line.nameSource {
+            case .knownVoice: " _(known voice)_"
+            case .onScreen: " _(on screen)_"
+            case .setByAidan, nil: ""
+            }
             return "**\(escapeName(line.speakerLabel))**\(badge) [\(stamp(line.start))] \(line.text.replacingOccurrences(of: "<!--", with: "&lt;!--"))"
         }.joined(separator: "\n\n")
     }

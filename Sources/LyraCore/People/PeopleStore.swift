@@ -67,6 +67,21 @@ public final class PeopleStore: @unchecked Sendable {  // all state is behind `l
         }
     }
 
+    /// Takes a voice sample back out of a person (a tile named them wrongly and Aidan renamed the speaker).
+    /// A person left with no samples stays in the list, matching nothing, until a voice is learned for them again.
+    public func forget(sample: [Float], from id: UUID) throws {
+        if let loadFailure { throw loadFailure }
+        try lock.withLock {
+            guard let i = people.firstIndex(where: { $0.id == id }) else { throw PeopleStoreError.unknownPerson }
+            guard people[i].samples.contains(sample) else { return }
+            var next = people
+            next[i].samples.removeAll { $0 == sample }
+            next[i].updatedAt = Date()
+            try save(next)
+            people = next
+        }
+    }
+
     public func rename(_ id: UUID, to name: String) throws {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw PeopleStoreError.emptyName }
