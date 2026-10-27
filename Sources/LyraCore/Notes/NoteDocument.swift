@@ -111,7 +111,9 @@ public struct NoteDocument: Equatable, Sendable {
     private var slidesLink: String {
         guard front.slides > 0 else { return "" }
         let folder = front.recordings.appendingPathComponent(SlideLog.folderName, isDirectory: true)
-        return " · [\(front.slides) slide\(front.slides == 1 ? "" : "s")](\(folder.absoluteString))"
+        // A bracket in the meeting's name would end the Markdown link early.
+        let target = folder.absoluteString.replacingOccurrences(of: "(", with: "%28").replacingOccurrences(of: ")", with: "%29")
+        return " · [\(front.slides) slide\(front.slides == 1 ? "" : "s")](\(target))"
     }
 
     private func renderSection(_ s: Section) -> String {
@@ -174,7 +176,8 @@ public struct NoteDocument: Equatable, Sendable {
                 continue
             }
             blockKey = nil
-            if let colon = line.firstIndex(of: ":"), knownKeys.contains(String(line[..<colon])), !line.hasPrefix(" ") {
+            if let colon = line.firstIndex(of: ":"), knownKeys.contains(String(line[..<colon])), !line.hasPrefix(" "),
+               !Self.isSomeoneElsesSlides(line, colon: colon) {
                 let key = String(line[..<colon])
                 let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
                 fields[key] = value
@@ -212,6 +215,11 @@ public struct NoteDocument: Equatable, Sendable {
         if !located.isEmpty, cursor < body.endIndex { pieces.append(.literal(String(body[cursor...]))) }
         doc.pieces = ensureAllSections(pieces)
         return doc
+    }
+
+    /// `slides:` is Lyra's only when it holds a count; a `slides:` property of Aidan's own is kept as he wrote it.
+    private static func isSomeoneElsesSlides(_ line: String, colon: String.Index) -> Bool {
+        line[..<colon] == "slides" && Int(line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)) == nil
     }
 
     private static let knownKeys: Set<String> = ["lyra_id", "date", "app", "duration_min", "recordings", "series", "tags", "links", "summary", "slides"]

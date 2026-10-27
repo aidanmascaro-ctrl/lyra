@@ -15,7 +15,6 @@ public actor CallWatcher {
     private var slideWatcher = SlideWatcher()
     /// Every name seen on a lit tile: a slide check doesn't count them as slide text.
     private var tileNames: Set<String> = []
-    public private(set) var slidesOn = false
     /// The first slide that couldn't be saved; kept so the note can say so.
     public private(set) var slideError: String?
 
@@ -27,11 +26,10 @@ public actor CallWatcher {
 
     public var slideCount: Int { slides.count }
 
-    public func setSlides(_ on: Bool) { slidesOn = on }
-
-    /// Reads one frame, taken `t` seconds into the recording. Returns the text of a slide it saved, else nil.
+    /// Reads one frame, taken `t` seconds into the recording. With `saveSlides` (Aidan switched slides on), it may save the
+    /// frame as a slide: returns that slide's text, else nil.
     @discardableResult
-    public func look(at image: CGImage, t: Double) -> [String]? {
+    public func look(at image: CGImage, t: Double, saveSlides: Bool) -> [String]? {
         guard let small = CallWindow.pixels(image, width: Self.analysisWidth) else { return nil }
         // Two lit tiles (two people talking at once) say nothing sure about either.
         let rings = SpeakingTile.find(in: small)
@@ -39,7 +37,7 @@ public actor CallWatcher {
             samples.append(OnScreenSample(t: t, name: name))
             tileNames.insert(name)
         }
-        guard slidesOn else { return nil }
+        guard saveSlides else { return nil }
         let thumb = Thumbnail(frame: small)
         guard slideWatcher.look(thumb) else { return nil }
         let text = CallWindow.lines(in: image).map(\.text)

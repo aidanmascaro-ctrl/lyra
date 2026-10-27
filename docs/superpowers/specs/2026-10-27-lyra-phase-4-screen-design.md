@@ -6,6 +6,7 @@ replaces it where they differ.*
 ## 1. What Aidan asked for
 
 - **Apps:** all of them: Google Meet, Teams and Zoom in Chrome, the Zoom app, WhatsApp, FaceTime and Discord.
+  (Discord can't be watched safely: see §3.1.)
 - **Names from tiles:** when the call shows who is talking (a lit tile with a name) and Lyra is sure, the
   speaker gets that name **and Lyra learns the voice**, so that person is a known voice next time.
 - **Slides:** saved only when Aidan **switches it on** for that meeting. They are **linked, not embedded**:
@@ -19,17 +20,21 @@ replaces it where they differ.*
   window whose title is the call. It never watches Gmail in another tab, or the desktop.
 - **Saving pictures without the switch.** Tile reading is always on during a call, but frames stay in
   memory. Only names and times are kept (`onscreen.json`). Lyra saves pictures only when Slides is on.
-- **Slowing the call down.** Lyra reads one frame a second, at window size, and runs OCR only on a lit tile
-  or a new, still slide.
+- **Slowing the call down.** Lyra reads one frame a second and runs OCR only on a lit tile or a new, still
+  slide.
 
 ## 3. How it works
 
 ### 3.1 Watching the call window (`CallWindowWatcher`, LyraAudio)
 - Runs while a call recording records (Allow or Join; it has a meeting app). It sleeps during Pause. A
   plain mic recording (New note → Record, Resume after End) has no call window, so it doesn't run.
-- Finds the window: the meeting app's largest on-screen normal window. For a browser, the window's title
-  must name a call site (Meet, Teams, Zoom, Webex, Whereby, Jitsi) or match the title at Allow. No match
-  means no frame that second. The existing once-a-minute `ScreenText` uses the same rule.
+- Finds the window, deny by default (`CallWindowRule`). In a browser, only a tab titled as a call site
+  ("Meet - …", "… | Microsoft Teams", "Zoom Meeting", Webex, Whereby, Jitsi) counts. An email about Zoom or
+  a "Meeting notes" doc doesn't. The title at Allow only chooses between call tabs, because it may itself be
+  Gmail's. In a desktop app, only a window titled as a meeting or call counts (Zoom's "Zoom Meeting", a
+  WhatsApp "Video call"), never WhatsApp's chat list. FaceTime is all call. No call window means no frame
+  that second. The once-a-minute `ScreenText` uses the same rule. Discord's call sits in its main window,
+  so Discord gives no tile names.
 - Each second, it captures one frame with ScreenCaptureKit, the same way `ScreenText` does. The time it
   stamps is on the recording's own timeline (seconds since recording began, less paused time), so it lines
   up with transcript times.
@@ -69,13 +74,16 @@ mic and anyone in the room with him have no tile.
 - **Off at the start of every recording.** It's switched on per meeting: **Allow + slides** in the Allow
   panel, or the Slides button in the bottom bar while a call records. The button also shows the number of
   slides saved so far.
-- Each second, Lyra makes a 64×36 grey thumbnail of the frame. A frame becomes a candidate when it has
-  stayed still for 2 s (so no slide transitions) and differs from the last slide saved.
-- Lyra reads a candidate's text (OCR). It counts as a slide if it has at least 8 words other than tile
-  names, or shows a sharing cue ("is presenting", "viewing … screen", "sharing"). A gallery of faces fails
-  this. Lyra remembers the frame so it doesn't check it again.
-- **No duplicates:** each saved slide keeps a 64-bit picture hash. A frame within 6 bits of any saved
-  slide (a presenter flipping back) is skipped.
+- Each second, Lyra makes a 160×90 grey thumbnail of the frame and compares it block by block (a 20×10
+  grid). Blocks that changed in 4 of the last 8 seconds are live video, such as webcam tiles beside a
+  shared screen, and are left out of every comparison. A frame becomes a candidate when the rest has stayed
+  still for 2 s (so no slide transitions) and at least 3 blocks differ from every slide already saved.
+- Lyra reads a candidate's text (OCR). It counts as a slide if it has at least 8 words in lines of three or
+  more words, other than tile names, or shows a sharing cue ("is presenting", "viewing … screen",
+  "sharing"). A gallery of faces fails this. Lyra remembers the frame so it doesn't check it again.
+- **No duplicates:** a presenter flipping back to a slide already saved matches it (fewer than 3 blocks
+  differ), so it isn't saved twice. A coarse picture hash was tried first and dropped: slides built from one
+  template hashed too alike.
 - Saved as `slides/001 00-03-12.jpg` (JPEG at 0.9, full window) in the meeting's recordings folder.
   `slides.json` lists each slide's file, time and text, so the slides are searchable. Slide text also goes
   into `screenText`, which the insights step already reads.
@@ -94,9 +102,10 @@ mic and anyone in the room with him have no tile.
   unsure, shared tile, split voice, known voice wins, lag skip); slide rules (still, changed, flip-back
   duplicate, gallery rejected); the note's jump line with the slides link; rename forgetting a
   tile-learned sample; parts keeping slides at the top.
-- **Integration test (`LYRA_INTEGRATION=1`):** Lyra opens its own window drawn like a call (tiles, one
-  lit with a name, then a slide). It captures that window through ScreenCaptureKit and Vision, and checks
-  the name and the saved slide. That covers real capture without a real call or touching Aidan's screen.
+- **Integration tests:** frames drawn like a call (2×2 gallery, one tile lit in Zoom green or Meet blue,
+  then slides) go through real Vision. They check the names, that each slide is saved once, and that
+  nothing is saved with slides off. Gated (`LYRA_INTEGRATION=1`): the test shows such a frame in a window of
+  its own and captures it through ScreenCaptureKit, the way recording does.
 - **Aidan's check:** one real call with slides switched on (Meet or Zoom, another person or a second
   device). Afterwards, the note has a slides link, and the speaker is named "on screen".
 

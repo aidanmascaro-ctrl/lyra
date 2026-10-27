@@ -26,6 +26,9 @@ final class MeetingSession {
     private let callWatcher: CallWatcher
     /// Seconds into the recording, less paused time: where tile and slide times sit on the transcript's timeline.
     private var clock = RecordingClock()
+    /// Slides for this call: off at the start of every recording; nothing is saved while off. Read by the watcher
+    /// for each frame, so a quick on-off-on lands in order.
+    private var slidesOn = false
     /// Gets the number of slides saved so far, each time one is saved.
     var onSlideSaved: (@MainActor (Int) -> Void)?
     private var live: LiveTranscriber?
@@ -135,9 +138,7 @@ final class MeetingSession {
     }
 
     /// Slides on or off for this call. Off at the start of every recording; nothing is saved while off.
-    func setSlides(_ on: Bool) {
-        Task { await callWatcher.setSlides(on) }
-    }
+    func setSlides(_ on: Bool) { slidesOn = on }
 
     /// Stops both tracks (CAFs are finalised) and saves the end time, track levels and screen text in `meeting.json`,
     /// so a meeting recovered on a later launch still gets its silent-track warning.
@@ -146,6 +147,7 @@ final class MeetingSession {
         screenReader?.cancel()
         screenReader = nil
         callReader?.cancel()
+        await callReader?.value  // a frame being read when Stop came is finished before saving
         callReader = nil
         do { try await callWatcher.flush() } catch {
             meeting.warn("Lyra couldn't save who was on screen during this call, so speakers are named by voice only. (\(error.localizedDescription))")
@@ -184,10 +186,10 @@ final class MeetingSession {
         callReader = Task { [weak self] in
             var frames = 0
             while !Task.isCancelled {
-                if let self, !isPaused {
-                    let t = clock.seconds
-                    if let image = await CallWindow.frame(pid: pid, startTitle: startTitle), !Task.isCancelled,
-                       let text = await watcher.look(at: image, t: t) {
+                guard let self else { return }
+                if !isPaused, let image = await CallWindow.frame(pid: pid, startTitle: startTitle), !Task.isCancelled, !isPaused {
+                    let t = clock.seconds  // when the frame came back, not when it was asked for
+                    if let text = await watcher.look(at: image, t: t, saveSlides: slidesOn) {
                         keep(text)
                         onSlideSaved?(await watcher.slideCount)
                     }

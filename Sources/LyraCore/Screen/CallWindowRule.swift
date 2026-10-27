@@ -11,14 +11,22 @@ public struct WindowInfo: Equatable, Sendable {
     }
 }
 
-/// Which of the meeting app's windows is the call. In a browser it must be the call's own tab: Lyra never reads
-/// Gmail in a window beside it. Elsewhere it prefers the meeting window (Zoom's "Zoom Meeting", not its home window).
+/// Which of the meeting app's windows is the call. Deny by default: a window is watched only when its title says it
+/// is the call. In a browser that is the call site's own tab title, so Gmail or a "Your Zoom receipt" email beside
+/// it is never read. A desktop app's call window is the one titled as a meeting or call (Zoom's "Zoom Meeting", not
+/// its home window; never WhatsApp's chat list). FaceTime is all call, so its largest window is.
 public enum CallWindowRule {
-    static let browsers = ["Google Chrome", "Microsoft Edge", "Brave", "Arc", "Safari", "Firefox"]
-    /// Whole words in a browser tab's title that mean a call ("Meet - abc-defg-hij", "Microsoft Teams").
-    private static let callSites = ["meet", "teams", "zoom", "webex", "whereby", "jitsi", "around", "gather"]
+    static let browsers = ["Google Chrome", "Microsoft Edge", "Brave", "Arc", "Safari", "Firefox", "Vivaldi", "Opera",
+                           "Chromium", "Dia", "Orion", "Zen"]
+    /// How call sites title their tab: a prefix, or a phrase anywhere ("Meet - abc-defg-hij", "Sync | Microsoft Teams").
+    private static let callTabPrefixes = ["Meet - ", "Meet – ", "Meet: ", "Zoom - ", "Zoom – ", "Webex - ", "Webex – ",
+                                          "Whereby", "Jitsi Meet"]
+    private static let callTabPhrases = ["Google Meet", "Microsoft Teams", "| Teams", "Zoom Meeting", "Zoom Webinar",
+                                         "Webex Meeting", "Jitsi Meet"]
     /// Words in a desktop app's window title that mark its call window over its other windows.
     private static let callWindows = ["meeting", "webinar", "call", "huddle"]
+    /// Apps whose every window is the call.
+    private static let callOnlyApps = ["FaceTime"]
     private static let minWidth = 200.0
     private static let minHeight = 150.0
 
@@ -26,17 +34,22 @@ public enum CallWindowRule {
         browsers.contains { appName == $0 || appName.hasPrefix($0 + " ") }
     }
 
-    /// The call's window, or nil (a browser with no call tab in front of any window, or nothing big enough).
-    /// `startTitle` is the meeting's title at Allow; a window still showing it wins.
+    /// The call's window, or nil: a browser with no call tab in front of any window, an app with no window titled as
+    /// a call, or nothing big enough. `startTitle` (the meeting's title at Allow) only chooses between call windows:
+    /// it may itself be another tab's title.
     public static func pick(_ windows: [WindowInfo], appName: String, startTitle: String) -> WindowInfo? {
         let big = windows.filter { $0.width >= minWidth && $0.height >= minHeight }
         let start = startTitle.trimmingCharacters(in: .whitespaces)
-        let showsStart: (WindowInfo) -> Bool = { start.count >= 4 && start != appName && $0.title.contains(start) }
         let largest: ([WindowInfo]) -> WindowInfo? = { $0.max { $0.width * $0.height < $1.width * $1.height } }
-        if isBrowser(appName) {
-            return largest(big.filter(showsStart)) ?? largest(big.filter { hasWord($0.title, callSites) })
-        }
-        return largest(big.filter(showsStart)) ?? largest(big.filter { hasWord($0.title, callWindows) }) ?? largest(big)
+        let calls: [WindowInfo]
+        if isBrowser(appName) { calls = big.filter { isCallTab($0.title) } }
+        else if callOnlyApps.contains(appName) { calls = big }
+        else { calls = big.filter { hasWord($0.title, callWindows) } }
+        return largest(calls.filter { start.count >= 4 && start != appName && $0.title.contains(start) }) ?? largest(calls)
+    }
+
+    private static func isCallTab(_ title: String) -> Bool {
+        callTabPrefixes.contains { title.hasPrefix($0) } || callTabPhrases.contains { title.contains($0) }
     }
 
     private static func hasWord(_ title: String, _ words: [String]) -> Bool {

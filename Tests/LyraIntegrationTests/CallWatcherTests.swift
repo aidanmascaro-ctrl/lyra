@@ -77,9 +77,9 @@ final class CallWatcherTests: XCTestCase {
     func testReadsTheLitTilesName() async throws {
         let watcher = CallWatcher(folder: folder)
         for (t, lit) in [(1.0, 1), (2.0, 1), (3.0, 3), (4.0, nil)] as [(Double, Int?)] {
-            await watcher.look(at: FakeCall.gallery(lit: lit), t: t)
+            await watcher.look(at: FakeCall.gallery(lit: lit), t: t, saveSlides: false)
         }
-        await watcher.look(at: FakeCall.gallery(lit: 2, ring: NSColor(srgbRed: 0.54, green: 0.71, blue: 0.97, alpha: 1)), t: 5)  // Meet blue
+        await watcher.look(at: FakeCall.gallery(lit: 2, ring: NSColor(srgbRed: 0.54, green: 0.71, blue: 0.97, alpha: 1)), t: 5, saveSlides: false)  // Meet blue
         try await watcher.flush()
         XCTAssertEqual(OnScreenLog.load(from: folder), [OnScreenSample(t: 1, name: "Flo Jones"), OnScreenSample(t: 2, name: "Flo Jones"),
                                                         OnScreenSample(t: 3, name: "Marco Diaz"), OnScreenSample(t: 5, name: "Aidan Mascaro")])
@@ -88,12 +88,11 @@ final class CallWatcherTests: XCTestCase {
 
     func testSavesEachSlideOnceWhenSwitchedOn() async throws {
         let watcher = CallWatcher(folder: folder)
-        await watcher.setSlides(true)
         var saved: [[String]] = []
         let frames = Array(repeating: FakeCall.gallery(lit: 0), count: 4) + Array(repeating: FakeCall.slide("Q3 Pricing"), count: 4)
             + Array(repeating: FakeCall.slide("Workshop plan"), count: 4) + Array(repeating: FakeCall.slide("Q3 Pricing"), count: 4)
         for (t, frame) in frames.enumerated() {
-            if let text = await watcher.look(at: frame, t: Double(t)) { saved.append(text) }
+            if let text = await watcher.look(at: frame, t: Double(t), saveSlides: true) { saved.append(text) }
         }
         try await watcher.flush()
         XCTAssertEqual(saved.count, 2, "the gallery isn't a slide, and flipping back isn't new")
@@ -130,7 +129,7 @@ final class CallWindowCaptureTests: XCTestCase {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
         let watcher = CallWatcher(folder: folder)
-        await watcher.look(at: frame, t: 1)
+        await watcher.look(at: frame, t: 1, saveSlides: false)
         try await watcher.flush()
         XCTAssertEqual(OnScreenLog.load(from: folder).map(\.name), ["Marco Diaz"])
     }

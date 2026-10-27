@@ -9,9 +9,9 @@ Design: `docs/superpowers/specs/2026-10-27-lyra-phase-4-screen-design.md`. Branc
    `NameSource.onScreen`, note badge `_(on screen)_`. `MeetingProcessor` reads `onscreen.json`, names, learns
    through an injected `learn` closure, warns on failure. `PeopleStore.forget(sample:)`; `RenameService` forgets
    a tile-learned sample before learning the new name. `RecordingParts` files `onscreen.json` with its part.
-3. **Slides (LyraCore).** `SlideWatcher` state machine over `Thumbnail` (64×36 grey, mean difference, 64-bit
-   dHash): stillness, change since last saved, flip-back duplicates, remembered rejects, text/cue test.
-   `SlideLog` (`slides.json`).
+3. **Slides (LyraCore).** `SlideWatcher` state machine over `Thumbnail` (160×90 grey, compared per block of a
+   20×10 grid, live-video blocks left out): stillness, new against every saved slide, remembered rejects,
+   text/cue test. `SlideLog` (`slides.json`). *(Built; a 64-bit hash was tried first and dropped.)*
 4. **Note link (LyraCore).** `NoteFrontmatter.slides`, jump line with `· [N slides](file:///…/slides/)`,
    parse accepts it. Processing sets the count.
 5. **Capture (LyraAudio).** `CallWindow` (window rule from LyraCore `CallWindowRule`, ScreenCaptureKit

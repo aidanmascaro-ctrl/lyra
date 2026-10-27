@@ -52,6 +52,24 @@ final class NoteDocumentTests: XCTestCase {
             .contains("slide"))
     }
 
+    /// A `slides:` property of Aidan's own (not a count) is his, and stays as he wrote it.
+    func testOwnSlidesPropertyKept() throws {
+        let out = NoteDocument(front: front(), warnings: [], myNotes: "", expanded: "", transcript: "").render(timeZone: zone)
+            .replacingOccurrences(of: "tags: [", with: "slides: https://example.com/deck\ntags: [")
+        let doc = try NoteDocument.parse(out)
+        XCTAssertEqual(doc.front.slides, 0)
+        XCTAssertTrue(doc.render(timeZone: zone).contains("slides: https://example.com/deck"))
+    }
+
+    /// "Call :)" in the folder name can't end the link early.
+    func testBracketsInTheFolderAreEncoded() {
+        var f = front()
+        f.recordings = URL(fileURLWithPath: "/Users/x/Lyra Recordings/Call :)", isDirectory: true)
+        f.slides = 2
+        let out = NoteDocument(front: f, warnings: [], myNotes: "", expanded: "", transcript: "").render(timeZone: zone)
+        XCTAssertTrue(out.contains("(file:///Users/x/Lyra%20Recordings/Call%20:%29/slides/)"), out)
+    }
+
     func testTranscriptIsFoldedInTheFile() throws {
         let doc = NoteDocument(front: front(), warnings: [], myNotes: "", expanded: "", transcript: "**Aidan** [00:00:01] hello\n\n**Sam** [00:00:03] hi")
         let out = doc.render(timeZone: zone)

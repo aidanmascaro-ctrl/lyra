@@ -24,12 +24,34 @@ final class CallWindowRuleTests: XCTestCase {
         XCTAssertEqual(CallWindowRule.pick([w(1, "Zoom Meeting - Google Chrome")], appName: "Google Chrome", startTitle: "x")?.id, 1)
     }
 
+    /// Gmail in front at Allow made the meeting's title Gmail's; it still isn't a call tab.
+    func testStartTitleNeverMakesANonCallTabACall() {
+        let windows = [w(1, "Inbox (3) - aidan@example.com - Gmail - Google Chrome", 1600, 1000),
+                       w(2, "Meet - abc-defg-hij - Google Chrome")]
+        XCTAssertEqual(CallWindowRule.pick(windows, appName: "Google Chrome", startTitle: "Inbox (3) - aidan@example.com - Gmail")?.id, 2)
+        XCTAssertNil(CallWindowRule.pick([windows[0]], appName: "Google Chrome", startTitle: "Inbox (3) - aidan@example.com - Gmail"))
+    }
+
+    /// An email about Zoom is not a Zoom call.
+    func testMentionsOfCallSitesAreNotCalls() {
+        let windows = [w(1, "Your Zoom receipt - Gmail - Google Chrome", 1600, 1000), w(2, "Teams roster - Google Sheets - Google Chrome"),
+                       w(3, "Meeting notes - Google Docs - Google Chrome")]
+        XCTAssertNil(CallWindowRule.pick(windows, appName: "Google Chrome", startTitle: ""))
+        XCTAssertNil(CallWindowRule.pick(windows, appName: "Vivaldi", startTitle: ""), "every browser follows the tab rule")
+    }
+
+    /// WhatsApp's chat list is never read; only a window titled as the call is.
+    func testDesktopAppsOnlyTheirCallWindow() {
+        XCTAssertNil(CallWindowRule.pick([w(1, "WhatsApp", 1400, 900)], appName: "WhatsApp", startTitle: "WhatsApp"))
+        XCTAssertEqual(CallWindowRule.pick([w(1, "WhatsApp", 1400, 900), w(2, "Video call", 600, 800)], appName: "WhatsApp", startTitle: "")?.id, 2)
+    }
+
     func testZoomAppPrefersItsMeetingWindow() {
         let windows = [w(1, "Zoom Workplace", 1600, 1000), w(2, "Zoom Meeting"), w(3, "", 300, 40)]
         XCTAssertEqual(CallWindowRule.pick(windows, appName: "zoom.us", startTitle: "zoom.us")?.id, 2)
     }
 
-    func testOtherAppsTheirLargestWindow() {
+    func testFaceTimeItsLargestWindow() {
         let windows = [w(1, "FaceTime", 900, 700), w(2, "", 1200, 800), w(3, "", 100, 100)]
         XCTAssertEqual(CallWindowRule.pick(windows, appName: "FaceTime", startTitle: "FaceTime")?.id, 2)
         XCTAssertNil(CallWindowRule.pick([w(3, "", 100, 100)], appName: "FaceTime", startTitle: ""))
