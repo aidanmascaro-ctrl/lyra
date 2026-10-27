@@ -382,21 +382,48 @@ final class NoteTextView: NSTextView {
 
     // MARK: Drawing
 
-    /// A small paragraph gap is only `blankLineHeight` tall, which would cut the cursor to a sliver; grow any cursor
-    /// shorter than a line of body text to full height, centred on the gap.
-    static func caretRect(_ rect: NSRect) -> NSRect {
+    /// The cursor covers the letters on its line, from `font`'s ascender to its descender at `baseline`, rather than
+    /// the whole line with the spacing under it. A small paragraph gap is only `blankLineHeight` tall, so its cursor
+    /// is grown to a full line of body text, centred on the gap. A baseline outside `rect` belongs to another line
+    /// and is ignored.
+    static func caretRect(_ rect: NSRect, baseline: CGFloat?, font: NSFont) -> NSRect {
         let full = ceil(NoteStyle.body.ascender - NoteStyle.body.descender)
-        guard rect.height < full else { return rect }
-        return NSRect(x: rect.minX, y: rect.midY - full / 2, width: rect.width, height: full)
+        if rect.height < full {
+            return NSRect(x: rect.minX, y: rect.midY - full / 2, width: rect.width, height: full)
+        }
+        guard let baseline, baseline > rect.minY, baseline <= rect.maxY else { return rect }
+        let top = max(rect.minY, baseline - font.ascender)
+        let bottom = min(rect.maxY, baseline - font.descender)
+        return NSRect(x: rect.minX, y: top, width: rect.width, height: bottom - top)
     }
 
     override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
-        super.drawInsertionPoint(in: Self.caretRect(rect), color: color, turnedOn: flag)
+        let font = typingAttributes[.font] as? NSFont ?? NoteStyle.body
+        super.drawInsertionPoint(in: Self.caretRect(rect, baseline: caretBaseline(), font: font), color: color, turnedOn: flag)
     }
 
-    /// The cursor blinks by redrawing its own rect, so the taller cursor needs the taller area redrawn too.
+    /// The baseline of the line the cursor is on, in view coordinates.
+    private func caretBaseline() -> CGFloat? {
+        guard let layout = layoutManager, let container = textContainer, let storage = textStorage else { return nil }
+        let location = selectedRange().location
+        let origin = textContainerOrigin
+        if location >= storage.length {
+            layout.ensureLayout(for: container)
+            let extra = layout.extraLineFragmentRect
+            if extra.height > 0 {
+                let font = typingAttributes[.font] as? NSFont ?? NoteStyle.body
+                return extra.minY + origin.y + font.ascender
+            }
+            guard storage.length > 0 else { return nil }
+        }
+        let glyph = layout.glyphIndexForCharacter(at: min(location, storage.length - 1))
+        let line = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        return line.minY + origin.y + layout.location(forGlyphAt: glyph).y
+    }
+
+    /// The cursor blinks by redrawing its own rect, so a cursor grown past its line needs the taller area redrawn.
     override func setNeedsDisplay(_ invalidRect: NSRect, avoidAdditionalLayout flag: Bool) {
-        super.setNeedsDisplay(Self.caretRect(invalidRect), avoidAdditionalLayout: flag)
+        super.setNeedsDisplay(Self.caretRect(invalidRect, baseline: nil, font: NoteStyle.body), avoidAdditionalLayout: flag)
     }
 
     override func draw(_ dirtyRect: NSRect) {

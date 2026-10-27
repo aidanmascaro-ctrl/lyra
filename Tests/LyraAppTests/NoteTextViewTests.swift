@@ -161,14 +161,25 @@ final class NoteTextViewTests: XCTestCase {
 
     func testTheCursorOnASmallParagraphGapIsFullHeight() {
         let gap = NSRect(x: 40, y: 100, width: 1, height: NoteStyle.blankLineHeight)
-        let caret = NoteTextView.caretRect(gap)
+        let caret = NoteTextView.caretRect(gap, baseline: nil, font: NoteStyle.body)
         XCTAssertGreaterThanOrEqual(caret.height, NoteStyle.body.ascender - NoteStyle.body.descender)
         XCTAssertEqual(caret.midY, gap.midY, accuracy: 0.5)
         XCTAssertEqual(caret.minX, gap.minX)
     }
 
-    func testTheCursorOnAnOrdinaryLineIsUnchanged() {
-        let line = NSRect(x: 40, y: 100, width: 1, height: 22)
-        XCTAssertEqual(NoteTextView.caretRect(line), line)
+    func testTheCursorCoversTheLettersNotTheSpacingBelowThem() {
+        let font = NoteStyle.body
+        let line = NSRect(x: 40, y: 100, width: 1, height: 36)
+        let baseline = 100 + font.ascender
+        let caret = NoteTextView.caretRect(line, baseline: baseline, font: font)
+        XCTAssertEqual(caret.minY, 100, accuracy: 0.5)
+        XCTAssertEqual(caret.maxY, baseline - font.descender, accuracy: 0.5)
+        XCTAssertLessThan(caret.height, line.height)
+        XCTAssertEqual(caret.minX, line.minX)
+    }
+
+    func testABaselineOutsideTheCursorsLineIsIgnored() {
+        let line = NSRect(x: 40, y: 100, width: 1, height: 36)
+        XCTAssertEqual(NoteTextView.caretRect(line, baseline: 400, font: NoteStyle.body), line)
     }
 }
