@@ -22,6 +22,7 @@ struct HomePage: View {
             VStack(alignment: .leading, spacing: 28) {
                 Text("Meetings").font(Chrome.titleFont)
                 newNote
+                UpcomingSection(app: app)
                 if let notice = model.notice { Banner(text: notice) { Button("OK") { model.notice = nil } } }
                 ForEach(model.suggestions) { suggestionCard($0) }
                 if !model.groups.isEmpty { section("Series") { ForEach(model.groups, id: \.name) { seriesCard($0) } } }
@@ -140,7 +141,7 @@ struct HomePage: View {
 }
 
 /// A list row that lights up softly under the pointer.
-private struct RowButtonStyle: ButtonStyle {
+struct RowButtonStyle: ButtonStyle {
     @State private var hovering = false
 
     func makeBody(configuration: Configuration) -> some View {

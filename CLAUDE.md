@@ -39,7 +39,8 @@ Before installing, make sure nothing is recording (Aidan says so, or no fresh `.
   (`NoteSync.writeExpanded`), frontmatter, and Transcript.
 - **Never silently overwrite** an edit made in Lyra or Obsidian (NoteIndex write lock + fingerprints + NoteSync conflicts).
 - **Nothing is permanently deleted** — `FileManager.trashItem` only.
-- Never record without Aidan's Allow click. Voice fingerprints never leave the Mac.
+- Never record without Aidan's Allow click — the one exception: he pressed **Join** on an upcoming meeting in
+  Lyra and the meeting app then takes the mic (see `docs/superpowers/specs/2026-10-27-lyra-calendar-design.md`). Voice fingerprints never leave the Mac.
 - Wrong names/series are worse than none: series is always a suggestion Aidan confirms.
 
 ## Working with Aidan
