@@ -14,6 +14,13 @@ public struct Meeting: Codable, Sendable {
     public var tracks: [TrackResult]? = nil
     /// SHA-256 hex of the note's transcript section as Lyra last wrote it; a different section means Aidan edited it.
     public var transcriptSectionHash: String? = nil
+    /// SHA-256 of each grey (Claude) block's `NoteMarkdown.render([block])` as last written, to tell edited blocks from untouched ones.
+    public var expandedHashes: [String]? = nil
+    public var seriesSuggestion: String? = nil
+    public var seriesRejected: Bool? = nil
+    public var screenText: [String]? = nil
+    /// Where the note was last seen; a hint only, the lyra_id in the note is the identity.
+    public var notePath: String? = nil
 
     public init(id: UUID = UUID(), title: String, appName: String, bundleID: String? = nil,
                 startedAt: Date, endedAt: Date? = nil, warnings: [String] = []) {
