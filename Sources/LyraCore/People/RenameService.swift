@@ -130,18 +130,24 @@ public struct RenameService: Sendable {
     private func writeNote(lines: [TranscriptLine], previous: [TranscriptLine], folder: URL, note: URL,
                            overwrite: Bool) throws -> RenameOutcome {
         var meeting = try Meeting.load(from: folder)
-        let text: String
-        do { text = try String(contentsOf: note, encoding: .utf8) }
-        catch let e as CocoaError where e.code == .fileReadNoSuchFile || e.code == .fileNoSuchFile { throw RenameError.noteMissing(note) }
-        guard let current = NoteSections.transcriptBody(of: text) else { throw NoteSectionsError.missingTranscriptMarkers }
-        // Old meetings have no hash: unedited only if the section still renders identically from the old transcript.
-        let lyraWrote = meeting.transcriptSectionHash ?? NoteSections.hash(NoteRenderer.transcriptBody(lines: previous))
         let body = NoteRenderer.transcriptBody(lines: lines)
-        // Already matching (e.g. Aidan made the same change himself): no write, just record the hash.
-        if current != body {
+        // Read, compare and write under the note write lock, so Lyra's other saves and moves can't interleave.
+        let written: RenameOutcome = try NoteIndex.withWriteLock {
+            let text: String
+            do { text = try String(contentsOf: note, encoding: .utf8) }
+            catch let e as CocoaError where e.code == .fileReadNoSuchFile || e.code == .fileNoSuchFile { throw RenameError.noteMissing(note) }
+            guard let current = NoteSections.transcriptBody(of: text) else { throw NoteSectionsError.missingTranscriptMarkers }
+            // Old meetings have no hash: unedited only if the section still renders identically from the old transcript.
+            let lyraWrote = meeting.transcriptSectionHash ?? NoteSections.hash(NoteRenderer.transcriptBody(lines: previous))
+            // Already matching (e.g. Aidan made the same change himself): no write, just record the hash.
+            guard current != body else { return .done }
             guard overwrite || NoteSections.hash(current) == lyraWrote else { return .needsConfirmation }
-            try NoteSections.replaceTranscript(in: text, with: body).write(to: note, atomically: true, encoding: .utf8)
+            do {
+                try NoteIndex.writeAtomically(Data(NoteSections.replaceTranscript(in: text, with: body).utf8), to: note)
+            } catch let e as CocoaError where e.code == .fileNoSuchFile { throw RenameError.noteMissing(note) }
+            return .done
         }
+        guard written == .done else { return written }
         if meeting.transcriptSectionHash != NoteSections.hash(body) || meeting.notePath != note.path {
             meeting.transcriptSectionHash = NoteSections.hash(body)
             meeting.notePath = note.path

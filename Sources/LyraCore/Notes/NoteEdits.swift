@@ -38,17 +38,12 @@ public enum NoteEdits {
         if document == loaded.document { return .saved(loaded) }
         do {
             return .saved(try index.save(document, over: loaded))
-        } catch let error where isChangedOrMoved(error) {
+        } catch let error where NoteIndex.isChangedOrMoved(error) {
             // Found again by `lyra_id`: Lyra may have renamed it after the meeting, or Aidan moved it in Obsidian.
             let disk = try index.load(loaded.document.front.lyraID, hint: loaded.url)
             guard section.text(in: disk.document) == section.text(in: loaded.document) else { return .conflict(disk: disk) }
             return .saved(try keepMine(blocks, section: section, over: disk, index: index))
         }
-    }
-
-    private static func isChangedOrMoved(_ error: Error) -> Bool {
-        if case NoteIndexError.changedOnDisk = error { return true }
-        return (error as? CocoaError)?.code == .fileReadNoSuchFile
     }
 
     /// "Keep mine": this section becomes `blocks`, everything else stays as it is on disk now.

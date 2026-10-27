@@ -90,7 +90,7 @@ public enum SeriesLibrary {
             if existing == page { return }
         }
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        try NoteIndex.writeAtomically(Data(page.utf8), to: url)
+        try NoteIndex.writeAtomically(Data(page.utf8), to: url, mayCreate: true)
     }
 
     // MARK: Helpers

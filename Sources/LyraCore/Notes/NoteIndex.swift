@@ -36,6 +36,10 @@ public struct Relocation: Sendable {
 /// Finds Lyra's notes by `lyra_id` (Aidan may have moved or renamed them in Obsidian), saves them without ever
 /// overwriting an edit made elsewhere, and renames/moves them while keeping `[[links]]` pointing at them.
 /// Nothing is cached between calls.
+///
+/// Every write and move holds one process-wide lock (`withWriteLock`): the editor saves on the main actor while the
+/// after-meeting step writes in the background, and a read→compare→write must not interleave with another write or
+/// a move. Reads don't take it (writes are atomic swaps). Locked sections are synchronous and never take it again.
 public struct NoteIndex: Sendable {
     public let notesRoot: URL
     public let vaultRoot: URL
@@ -43,6 +47,8 @@ public struct NoteIndex: Sendable {
     /// Frontmatter sits at the top of a note; only this many lines are read when scanning.
     private static let scanLineLimit = 40
     private static let scanByteLimit = 16 * 1024
+    static let saveAttempts = 3
+    private static let writeLock = NSLock()
 
     public init(notesRoot: URL, vaultRoot: URL) {
         self.notesRoot = notesRoot
@@ -71,11 +77,47 @@ public struct NoteIndex: Sendable {
     // MARK: Save
 
     public func save(_ document: NoteDocument, over loaded: LoadedNote) throws -> LoadedNote {
+        try Self.withWriteLock { try saveLocked(document, over: loaded) }
+    }
+
+    /// Applies `change` to the note as it is on disk and saves it. If the file changed or moved in between (Aidan
+    /// typing in Obsidian, a stale `loaded`), reloads and applies `change` again, so only the parts `change` touches
+    /// are Lyra's. `change` runs under the write lock: it may only edit the document, never call NoteIndex.
+    public func update(_ loaded: LoadedNote, _ change: (inout NoteDocument) -> Void) throws -> LoadedNote {
+        try Self.withWriteLock {
+            var current = loaded
+            for attempt in 1...Self.saveAttempts {
+                var document = current.document
+                change(&document)
+                if document == current.document { return current }
+                do { return try saveLocked(document, over: current) } catch where attempt < Self.saveAttempts && Self.isChangedOrMoved(error) {
+                    current = try load(current.document.front.lyraID, hint: current.url)
+                }
+            }
+            preconditionFailure("the last attempt returns or throws")
+        }
+    }
+
+    /// The caller holds the write lock.
+    private func saveLocked(_ document: NoteDocument, over loaded: LoadedNote) throws -> LoadedNote {
         let current = try Data(contentsOf: loaded.url)
         guard Self.fingerprint(of: current) == loaded.fingerprint else { throw NoteIndexError.changedOnDisk(loaded.url) }
         let data = Data(document.render().utf8)
         try Self.writeAtomically(data, to: loaded.url)
         return LoadedNote(url: loaded.url, document: document, fingerprint: Self.fingerprint(of: data))
+    }
+
+    /// The note changed since it was loaded, or isn't where it was (renamed, moved, trashed): find it again by `lyra_id`.
+    static func isChangedOrMoved(_ error: Error) -> Bool {
+        if case NoteIndexError.changedOnDisk = error { return true }
+        let code = (error as? CocoaError)?.code
+        return code == .fileReadNoSuchFile || code == .fileNoSuchFile
+    }
+
+    /// Runs `body` holding the lock every note write and move takes. `body` must be synchronous and must not call
+    /// anything that takes the lock again (`save`, `update`, `relocate…`, `renameSeriesFolder`): it isn't reentrant.
+    static func withWriteLock<T>(_ body: () throws -> T) rethrows -> T {
+        try writeLock.withLock(body)
     }
 
     // MARK: Rename and move
@@ -86,6 +128,10 @@ public struct NoteIndex: Sendable {
     }
 
     public func relocateReportingSkips(_ loaded: LoadedNote, title: String, series: String?) throws -> Relocation {
+        try Self.withWriteLock { try relocateLocked(loaded, title: title, series: series) }
+    }
+
+    private func relocateLocked(_ loaded: LoadedNote, title: String, series: String?) throws -> Relocation {
         let fm = FileManager.default
         let folder = Self.seriesFolder(series, under: notesRoot)
         let base = Self.noteBaseName(title: title, date: loaded.document.front.date)
@@ -112,6 +158,10 @@ public struct NoteIndex: Sendable {
     /// Returns files it could not update (a note changed by hand meanwhile, an unreadable file); the rename itself still happened.
     @discardableResult
     public func renameSeriesFolder(from: String, to: String) throws -> [URL] {
+        try Self.withWriteLock { try renameSeriesFolderLocked(from: from, to: to) }
+    }
+
+    private func renameSeriesFolderLocked(from: String, to: String) throws -> [URL] {
         let fm = FileManager.default
         let oldName = Self.folderName(from), newName = Self.folderName(to)
         let source = notesRoot.appendingPathComponent(oldName, isDirectory: true)
@@ -135,7 +185,7 @@ public struct NoteIndex: Sendable {
                   let series = loaded.document.front.series, Self.folderName(series) == oldName else { continue }
             var edited = loaded.document
             edited.front.series = to
-            do { _ = try save(edited, over: loaded) } catch { skipped.append(url) }
+            do { _ = try saveLocked(edited, over: loaded) } catch { skipped.append(url) }
         }
 
         let oldPage = destination.appendingPathComponent(oldName + ".md")
@@ -203,16 +253,46 @@ public struct NoteIndex: Sendable {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    /// Temp file in the same folder, then swapped in, so a reader never sees half a note.
-    static func writeAtomically(_ data: Data, to url: URL) throws {
+    /// Temp file in the same folder, then swapped in, so a reader never sees half a note. Replacing never creates:
+    /// a file that is gone (moved or trashed meanwhile) throws `fileNoSuchFile` instead of coming back at its old
+    /// path. `mayCreate` writes a new file when there is none.
+    static func writeAtomically(_ data: Data, to url: URL, mayCreate: Bool = false) throws {
         let temp = url.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).lyra-tmp")
         do {
             try data.write(to: temp)
-            _ = try FileManager.default.replaceItemAt(url, withItemAt: temp)
+            try swapIn(temp, at: url, mayCreate: mayCreate)
         } catch {
             try? FileManager.default.removeItem(at: temp)
             throw error
         }
+    }
+
+    /// One atomic swap that fails if `url` is missing; afterwards `temp` holds the old contents and is removed.
+    private static func swapIn(_ temp: URL, at url: URL, mayCreate: Bool) throws {
+        if renamex_np(temp.path, url.path, UInt32(RENAME_SWAP)) == 0 {
+            try? FileManager.default.removeItem(at: temp)
+            return
+        }
+        switch errno {
+        case ENOENT where mayCreate:
+            // RENAME_EXCL: a file that appeared meanwhile is never replaced unseen.
+            guard renamex_np(temp.path, url.path, UInt32(RENAME_EXCL)) == 0 else { throw posixError(errno, url) }
+        case ENOENT:
+            throw CocoaError(.fileNoSuchFile, userInfo: [NSFilePathErrorKey: url.path])
+        case ENOTSUP, EINVAL:
+            // A disk without swap support: check, then replace (the write lock covers Lyra's own moves).
+            guard mayCreate || FileManager.default.fileExists(atPath: url.path) else {
+                throw CocoaError(.fileNoSuchFile, userInfo: [NSFilePathErrorKey: url.path])
+            }
+            _ = try FileManager.default.replaceItemAt(url, withItemAt: temp)
+        case let code:
+            throw posixError(code, url)
+        }
+    }
+
+    private static func posixError(_ code: Int32, _ url: URL) -> Error {
+        CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: url.path,
+                                                 NSUnderlyingErrorKey: POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)])
     }
 
     // MARK: Names

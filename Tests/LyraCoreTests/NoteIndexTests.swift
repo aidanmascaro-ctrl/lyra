@@ -195,3 +195,93 @@ extension NoteIndexTests {
         XCTAssertEqual(index.allNotes().map(\.document.front.lyraID), [doc.front.lyraID])
     }
 }
+
+// MARK: Concurrent writers (final fix wave)
+
+/// Collects errors thrown on other threads.
+private final class Failures: @unchecked Sendable {
+    private let lock = NSLock()
+    private var errors: [Error] = []
+    func add(_ error: Error) { lock.withLock { errors.append(error) } }
+    var all: [Error] { lock.withLock { errors } }
+}
+
+extension NoteIndexTests {
+    private static let rounds = 60
+
+    /// The editor saves My notes on the main actor while the after-meeting step streams Expanded in the background:
+    /// every change from both survives.
+    func testConcurrentWritersToDifferentSectionsBothSurvive() throws {
+        let doc = makeDocument(title: "Chat")
+        let url = try writeNote(doc, name: prefix + "Chat")
+        let start = try index.load(doc.front.lyraID, hint: url)
+        let (index, failures, rounds) = (index!, Failures(), Self.rounds)
+        DispatchQueue.concurrentPerform(iterations: 2) { writer in
+            var current = start
+            var lines: [String] = []
+            for n in 1...rounds {
+                lines.append("- \(writer == 0 ? "typed" : "grey") \(n)")
+                let text = lines.joined(separator: "\n")
+                do {
+                    current = try index.update(current) { if writer == 0 { $0.myNotes = text } else { $0.expanded = text } }
+                } catch { failures.add(error) }
+            }
+        }
+        XCTAssertTrue(failures.all.isEmpty, "\(failures.all)")
+        let final = try index.load(doc.front.lyraID, hint: url).document
+        XCTAssertEqual(final.myNotes, (1...rounds).map { "- typed \($0)" }.joined(separator: "\n"))
+        XCTAssertEqual(final.expanded, (1...rounds).map { "- grey \($0)" }.joined(separator: "\n"))
+    }
+
+    /// A save racing a rename must never bring the note back at its old path: one file per lyra_id, always.
+    func testSaveRacingRelocateNeverLeavesTwoCopies() throws {
+        let doc = makeDocument(title: "Chat")
+        let url = try writeNote(doc, name: prefix + "Chat")
+        let start = try index.load(doc.front.lyraID, hint: url)
+        let (index, failures, rounds) = (index!, Failures(), Self.rounds)
+        DispatchQueue.concurrentPerform(iterations: 2) { worker in
+            var current = start
+            for n in 1...rounds {
+                do {
+                    if worker == 0 {
+                        current = try index.relocate(current, title: "Chat \(n)", series: nil)
+                    } else {
+                        current = try index.update(current) { $0.myNotes = "typed \(n)" }
+                    }
+                } catch { failures.add(error) }
+            }
+        }
+        XCTAssertTrue(failures.all.isEmpty, "\(failures.all)")
+        let copies = index.allNotes().filter { $0.document.front.lyraID == doc.front.lyraID }
+        XCTAssertEqual(copies.count, 1, copies.map(\.url.lastPathComponent).description)
+        XCTAssertEqual(copies.first?.document.myNotes, "typed \(rounds)")
+    }
+
+    func testSaveAfterNoteWasMovedAwayThrowsAndRecreatesNothing() throws {
+        let doc = makeDocument(title: "Chat")
+        let url = try writeNote(doc, name: prefix + "Chat")
+        let loaded = try index.load(doc.front.lyraID, hint: url)
+        let trash = vault.appendingPathComponent("Trash", isDirectory: true)
+        try FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: url, to: trash.appendingPathComponent("Chat.md"))
+
+        var edited = loaded.document
+        edited.myNotes = "typed after the move"
+        XCTAssertThrowsError(try index.save(edited, over: loaded))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    /// The write itself never creates a file it was meant to replace (it vanished between the check and the swap).
+    func testWriteAtomicallyNeverCreatesAMissingFile() throws {
+        let missing = meetings.appendingPathComponent("Gone.md")
+        XCTAssertThrowsError(try NoteIndex.writeAtomically(Data("hello".utf8), to: missing))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: missing.path))
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: meetings.path)
+        XCTAssertEqual(leftovers, [])  // no temp file left behind
+
+        try NoteIndex.writeAtomically(Data("hello".utf8), to: missing, mayCreate: true)
+        XCTAssertEqual(try read(missing), "hello")
+        try NoteIndex.writeAtomically(Data("again".utf8), to: missing)
+        XCTAssertEqual(try read(missing), "again")
+    }
+}

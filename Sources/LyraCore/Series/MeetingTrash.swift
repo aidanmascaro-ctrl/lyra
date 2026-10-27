@@ -16,12 +16,17 @@ public enum MeetingTrash {
         let fm = FileManager.default
         var series: String?
 
-        if let note = try? index.load(id, hint: nil) {
+        // Found and moved under the write lock, so a save or rename can't move it or bring it back in between.
+        let trashed: Result<LoadedNote, Error>? = NoteIndex.withWriteLock {
+            guard let note = try? index.load(id, hint: nil) else { return nil }
+            return Result { try trash(note.url); return note }
+        }
+        switch trashed {
+        case .success(let note):
             series = SeriesActions.currentSeries(of: note, index: index)
-            do { try trash(note.url) } catch {
-                return ["Lyra couldn't move the note to the Trash, so it left the recordings where they are: \(error.localizedDescription)"]
-            }
-        } else {
+        case .failure(let error):
+            return ["Lyra couldn't move the note to the Trash, so it left the recordings where they are: \(error.localizedDescription)"]
+        case nil:
             problems.append("Lyra couldn't find this meeting's note in Obsidian; it may already be moved or deleted.")
         }
 

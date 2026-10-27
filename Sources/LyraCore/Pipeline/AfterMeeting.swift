@@ -261,22 +261,3 @@ public struct AfterMeeting: Sendable {
         b.reduce(into: a) { if !$0.contains($1) { $0.append($1) } }
     }
 }
-
-extension NoteIndex {
-    static let saveAttempts = 3
-
-    /// Applies `change` to the note as it is on disk and saves it. If the file changes in between (Aidan typing in
-    /// Obsidian or in Lyra), reloads and applies `change` again, so only the parts `change` touches are Lyra's.
-    public func update(_ loaded: LoadedNote, _ change: (inout NoteDocument) -> Void) throws -> LoadedNote {
-        var current = loaded
-        for attempt in 1...Self.saveAttempts {
-            var document = current.document
-            change(&document)
-            if document == current.document { return current }
-            do { return try save(document, over: current) } catch NoteIndexError.changedOnDisk(let url) where attempt < Self.saveAttempts {
-                current = try load(current.document.front.lyraID, hint: url)
-            }
-        }
-        preconditionFailure("the last attempt returns or throws")
-    }
-}
