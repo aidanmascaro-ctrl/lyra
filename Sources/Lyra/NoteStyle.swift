@@ -65,7 +65,7 @@ enum NoteStyle {
 
     /// Each numbered block's number, counted exactly as the file will write it.
     static func listNumbers(_ blocks: [NoteBlock]) -> [Int] {
-        let lines = NoteMarkdown.render(blocks).components(separatedBy: "\n")
+        let lines = NoteMarkdown.renderLines(blocks)
         return blocks.indices.map { i in
             guard blocks[i].kind == .numbered, lines.indices.contains(i) else { return 0 }
             return Int(lines[i].drop(while: { $0 == " " }).prefix(while: \.isNumber)) ?? 0
