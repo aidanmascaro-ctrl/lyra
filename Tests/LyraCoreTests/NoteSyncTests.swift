@@ -205,4 +205,20 @@ final class NoteSyncTests: XCTestCase {
         XCTAssertFalse(result.written)
         XCTAssertEqual(try disk().expanded, "- from Obsidian")
     }
+
+    /// Moved in Obsidian with its text unchanged: Lyra follows it to the new path, with nothing to push.
+    func testMoveWithUnchangedContentFollowsTheNewPath() throws {
+        var sync = try start()
+        let folder = url.deletingLastPathComponent().appendingPathComponent("Series", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let moved = folder.appendingPathComponent("Chat.md")
+        try FileManager.default.moveItem(at: url, to: moved)
+
+        XCTAssertEqual(sync.diskChanged(try index.load(id, hint: moved)), [])
+        XCTAssertEqual(sync.loaded.url.standardizedFileURL, moved.standardizedFileURL)
+        // Saves now go to the new path.
+        _ = try sync.edited(blocks("- mine\n- more"), in: .myNotes, index: index)
+        XCTAssertEqual(try index.load(id, hint: moved).document.myNotes, "- mine\n- more")
+        XCTAssertEqual(try index.load(id, hint: moved).url.standardizedFileURL, moved.standardizedFileURL)
+    }
 }

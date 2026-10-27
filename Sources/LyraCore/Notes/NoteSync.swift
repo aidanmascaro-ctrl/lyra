@@ -34,9 +34,11 @@ public struct NoteSync: Sendable {
         for section in NoteSection.allCases { shown[section] = Self.canonical(section.text(in: loaded.document)) }
     }
 
-    /// The watcher saw the file change. Lyra's own last write (same fingerprint) changes nothing.
+    /// The watcher saw the file change. Lyra's own last write (same fingerprint, same place) changes nothing; the
+    /// same text somewhere else (moved in Obsidian) is followed there, with nothing to push.
     public mutating func diskChanged(_ disk: LoadedNote) -> [Effect] {
-        guard disk.fingerprint != loaded.fingerprint else { return [] }
+        guard disk.fingerprint != loaded.fingerprint || disk.url.standardizedFileURL != loaded.url.standardizedFileURL
+        else { return [] }
         return accept(disk)
     }
 
