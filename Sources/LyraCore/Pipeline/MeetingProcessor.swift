@@ -11,6 +11,8 @@ public struct MeetingProcessor: Sendable {
         "No sound came from \(appName) during this meeting, so the transcript is from your microphone only. If other people spoke, check System Settings → Privacy & Security → Screen & System Audio Recording for Lyra."
     }
 
+    public static let editedTranscriptWarning = "This note's transcript was edited by hand, so the part recorded after Resume wasn't added to it. The whole transcript is in transcript.json in the recording folder."
+
     private let trackTranscriber: TrackTranscriber
     private let loader: @Sendable (URL) throws -> [Float]
     private let convert: @Sendable (URL, URL) async throws -> Void
@@ -121,8 +123,15 @@ public struct MeetingProcessor: Sendable {
             meeting.transcriptSectionHash = NoteSections.transcriptBody(of: existing).map(NoteSections.hash)
             return found
         }
-        guard loaded.document.transcript.isEmpty else {
+        // Recording resumed after End: the section holds the earlier parts. Lyra replaces it with all parts only if
+        // it is still exactly what Lyra wrote; one edited by hand stays, and the note says where the rest is.
+        let earlierPartsUnedited = (meeting.earlierParts ?? 0) > 0
+            && NoteSections.hash(loaded.document.transcript) == meeting.transcriptSectionHash
+        guard loaded.document.transcript.isEmpty || earlierPartsUnedited else {
             // Written by a run a crash cut short (and maybe edited since): leave it as it is.
+            if (meeting.earlierParts ?? 0) > 0, NoteSections.hash(loaded.document.transcript) != NoteSections.hash(body) {
+                meeting.warn(Self.editedTranscriptWarning)
+            }
             meeting.transcriptSectionHash = NoteSections.hash(loaded.document.transcript)
             return loaded.url
         }

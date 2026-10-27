@@ -17,8 +17,16 @@ public enum RecordingParts {
         let target = partFolder(folder, part)
         try fm.createDirectory(at: target, withIntermediateDirectories: true)
         let names = try fm.contentsOfDirectory(atPath: folder.path).filter { filed.contains($0) || $0.hasSuffix(".m4a") }
-        for name in names {
-            try fm.moveItem(at: folder.appendingPathComponent(name), to: target.appendingPathComponent(name))
+        var moved: [String] = []
+        do {
+            for name in names {
+                try fm.moveItem(at: folder.appendingPathComponent(name), to: target.appendingPathComponent(name))
+                moved.append(name)
+            }
+        } catch {
+            // Half filed away would leave the note looking empty: put back what moved, then say why.
+            for name in moved { try? fm.moveItem(at: target.appendingPathComponent(name), to: folder.appendingPathComponent(name)) }
+            throw error
         }
         var meeting = previous
         meeting.earlierParts = part

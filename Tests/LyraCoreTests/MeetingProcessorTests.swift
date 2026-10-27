@@ -188,6 +188,37 @@ final class MeetingProcessorTests: XCTestCase {
         XCTAssertTrue(text.contains("first part") && text.contains("hi back"))
     }
 
+    /// End to end: write up part 1 into its note, Resume (file it away), write up part 2 — the note has both.
+    func testResumedPartReachesTheExistingNote() async throws {
+        var first = meeting
+        first.notePath = note.path
+        try MeetingProcessor.createSkeletonNote(for: first, recordingsFolder: folder, at: note)
+        _ = try await processor().process(meeting: first, tracks: [track(.mic)], folder: folder, noteURL: note)
+        _ = try RecordingParts.archive(folder: folder)
+        let resumed = try Meeting.load(from: folder)
+        _ = try await processor().process(meeting: resumed, tracks: [track(.mic)], folder: folder, noteURL: note)
+        let text = try String(contentsOf: note, encoding: .utf8)
+        XCTAssertEqual(text.components(separatedBy: "hi back").count - 1, 2, "both parts in the note's transcript")
+        let section = try XCTUnwrap(NoteSections.transcriptBody(of: text))
+        XCTAssertEqual(try Meeting.load(from: folder).transcriptSectionHash, NoteSections.hash(section))
+    }
+
+    /// A transcript edited by hand in Obsidian is never replaced; the joined one is still saved in transcript.json.
+    func testResumedPartLeavesAHandEditedTranscriptAlone() async throws {
+        var first = meeting
+        first.notePath = note.path
+        try MeetingProcessor.createSkeletonNote(for: first, recordingsFolder: folder, at: note)
+        _ = try await processor().process(meeting: first, tracks: [track(.mic)], folder: folder, noteURL: note)
+        let edited = try String(contentsOf: note, encoding: .utf8).replacingOccurrences(of: "hi back", with: "hi back (fixed by hand)")
+        try edited.write(to: note, atomically: true, encoding: .utf8)
+        _ = try RecordingParts.archive(folder: folder)
+        _ = try await processor().process(meeting: try Meeting.load(from: folder), tracks: [track(.mic)], folder: folder, noteURL: note)
+        let text = try String(contentsOf: note, encoding: .utf8)
+        XCTAssertTrue(text.contains("hi back (fixed by hand)"))
+        XCTAssertEqual(text.components(separatedBy: "hi back").count - 1, 1)
+        XCTAssertTrue(try Meeting.load(from: folder).warnings.contains(MeetingProcessor.editedTranscriptWarning))
+    }
+
     func testMicOnlyMeeting() async throws {
         _ = try await processor().process(meeting: meeting, tracks: [track(.mic)], folder: folder, noteURL: note)
         let text = try String(contentsOf: note, encoding: .utf8)

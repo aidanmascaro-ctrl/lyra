@@ -79,6 +79,18 @@ final class RecordingPartsTests: XCTestCase {
         XCTAssertEqual(meeting.afterMeetingDone, true)
     }
 
+    func testArchiveThatFailsHalfwayPutsEverythingBack() throws {
+        _ = try finishedMeeting(seconds: 300)
+        let blocker = folder.appendingPathComponent("parts/1/mic.m4a")
+        try FileManager.default.createDirectory(at: blocker.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("already here".utf8).write(to: blocker)
+        XCTAssertThrowsError(try RecordingParts.archive(folder: folder))
+        XCTAssertTrue(exists("transcript.json"))
+        XCTAssertTrue(exists("speakers.json"))
+        XCTAssertTrue(exists("mic.m4a"))
+        XCTAssertNil(try Meeting.load(from: folder).earlierParts)
+    }
+
     func testJoinShiftsTheNewPartAndRenumbersPeopleLyraDoesntKnow() {
         let earlier = [line("Speaker 1", id: "mic:0", 2, 4, "hello"), line("Marco", id: "mic:1", 5, 8, "hi", known: true),
                        line("Speaker 2", id: "mic:2", 9, 10, "yes")]

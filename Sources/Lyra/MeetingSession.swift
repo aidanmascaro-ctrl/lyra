@@ -76,7 +76,12 @@ final class MeetingSession {
         do { try await startRecorder() } catch {
             // A half-opened file would make crash recovery treat this note as a recording.
             for kind in [TrackKind.mic, .meeting] { try? FileManager.default.removeItem(at: folder.appendingPathComponent("\(kind.rawValue).caf")) }
-            if let previous { try? RecordingParts.restore(folder: folder, previous: previous) }
+            if let previous {
+                do { try RecordingParts.restore(folder: folder, previous: previous) } catch let restoreError {
+                    throw CocoaError(.fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey:
+                        "\(error.localizedDescription) The earlier recording is filed under “parts” in the recording folder and couldn't be put back: \(restoreError.localizedDescription)"])
+                }
+            }
             throw error
         }
         transcribeLive()
