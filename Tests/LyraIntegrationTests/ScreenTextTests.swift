@@ -9,7 +9,7 @@ final class ScreenTextTests: XCTestCase {
         try requireIntegration()
         try XCTSkipUnless(CGPreflightScreenCaptureAccess(), "Screen Recording permission not granted")
         let finder = try XCTUnwrap(NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == "com.apple.finder" })
-        let lines = await ScreenText.read(pid: finder.processIdentifier)
+        let lines = await ScreenText.read(pid: finder.processIdentifier, startTitle: "")
         print("ScreenText lines from Finder: \(lines.prefix(5))")
         XCTAssertTrue(lines.allSatisfy { $0.count >= 3 })
         XCTAssertEqual(lines.count, Set(lines).count, "lines are deduplicated")

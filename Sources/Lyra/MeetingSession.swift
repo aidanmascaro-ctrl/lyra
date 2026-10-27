@@ -138,7 +138,7 @@ final class MeetingSession {
         screenReader = Task { [weak self] in
             while !Task.isCancelled {
                 if self?.isPaused == false {
-                    let lines = await ScreenText.read(pid: pid)
+                    let lines = await ScreenText.read(pid: pid, startTitle: self?.meeting.title ?? "")
                     guard !Task.isCancelled else { return }
                     self?.keep(lines)
                 }

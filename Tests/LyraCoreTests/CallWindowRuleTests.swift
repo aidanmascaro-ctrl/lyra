@@ -1,0 +1,54 @@
+import XCTest
+@testable import LyraCore
+
+final class CallWindowRuleTests: XCTestCase {
+    private func w(_ id: UInt32, _ title: String, _ width: Double = 1200, _ height: Double = 800) -> WindowInfo {
+        WindowInfo(id: id, title: title, width: width, height: height)
+    }
+
+    func testBrowserOnlyTheCallsTab() {
+        let windows = [w(1, "Inbox (3) - aidan@example.com - Gmail - Google Chrome", 1600, 1000),
+                       w(2, "Meet - abc-defg-hij - Google Chrome - Aidan")]
+        XCTAssertEqual(CallWindowRule.pick(windows, appName: "Google Chrome", startTitle: "Meet - abc-defg-hij")?.id, 2)
+        XCTAssertEqual(CallWindowRule.pick(windows, appName: "Google Chrome", startTitle: "")?.id, 2, "by its site")
+    }
+
+    /// The call tab is behind another tab: Lyra reads nothing rather than the tab in front.
+    func testBrowserWithNoCallTabInFrontGivesNothing() {
+        let windows = [w(1, "Inbox (3) - Gmail - Google Chrome"), w(2, "Meeting notes - Google Docs - Google Chrome")]
+        XCTAssertNil(CallWindowRule.pick(windows, appName: "Google Chrome", startTitle: "Elm Park Startup Series"))
+    }
+
+    func testTeamsAndZoomInABrowser() {
+        XCTAssertEqual(CallWindowRule.pick([w(1, "Weekly sync | Microsoft Teams - Google Chrome")], appName: "Google Chrome", startTitle: "x")?.id, 1)
+        XCTAssertEqual(CallWindowRule.pick([w(1, "Zoom Meeting - Google Chrome")], appName: "Google Chrome", startTitle: "x")?.id, 1)
+    }
+
+    func testZoomAppPrefersItsMeetingWindow() {
+        let windows = [w(1, "Zoom Workplace", 1600, 1000), w(2, "Zoom Meeting"), w(3, "", 300, 40)]
+        XCTAssertEqual(CallWindowRule.pick(windows, appName: "zoom.us", startTitle: "zoom.us")?.id, 2)
+    }
+
+    func testOtherAppsTheirLargestWindow() {
+        let windows = [w(1, "FaceTime", 900, 700), w(2, "", 1200, 800), w(3, "", 100, 100)]
+        XCTAssertEqual(CallWindowRule.pick(windows, appName: "FaceTime", startTitle: "FaceTime")?.id, 2)
+        XCTAssertNil(CallWindowRule.pick([w(3, "", 100, 100)], appName: "FaceTime", startTitle: ""))
+    }
+}
+
+final class RecordingClockTests: XCTestCase {
+    private final class Time: @unchecked Sendable { var now: TimeInterval = 100 }
+
+    func testLeavesOutPausedTime() {
+        let time = Time()
+        var clock = RecordingClock(now: { time.now })
+        time.now = 110
+        XCTAssertEqual(clock.seconds, 10)
+        clock.pause()
+        time.now = 150
+        XCTAssertEqual(clock.seconds, 10, "stands still while paused")
+        clock.resume()
+        time.now = 155
+        XCTAssertEqual(clock.seconds, 15)
+    }
+}
