@@ -4,13 +4,16 @@ import Foundation
 /// by "\n"; what a block is lives in custom keys, never in the characters (no "- " or "1. " in the text).
 ///
 /// A block's keys sit on its characters and on the "\n" that ends it. An empty last block has no
-/// characters, so it reads its keys from the "\n" before it, which then carries the last block's keys.
+/// characters of its own, so its keys ride on the "\n" before it under the separate `trailing…` keys.
 public enum NoteText {
     public static let blockKind = NSAttributedString.Key("lyraBlockKind")
     public static let indent = NSAttributedString.Key("lyraIndent")
     public static let bold = NSAttributedString.Key("lyraBold")
     public static let underline = NSAttributedString.Key("lyraUnderline")
     public static let byClaude = NSAttributedString.Key("lyraByClaude")
+    public static let trailingKind = NSAttributedString.Key("lyraTrailingKind")
+    public static let trailingIndent = NSAttributedString.Key("lyraTrailingIndent")
+    public static let trailingByClaude = NSAttributedString.Key("lyraTrailingByClaude")
 
     public static func attributed(_ blocks: [NoteBlock]) -> NSAttributedString {
         let result = NSMutableAttributedString()
@@ -19,9 +22,14 @@ public enum NoteText {
                 result.append(NSAttributedString(string: run.text, attributes: attributes(block, run: run)))
             }
             guard i < blocks.count - 1 else { continue }
+            var keys = attributes(block, run: InlineRun(text: "\n"))
             let next = blocks[i + 1]
-            let carrier = i + 1 == blocks.count - 1 && next.runs.isEmpty && !block.runs.isEmpty ? next : block
-            result.append(NSAttributedString(string: "\n", attributes: attributes(carrier, run: InlineRun(text: "\n"))))
+            if i + 1 == blocks.count - 1, next.runs.isEmpty {
+                keys[trailingKind] = name(of: next.kind)
+                keys[trailingIndent] = next.indent
+                keys[trailingByClaude] = next.byClaude
+            }
+            result.append(NSAttributedString(string: "\n", attributes: keys))
         }
         return result
     }
@@ -68,10 +76,15 @@ public enum NoteText {
     }
 
     private static func block(in text: NSAttributedString, range: NSRange, hasTerminator: Bool) -> NoteBlock {
-        let keysAt: Int? = range.length > 0 ? range.location
-            : hasTerminator ? range.location
-            : range.location > 0 ? range.location - 1 : nil
-        let keys = keysAt.map { text.attributes(at: $0, effectiveRange: nil) } ?? [:]
+        var keys: [NSAttributedString.Key: Any] = [:]
+        if range.length > 0 || hasTerminator {
+            keys = text.attributes(at: range.location, effectiveRange: nil)
+        } else if range.location > 0 {
+            // An empty last block: only the trailing keys on the "\n" before it describe it.
+            let before = text.attributes(at: range.location - 1, effectiveRange: nil)
+            keys = [blockKind: before[trailingKind] as Any, indent: before[trailingIndent] as Any,
+                    byClaude: before[trailingByClaude] as Any]
+        }
         var runs: [InlineRun] = []
         text.enumerateAttributes(in: range) { attrs, sub, _ in
             let piece = (text.string as NSString).substring(with: sub)

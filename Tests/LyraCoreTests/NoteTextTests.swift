@@ -25,6 +25,14 @@ final class NoteTextTests: XCTestCase {
         XCTAssertEqual(NoteText.blocks(text), blocks)
     }
 
+    func testTwoEmptyTrailingBlocksKeepTheirOwnKinds() {
+        for blocks in [[b("x", .heading1), b("", .heading1), b("", .paragraph)],
+                       [b("", .paragraph), b("", .bullet)],
+                       [b("", .numbered, indent: 2, grey: true), b("", .heading2, grey: true)]] {
+            XCTAssertEqual(NoteText.blocks(NoteText.attributed(blocks)), blocks)
+        }
+    }
+
     func testEmptyTextHasNoBlocks() {
         XCTAssertEqual(NoteText.attributed([]).string, "")
         XCTAssertEqual(NoteText.blocks(NSAttributedString(string: "")), [])
@@ -32,6 +40,10 @@ final class NoteTextTests: XCTestCase {
 
     func testPlainTextWithoutKeysReadsAsParagraphs() {
         XCTAssertEqual(NoteText.blocks(NSAttributedString(string: "a\nb")), [b("a", .paragraph), b("b", .paragraph)])
+        let bulletLine = NoteText.attributed([b("a")])
+        let typedReturn = NSMutableAttributedString(attributedString: bulletLine)
+        typedReturn.append(NSAttributedString(string: "\n", attributes: bulletLine.attributes(at: 0, effectiveRange: nil)))
+        XCTAssertEqual(NoteText.blocks(typedReturn), [b("a"), b("", .paragraph)])
     }
 
     func testShortcutRecognition() {
