@@ -197,6 +197,14 @@ final class NoteTextViewTests: XCTestCase {
         XCTAssertEqual(caret.minX, line.minX)
     }
 
+    func testTheCursorIsAlwaysAsTallAsTheLettersEvenNearTheTopOfItsLine() {
+        let font = NoteStyle.body
+        let line = NSRect(x: 40, y: 100, width: 1, height: 36)
+        let caret = NoteTextView.caretRect(line, baseline: 103, font: font)
+        XCTAssertEqual(caret.height, font.ascender - font.descender, accuracy: 0.5)
+        XCTAssertEqual(caret.maxY, 103 - font.descender, accuracy: 0.5)
+    }
+
     func testABaselineOutsideTheCursorsLineIsIgnored() {
         let line = NSRect(x: 40, y: 100, width: 1, height: 36)
         XCTAssertEqual(NoteTextView.caretRect(line, baseline: 400, font: NoteStyle.body), line)

@@ -126,6 +126,7 @@ final class NoteTextView: NSTextView {
         guard let storage = textStorage, storage.editedMask.isEmpty else { return }
         let sel = selectedRange()
         let caret = sel.length == 0 ? sel.location : nil
+        var changed = false
         for location in NoteStyle.gapLocations(in: storage.string) {
             let current = storage.attribute(.paragraphStyle, at: location, effectiveRange: nil) as? NSParagraphStyle
             let isSmall = current?.maximumLineHeight == NoteStyle.blankLineHeight
@@ -134,7 +135,10 @@ final class NoteTextView: NSTextView {
             let style = wantSmall ? NoteStyle.gapStyle
                 : NoteStyle.display(storage.attributes(at: location, effectiveRange: nil))[.paragraphStyle] as Any
             storage.addAttribute(.paragraphStyle, value: style, range: NSRange(location: location, length: 1))
+            changed = true
         }
+        // The cursor was placed against the line's old height; measure it again against the new one.
+        if changed { updateInsertionPointStateAndRestartTimer(true) }
     }
 
     override func insertText(_ string: Any, replacementRange: NSRange) {
@@ -409,9 +413,7 @@ final class NoteTextView: NSTextView {
             return NSRect(x: rect.minX, y: rect.midY - full / 2, width: rect.width, height: full)
         }
         guard let baseline, baseline > rect.minY, baseline <= rect.maxY else { return rect }
-        let top = max(rect.minY, baseline - font.ascender)
-        let bottom = min(rect.maxY, baseline - font.descender)
-        return NSRect(x: rect.minX, y: top, width: rect.width, height: bottom - top)
+        return NSRect(x: rect.minX, y: baseline - font.ascender, width: rect.width, height: font.ascender - font.descender)
     }
 
     override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
@@ -438,10 +440,15 @@ final class NoteTextView: NSTextView {
         return line.minY + origin.y + layout.location(forGlyphAt: glyph).y
     }
 
-    /// The cursor blinks by redrawing its own rect, so a cursor grown past its line needs the taller area redrawn.
+    /// The cursor blinks by redrawing the rect AppKit gave it, and the drawn cursor can reach past that rect, so a
+    /// cursor-thin redraw is grown by a line each way.
     override func setNeedsDisplay(_ invalidRect: NSRect, avoidAdditionalLayout flag: Bool) {
-        super.setNeedsDisplay(Self.caretRect(invalidRect, baseline: nil, font: NoteStyle.body), avoidAdditionalLayout: flag)
+        let isCursor = invalidRect.width <= Self.cursorRedrawWidth
+        let line = ceil(NoteStyle.body.ascender - NoteStyle.body.descender)
+        super.setNeedsDisplay(isCursor ? invalidRect.insetBy(dx: 0, dy: -line) : invalidRect, avoidAdditionalLayout: flag)
     }
+
+    private static let cursorRedrawWidth: CGFloat = 3
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
