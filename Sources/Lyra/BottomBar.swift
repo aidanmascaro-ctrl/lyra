@@ -1,8 +1,8 @@
 import LyraCore
 import SwiftUI
 
-/// The floating bar: while recording, a small capsule (live transcript toggle with a level dot row, pause or
-/// resume, and end); in a New note not yet recorded, Record; always, a wide "Ask anything" capsule. Claude's replies and the inline Ask… field sit just above it.
+/// The floating bar: a small capsule that is always there (transcript panel toggle, Record / Resume / Pause, End
+/// while recording) and a wide "Ask anything" capsule. Claude's replies and the inline Ask… field sit just above it.
 struct BottomBar: View {
     @ObservedObject var model: MeetingModel
     /// Watched directly so Pause / Resume / Record redraw at once.
@@ -20,51 +20,25 @@ struct BottomBar: View {
                 Banner(text: error) { Button("OK") { model.claudeError = nil } }.frame(maxWidth: 560)
             }
             HStack(spacing: 10) {
-                if model.isLive { liveCapsule } else { recordCapsule }
+                transcriptCapsule
                 askCapsule
             }
             .frame(maxWidth: 560)
         }
     }
 
-    /// Always there when this note isn't recording: Record (never recorded) or Resume (ended before). While the last
-    /// part is written up, or another note records, it waits, greyed, and says why.
-    private var recordCapsule: some View {
-        let busy = model.isStartingRecording || model.isWritingUp
-        return Button { app.record(in: model.folder) } label: {
-            HStack(spacing: 7) {
-                if busy {
-                    ProgressView().controlSize(.small)
-                    Text(model.isStartingRecording ? "Starting…" : "Writing up…")
-                } else {
-                    Circle().fill(model.canRecord ? Chrome.record : Color.secondary).frame(width: 9, height: 9)
-                    Text(model.wasRecorded ? "Resume" : "Record")
-                }
-            }
-            .font(.system(size: 13.5, weight: .medium))
-            .padding(.horizontal, 16).frame(height: 38).contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .disabled(!model.canRecord)
-        .help(recordHelp)
-        .capsuleSurface()
-        .fixedSize()
-    }
-
-    private var recordHelp: String {
-        if model.canRecord { return model.wasRecorded ? "Record more into this note" : "Start recording this note" }
-        if app.isRecording || app.starting { return "Another note is recording — end it first" }
-        return "Resume is ready once Lyra has written up the last recording"
-    }
-
-    private var liveCapsule: some View {
+    /// Always there: the transcript panel toggle (breathing dots while recording, "Paused", or a still waveform),
+    /// then Record / Resume / Pause, and End while recording.
+    private var transcriptCapsule: some View {
         HStack(spacing: 0) {
             Button { drawerOpen.toggle() } label: {
                 HStack(spacing: 6) {
-                    if app.isPaused {
+                    if model.isLive && app.isPaused {
                         Text("Paused").font(.system(size: 12.5, weight: .medium)).foregroundStyle(.secondary)
-                    } else {
+                    } else if model.isLive {
                         LevelDots()
+                    } else {
+                        Image(systemName: "waveform").font(.system(size: 13)).foregroundStyle(.secondary)
                     }
                     Image(systemName: drawerOpen ? "chevron.down" : "chevron.up").font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
@@ -72,21 +46,18 @@ struct BottomBar: View {
                 .padding(.leading, 14).padding(.trailing, 10).frame(height: 38).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(drawerOpen ? "Hide the live transcript" : "Show the live transcript")
+            .help(drawerOpen ? "Hide the transcript" : "Show the transcript")
             Divider().frame(height: 18)
-            Button { app.isPaused ? app.resumeRecording() : app.pauseRecording() } label: {
-                Image(systemName: app.isPaused ? "play.fill" : "pause.fill").font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 10).frame(height: 38).contentShape(Rectangle())
+            RecordControl(model: model, app: app, style: .capsule)
+                .padding(.leading, 12).padding(.trailing, model.isLive ? 6 : 16).frame(height: 38)
+            if model.isLive {
+                Button { app.stopRecording() } label: {
+                    RoundedRectangle(cornerRadius: 2.5).fill(.secondary).frame(width: 10, height: 10)
+                        .padding(.leading, 6).padding(.trailing, 14).frame(height: 38).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("End recording and write it up")
             }
-            .buttonStyle(.plain)
-            .help(app.isPaused ? "Resume recording" : "Pause recording")
-            Button { app.stopRecording() } label: {
-                RoundedRectangle(cornerRadius: 2.5).fill(.secondary).frame(width: 10, height: 10)
-                    .padding(.leading, 4).padding(.trailing, 14).frame(height: 38).contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("End recording and write it up")
         }
         .capsuleSurface()
         .fixedSize()
@@ -151,7 +122,7 @@ struct BottomBar: View {
 }
 
 /// Granola's little green "•••": three dots breathing in turn while Lyra records.
-private struct LevelDots: View {
+struct LevelDots: View {
     var body: some View {
         TimelineView(.animation(minimumInterval: 1 / 15)) { context in
             let t = context.date.timeIntervalSinceReferenceDate

@@ -73,6 +73,9 @@ final class MeetingModel: ObservableObject {
     var canRecord: Bool { app.canRecord(in: folder) }
     /// Recorded before (and ended): Record carries on in this note, so it reads Resume.
     var wasRecorded: Bool { meeting?.endedAt != nil || meeting?.earlierParts != nil }
+    /// Only once a recording has ended: while recording (or paused) the transcript is in the bottom bar's panel, and
+    /// a New note never recorded has none. Resuming adds to it.
+    var showsTranscriptTab: Bool { !isLive && (wasRecorded || !lines.isEmpty) }
     /// The recording just ended is being written up (transcript, then Claude); Resume waits for it.
     var isWritingUp: Bool { !isLive && app.isBusy(folder: folder, id: meeting?.id) }
     var isStartingRecording: Bool { app.startingFolder == folder }
