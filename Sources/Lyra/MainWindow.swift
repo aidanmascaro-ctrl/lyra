@@ -7,13 +7,21 @@ struct MainWindow: View {
     static let id = "main"
     @ObservedObject var app: AppModel
 
+    /// Home ⇄ meeting: the page going away fades out while the new one fades in and eases the last few points
+    /// sideways into place — in from the right when opening a meeting, from the left when going back home.
+    private static let pageAnimation = Animation.easeInOut(duration: 0.28)
+    private static let pageShift: CGFloat = 24
+
     var body: some View {
-        Group {
+        ZStack {
             switch app.route {
-            case .home: HomePage(app: app)
-            case .meeting(let folder): MeetingPage(folder: folder, app: app)
+            case .home:
+                HomePage(app: app).transition(page(from: -Self.pageShift))
+            case .meeting(let folder):
+                MeetingPage(folder: folder, app: app).transition(page(from: Self.pageShift))
             }
         }
+        .animation(Self.pageAnimation, value: app.route)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .top) { TitleBarStrip().frame(height: Chrome.topInset).ignoresSafeArea() }
         .overlay(alignment: .topLeading) {
@@ -21,6 +29,10 @@ struct MainWindow: View {
         }
         .frame(minWidth: 560, minHeight: 480)
         .lyraWindow()
+    }
+
+    private func page(from shift: CGFloat) -> AnyTransition {
+        .asymmetric(insertion: .opacity.combined(with: .offset(x: shift)), removal: .opacity)
     }
 }
 
