@@ -35,6 +35,7 @@ final class NoteTextView: NSTextView {
         insertionPointColor = .labelColor
         textContainerInset = NSSize(width: NoteStyle.gutter, height: 28)
         isVerticallyResizable = true
+        isHorizontallyResizable = false
         autoresizingMask = [.width]
         maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
     }
@@ -43,10 +44,18 @@ final class NoteTextView: NSTextView {
 
     /// At least as tall as the scroll view, so a click anywhere below the text still lands in it, and
     /// the text column centred at no wider than `NoteStyle.maxColumn` so wide windows keep a calm line length.
+    /// Never wider than the scroll view shows, so no line can run past the visible edge; the container is set to
+    /// the column's width outright rather than left to `widthTracksTextView`, which only reacts to frame changes.
     override func setFrameSize(_ newSize: NSSize) {
-        super.setFrameSize(NSSize(width: newSize.width, height: max(newSize.height, enclosingScrollView?.contentSize.height ?? 0)))
-        let side = max(NoteStyle.gutter, (newSize.width - NoteStyle.maxColumn) / 2)
+        let visible = enclosingScrollView.map { $0.contentSize.width } ?? newSize.width
+        let width = visible > 0 ? min(newSize.width, visible) : newSize.width
+        super.setFrameSize(NSSize(width: width, height: max(newSize.height, enclosingScrollView?.contentSize.height ?? 0)))
+        let side = max(NoteStyle.gutter, (width - NoteStyle.maxColumn) / 2)
         if textContainerInset.width != side { textContainerInset = NSSize(width: side, height: textContainerInset.height) }
+        let column = max(width - 2 * side, 0)
+        if let container = textContainer, container.size.width != column {
+            container.size = NSSize(width: column, height: container.size.height)
+        }
     }
 
     var blocks: [NoteBlock] { NoteText.blocks(textStorage ?? NSTextStorage(), emptyBlock: emptyBlock) }

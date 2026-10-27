@@ -80,4 +80,44 @@ final class NoteTextViewTests: XCTestCase {
         undo.manager.undo()
         XCTAssertEqual(view.blocks, [bullet("a")])
     }
+
+    // MARK: Wrapping
+
+    /// Every line fragment sits inside the visible, centred column at each width, for every indent.
+    func testLongLinesWrapInsideTheColumnAtAnyWidth() {
+        let long = String(repeating: "not the cleverest or most sophisticated solution, ", count: 6)
+        view.load([NoteBlock(kind: .paragraph, runs: [.init(text: long)])]
+                  + (0...NoteMarkdown.maxIndent).map { NoteBlock(kind: .bullet, indent: $0, runs: [.init(text: long)], byClaude: true) })
+        for width in [400.0, 1_400, 0, 900, 40, 1_300, 300, 2_000, 760] as [CGFloat] {
+            view.setFrameSize(NSSize(width: width, height: 600))
+            guard width >= 2 * NoteStyle.gutter else { continue }  // a passing squeeze; only what can show counts
+            let side = max(NoteStyle.gutter, (width - NoteStyle.maxColumn) / 2)
+            XCTAssertEqual(view.textContainerInset.width, side, "inset at \(width)")
+            let container = view.textContainer!
+            XCTAssertEqual(container.size.width, width - 2 * side, accuracy: 0.5, "container at \(width)")
+            let layout = view.layoutManager!
+            layout.ensureLayout(for: container)
+            var glyph = 0
+            let glyphs = layout.numberOfGlyphs
+            while glyph < glyphs {
+                var range = NSRange()
+                let used = layout.lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: &range)
+                XCTAssertLessThanOrEqual(used.maxX + view.textContainerOrigin.x, width - side + 0.5, "line at \(width)")
+                glyph = NSMaxRange(range)
+            }
+        }
+    }
+
+    /// In its scroll view the text is exactly as wide as what shows, however the scroll view is resized.
+    func testTextViewMatchesTheVisibleWidthThroughResizes() {
+        let scroll = NoteEditor.makeScrollView(for: view)
+        view.load([NoteBlock(kind: .bullet, runs: [.init(text: String(repeating: "long words here ", count: 40))], byClaude: true)])
+        for width in [1_300.0, 0, 820, 40, 1_600, 700, 1_300] as [CGFloat] {
+            scroll.setFrameSize(NSSize(width: width, height: 700))
+            scroll.layoutSubtreeIfNeeded()
+            XCTAssertEqual(view.frame.width, scroll.contentSize.width, accuracy: 0.5, "text view at \(width)")
+            XCTAssertEqual(view.textContainer!.size.width, max(view.frame.width - 2 * view.textContainerInset.width, 0),
+                           accuracy: 0.5, "container at \(width)")
+        }
+    }
 }
