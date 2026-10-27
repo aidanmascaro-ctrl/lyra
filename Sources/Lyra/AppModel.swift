@@ -65,6 +65,8 @@ final class AppModel: ObservableObject {
     private let panel = AllowPanel()
     private var session: MeetingSession?
     private var prompted: MicUser?
+    /// Join was pressed on an upcoming meeting: the next meeting app to take the mic records without asking.
+    var pendingJoin: PendingJoin?
     private var poller: Task<Void, Never>?
 
     init() {
@@ -112,6 +114,12 @@ final class AppModel: ObservableObject {
         for event in detector.update(users: micUsage.currentMicUsers(), now: now) {
             switch event {
             case .meetingStarted(let user):
+                // Aidan pressed Join in Lyra and the call now has the mic: he's in, so record (once, without asking).
+                if let title = pendingJoin?.claim(now: now) {
+                    pendingJoin = nil
+                    startRecording(target: user, title: title)
+                    continue
+                }
                 prompted = user
                 let title = Self.windowTitle(for: user)
                 panel.show(app: user.appName, title: title,
