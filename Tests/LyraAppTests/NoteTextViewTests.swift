@@ -120,4 +120,42 @@ final class NoteTextViewTests: XCTestCase {
                            accuracy: 0.5, "container at \(width)")
         }
     }
+
+    // MARK: Blank lines
+
+    private func paragraph(_ text: String) -> NoteBlock { NoteBlock(kind: .paragraph, runs: text.isEmpty ? [] : [.init(text: text)]) }
+
+    private func lineHeightCap(at location: Int) -> CGFloat {
+        (view.textStorage!.attribute(.paragraphStyle, at: location, effectiveRange: nil) as? NSParagraphStyle)?.maximumLineHeight ?? 0
+    }
+
+    func testOneBlankLineBetweenTextIsASmallGap() {
+        view.load([paragraph("one"), paragraph(""), paragraph("two")])
+        XCTAssertEqual(lineHeightCap(at: 4), NoteStyle.blankLineHeight, "the blank line's own newline")
+        XCTAssertEqual(lineHeightCap(at: 0), 0, "text lines keep their height")
+        XCTAssertEqual(lineHeightCap(at: 5), 0)
+    }
+
+    func testSeveralBlankLinesOrAnEdgeBlankKeepFullHeight() {
+        view.load([paragraph("one"), paragraph(""), paragraph(""), paragraph("two")])
+        XCTAssertEqual(lineHeightCap(at: 4), 0)
+        XCTAssertEqual(lineHeightCap(at: 5), 0)
+        view.load([paragraph(""), paragraph("two")])
+        XCTAssertEqual(lineHeightCap(at: 0), 0)
+    }
+
+    func testTypingIntoTheSmallBlankLineMakesNormalText() {
+        view.load([paragraph("one"), paragraph(""), paragraph("two")])
+        view.setSelectedRange(NSRange(location: 4, length: 0))
+        type("x")
+        XCTAssertEqual(view.blocks, [paragraph("one"), paragraph("x"), paragraph("two")])
+        XCTAssertEqual(lineHeightCap(at: 4), 0)
+        XCTAssertEqual(NoteMarkdown.render(view.blocks), "one\nx\ntwo")
+    }
+
+    func testBlankLinesStillRoundTrip() {
+        let blocks = NoteMarkdown.parse("one\n\ntwo\n\n- three")
+        view.load(blocks)
+        XCTAssertEqual(NoteMarkdown.render(view.blocks), "one\n\ntwo\n\n- three")
+    }
 }
