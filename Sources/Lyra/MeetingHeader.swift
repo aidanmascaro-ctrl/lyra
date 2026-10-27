@@ -2,7 +2,7 @@ import AppKit
 import LyraCore
 import SwiftUI
 
-/// Serif title (edit it to rename the note), a row of pills (date · series · people · tags), and the tabs.
+/// Serif title (edit it to rename the note), a row of pills (date · series · people · slides · tags), and the tabs.
 struct MeetingHeader: View {
     @ObservedObject var model: MeetingModel
     @FocusState private var titleFocused: Bool
@@ -49,6 +49,7 @@ struct MeetingHeader: View {
                     .help(people.joined(separator: ", "))
             }
             if let front = model.loaded?.document.front {
+                if front.slides > 0 { slidesPill(front) }
                 if !front.tags.isEmpty { tagsToggle(count: front.tags.count) }
                 if showTags { ForEach(front.tags, id: \.self) { tag in TagPill(text: "#\(tag)") } }
                 ForEach(front.links.filter { !people.contains($0) }, id: \.self) { link in
@@ -57,6 +58,19 @@ struct MeetingHeader: View {
             }
         }
         .labelStyle(PillLabelStyle())
+    }
+
+    /// The call's slides, saved in the recordings folder; the pill opens that folder in Finder.
+    private func slidesPill(_ front: NoteFrontmatter) -> some View {
+        Button {
+            NSWorkspace.shared.open(front.recordings.appendingPathComponent(SlideLog.folderName, isDirectory: true))
+        } label: {
+            Pill { Label(front.slides == 1 ? "1 slide" : "\(front.slides) slides", systemImage: "rectangle.on.rectangle") }
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .headerPill()
+        .help("Show the slides in Finder")
     }
 
     /// Tags stay folded behind one quiet pill until it's clicked; clicking again folds them away.

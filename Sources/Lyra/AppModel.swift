@@ -36,6 +36,8 @@ final class AppModel: ObservableObject {
     /// Join was pressed on a meeting about to start: for a short while, the next meeting app to take the mic records
     /// without asking. Shown on home with a way to call it off.
     @Published var pendingJoin: PendingJoin?
+    /// Slides for the call being recorded: nil when nothing records or the recording has no call window.
+    @Published private(set) var slides: CallSlides?
 
     let paths = MeetingPaths(recordingsRoot: AppModel.recordingsRoot, notesDir: AppModel.notesRoot)
     /// Notes are found by `lyra_id` anywhere under Meetings/; links are rewritten across the whole vault.
@@ -43,22 +45,24 @@ final class AppModel: ObservableObject {
     /// For Claude's in-window actions (Expand this, Ask, add an idea).
     let expander = Expander(claude: ClaudeCLI())
 
-    /// `LYRA_RECORDINGS_DIR` / `LYRA_NOTES_DIR` point Lyra at scratch copies, for trying changes without
-    /// touching the real recordings or vault.
+    /// `LYRA_RECORDINGS_DIR` / `LYRA_NOTES_DIR` / `LYRA_PEOPLE_FILE` point Lyra at scratch copies, for trying
+    /// changes without touching the real recordings, vault or voices.
     private static let recordingsRoot = ProcessInfo.processInfo.environment["LYRA_RECORDINGS_DIR"]
         .map { URL(fileURLWithPath: $0, isDirectory: true) } ?? MeetingPaths.defaultRecordingsRoot
     private static let notesRoot = ProcessInfo.processInfo.environment["LYRA_NOTES_DIR"]
         .map { URL(fileURLWithPath: $0, isDirectory: true) } ?? MeetingPaths.defaultNotesDir
     /// The one people store: processing, enrolment and renames all share it, so a new voice is used by the next meeting.
     /// An unreadable store loads as nobody (naming finds no one) and refuses writes with a plain-English error.
-    let people = PeopleStore(fileURL: PeopleStore.defaultURL)
+    let people = PeopleStore(fileURL: ProcessInfo.processInfo.environment["LYRA_PEOPLE_FILE"]
+        .map { URL(fileURLWithPath: $0) } ?? PeopleStore.defaultURL)
     // One transcriber for the app's lifetime: it loads its models once.
     private lazy var processor: MeetingProcessor = { [people] in
         MeetingProcessor(
             trackTranscriber: TrackTranscriber(diarizer: FluidDiarizer(), transcriber: FluidTranscriber()),
             loader: { try AudioLoader.load16kMono(url: $0) },
             convert: M4AConverter.convert,
-            people: { people.all() })
+            people: { people.all() },
+            learn: { name, sample in try people.learn(name: name, sample: sample) })
     }()
     private lazy var afterMeeting: AfterMeeting = { [notes] in
         let claude = ClaudeCLI()
@@ -71,7 +75,7 @@ final class AppModel: ObservableObject {
     private let micUsage = CoreAudioMicUsage()
     private let ignoredApps = IgnoredApps(defaults: .standard)
     private let detector: MeetingDetector
-    private let panel = AllowPanel()
+    fileprivate let panel = AllowPanel()
     private var session: MeetingSession?
     private var prompted: MicUser?
     private var poller: Task<Void, Never>?
@@ -147,13 +151,15 @@ final class AppModel: ObservableObject {
                 }
                 prompted = user
                 let title = Self.windowTitle(for: user)
+                let allow: (Bool) -> Void = { [weak self] slides in
+                    self?.prompted = nil
+                    // Read again: the user may have switched tabs while the prompt showed.
+                    self?.startRecording(target: user, title: Self.windowTitle(for: user), slides: slides)
+                    Self.askForWindowTitlesOnce()
+                }
                 panel.show(app: user.appName, title: title,
-                           onAllow: { [weak self] in
-                               self?.prompted = nil
-                               // Read again: the user may have switched tabs while the prompt showed.
-                               self?.startRecording(target: user, title: Self.windowTitle(for: user))
-                               Self.askForWindowTitlesOnce()
-                           },
+                           onAllow: { allow(false) },
+                           onAllowSlides: { allow(true) },
                            // Also the 60 s timeout. Frees the detector so other apps can still prompt.
                            onIgnore: { [weak self] in self?.prompted = nil; self?.detector.dismiss() },
                            onAlwaysIgnore: { [weak self] in
@@ -239,13 +245,20 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func startRecording(target: MicUser?, title: String) {
+    private func startRecording(target: MicUser?, title: String, slides: Bool = false) {
         let meeting = Meeting(title: title, appName: target?.appName ?? "In person",
                               bundleID: target.map(\.bundleID), startedAt: Date())
-        startRecording(target: target, meeting: meeting, into: nil)
+        startRecording(target: target, meeting: meeting, into: nil, slides: slides)
     }
 
-    private func startRecording(target: MicUser?, meeting: Meeting, into existing: (folder: URL, note: URL)?) {
+    /// Slides on or off for the call being recorded (the bottom bar's Slides button).
+    func setSlides(_ on: Bool) {
+        guard let session, slides != nil else { return }
+        session.setSlides(on)
+        slides?.on = on
+    }
+
+    private func startRecording(target: MicUser?, meeting: Meeting, into existing: (folder: URL, note: URL)?, slides: Bool = false) {
         guard state.begin(target: target) else { return }
         detector.isRecording = true
         lastError = nil
@@ -265,6 +278,11 @@ final class AppModel: ObservableObject {
                     try await MeetingSession(meeting: meeting, target: target, paths: paths, onLive: onLive)
                 }
                 session = started
+                if started.target != nil {
+                    self.slides = CallSlides(on: false, count: 0)
+                    started.onSlideSaved = { [weak self] count in self?.slides?.count = count }
+                    if slides { setSlides(true) }
+                }
                 recordingSince = Date()
                 pausedSince = nil
                 pausedBefore = 0
@@ -314,6 +332,7 @@ final class AppModel: ObservableObject {
         pausedSince = nil
         pausedBefore = 0
         liveMeeting = nil
+        slides = nil
         liveLines = []  // the live draft is thrown away; the full transcript comes from processing
         liveError = nil
         detector.isRecording = false
@@ -449,6 +468,28 @@ enum Route: Equatable {
     case home
     case meeting(URL)
 }
+
+/// The Slides switch for the call being recorded, and how many slides it has saved.
+struct CallSlides: Equatable {
+    var on: Bool
+    var count: Int
+}
+
+#if DEBUG
+extension AppModel {
+    /// Debug builds only: shows `folder` as the call being recorded, with its Slides switch, so the bottom bar can be
+    /// looked at. Nothing records.
+    func debugShowLiveCall(folder: URL, slides: Int) {
+        liveMeeting = LiveMeeting(folder: folder, appName: "zoom.us")
+        self.slides = CallSlides(on: slides > 0, count: slides)
+    }
+
+    /// Debug builds only: the Allow panel as a call would show it. Its buttons do nothing.
+    func debugShowAllowPanel() {
+        panel.show(app: "Google Chrome", title: "Meet - Coffee Roaster shoot", onAllow: {}, onAllowSlides: {}, onIgnore: {}, onAlwaysIgnore: {})
+    }
+}
+#endif
 
 struct LiveMeeting: Equatable {
     let folder: URL
