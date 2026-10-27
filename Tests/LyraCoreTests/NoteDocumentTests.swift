@@ -36,6 +36,22 @@ final class NoteDocumentTests: XCTestCase {
     }
 
     /// The transcript is folded in the file and plain in the document, whichever layout the file has.
+    /// Slides are linked, not embedded: one link at the end of the line under the title, opening their folder.
+    func testSlidesLinkJoinsTheJumpLine() throws {
+        var f = front()
+        f.slides = 12
+        let doc = NoteDocument(front: f, warnings: [], myNotes: "", expanded: "", transcript: "")
+        let out = doc.render(timeZone: zone)
+        XCTAssertTrue(out.contains(NoteDocument.jumpLine + " · [12 slides](file:///Users/x/Lyra%20Recordings/m1/slides/)\n"))
+        XCTAssertTrue(out.contains("slides: 12\n"))
+        XCTAssertEqual(try NoteDocument.parse(out), doc)
+        f.slides = 1
+        XCTAssertTrue(NoteDocument(front: f, warnings: [], myNotes: "", expanded: "", transcript: "").render(timeZone: zone)
+            .contains("[1 slide]("))
+        XCTAssertFalse(NoteDocument(front: front(), warnings: [], myNotes: "", expanded: "", transcript: "").render(timeZone: zone)
+            .contains("slide"))
+    }
+
     func testTranscriptIsFoldedInTheFile() throws {
         let doc = NoteDocument(front: front(), warnings: [], myNotes: "", expanded: "", transcript: "**Aidan** [00:00:01] hello\n\n**Sam** [00:00:03] hi")
         let out = doc.render(timeZone: zone)

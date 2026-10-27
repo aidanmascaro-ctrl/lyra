@@ -25,12 +25,14 @@ public struct NoteFrontmatter: Equatable, Sendable {
     /// Note names, written as `[[Name]]`.
     public var links: [String]
     public var summary: String?
+    /// Slides saved in the recordings folder's `slides/`; the line under the title links them when there are any.
+    public var slides: Int
 
     public init(lyraID: UUID, title: String, date: Date, app: String, durationMin: Int, recordings: URL,
-                series: String? = nil, tags: [String] = [], links: [String] = [], summary: String? = nil) {
+                series: String? = nil, tags: [String] = [], links: [String] = [], summary: String? = nil, slides: Int = 0) {
         self.lyraID = lyraID; self.title = title; self.date = date; self.app = app
         self.durationMin = durationMin; self.recordings = recordings; self.series = series
-        self.tags = tags; self.links = links; self.summary = summary
+        self.tags = tags; self.links = links; self.summary = summary; self.slides = slides
     }
 }
 
@@ -92,7 +94,7 @@ public struct NoteDocument: Equatable, Sendable {
     public func render(timeZone: TimeZone = .current) -> String {
         var out = "---\n" + renderFront(timeZone: timeZone) + "---\n"
         out += "# \(oneLine(front.title))\n\n"
-        out += Self.jumpLine + "\n\n"
+        out += Self.jumpLine + slidesLink + "\n\n"
         for warning in warnings { out += "> [!warning] \(oneLine(warning))\n\n" }
         if !headExtra.isEmpty { out += headExtra + "\n\n" }
         for piece in pieces {
@@ -102,6 +104,14 @@ public struct NoteDocument: Equatable, Sendable {
             }
         }
         return out
+    }
+
+    /// " · [12 slides](file:///…/slides/)" when the meeting has slides: Obsidian can't show pictures from outside
+    /// the vault, so the slides are linked, and the link opens their folder in Finder.
+    private var slidesLink: String {
+        guard front.slides > 0 else { return "" }
+        let folder = front.recordings.appendingPathComponent(SlideLog.folderName, isDirectory: true)
+        return " · [\(front.slides) slide\(front.slides == 1 ? "" : "s")](\(folder.absoluteString))"
     }
 
     private func renderSection(_ s: Section) -> String {
@@ -131,6 +141,7 @@ public struct NoteDocument: Equatable, Sendable {
         lines.append("tags: [\(tags)]")
         lines.append("links: [\(front.links.map { quote("[[\($0)]]") }.joined(separator: ", "))]")
         if let summary = front.summary { lines.append("summary: \(quote(summary))") }
+        if front.slides > 0 { lines.append("slides: \(front.slides)") }
         return (lines + extraFront).joined(separator: "\n") + "\n"
     }
 
@@ -203,7 +214,7 @@ public struct NoteDocument: Equatable, Sendable {
         return doc
     }
 
-    private static let knownKeys: Set<String> = ["lyra_id", "date", "app", "duration_min", "recordings", "series", "tags", "links", "summary"]
+    private static let knownKeys: Set<String> = ["lyra_id", "date", "app", "duration_min", "recordings", "series", "tags", "links", "summary", "slides"]
 
     private static func makeFront(_ f: [String: String], title: String) throws -> NoteFrontmatter {
         guard let id = f["lyra_id"].flatMap({ UUID(uuidString: $0) }) else { throw NoteDocumentError.invalidFrontmatter(field: "lyra_id") }
@@ -219,7 +230,8 @@ public struct NoteDocument: Equatable, Sendable {
         return NoteFrontmatter(lyraID: id, title: title, date: date, app: f["app"].map(unquote) ?? "",
                                durationMin: f["duration_min"].flatMap { Int($0) } ?? 0,
                                recordings: f["recordings"].flatMap { URL(string: unquote($0)) } ?? URL(fileURLWithPath: "/"),
-                               series: f["series"].map(unquote), tags: tags, links: links, summary: f["summary"].map(unquote))
+                               series: f["series"].map(unquote), tags: tags, links: links, summary: f["summary"].map(unquote),
+                               slides: f["slides"].flatMap { Int($0) } ?? 0)
     }
 
     private static func parseHead(_ head: String) -> (title: String, warnings: [String], extra: String) {
@@ -230,7 +242,7 @@ public struct NoteDocument: Equatable, Sendable {
         for line in head.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
             if !titleSeen, line.hasPrefix("# ") { title = String(line.dropFirst(2)); titleSeen = true }
             else if line.hasPrefix("> [!warning] ") { warnings.append(String(line.dropFirst(13))) }
-            else if line == jumpLine { continue }
+            else if line.hasPrefix(jumpLine) { continue }  // with or without the slides link
             else { rest.append(line) }
         }
         let extra = rest.joined(separator: "\n").trimmingCharacters(in: .newlines)

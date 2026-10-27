@@ -74,6 +74,13 @@ final class MeetingProcessorScreenTests: XCTestCase {
         XCTAssertTrue(try Meeting.load(from: folder).warnings.contains { $0.contains("couldn't remember their voice") })
     }
 
+    func testSlidesAreLinkedFromTheNote() async throws {
+        try SlideLog.save([SlideRecord(file: "001 00-00-05.jpg", at: 5, text: []), SlideRecord(file: "002 00-01-00.jpg", at: 60, text: [])], in: folder)
+        _ = try await processor(learn: nil).process(meeting: meeting, tracks: [meetingTrack()], folder: folder, noteURL: note)
+        let text = try String(contentsOf: note, encoding: .utf8)
+        XCTAssertTrue(text.contains("[2 slides](\(folder.appendingPathComponent("slides", isDirectory: true).absoluteString))"))
+    }
+
     func testNoSamplesNoNames() async throws {
         _ = try await processor(learn: { _, _ in XCTFail("nothing to learn"); throw PeopleStoreError.badSample })
             .process(meeting: meeting, tracks: [meetingTrack()], folder: folder, noteURL: note)

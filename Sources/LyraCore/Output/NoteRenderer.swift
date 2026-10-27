@@ -2,9 +2,9 @@ import Foundation
 
 public enum NoteRenderer {
     public static func render(meeting: Meeting, lines: [TranscriptLine], recordingsFolder: URL,
-                              timeZone: TimeZone = .current) -> String {
+                              timeZone: TimeZone = .current, slides: Int = 0) -> String {
         let front = NoteFrontmatter(lyraID: meeting.id, title: meeting.title, date: meeting.startedAt, app: meeting.appName,
-                                    durationMin: durationMinutes(of: meeting), recordings: recordingsFolder)
+                                    durationMin: durationMinutes(of: meeting), recordings: recordingsFolder, slides: slides)
         return NoteDocument(front: front, warnings: meeting.warnings, myNotes: "", expanded: "",
                             transcript: transcriptBody(lines: lines)).render(timeZone: timeZone)
     }

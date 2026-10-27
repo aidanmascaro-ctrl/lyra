@@ -141,7 +141,8 @@ public struct MeetingProcessor: Sendable {
         let index = NoteIndex(notesRoot: reserved.deletingLastPathComponent(), vaultRoot: reserved.deletingLastPathComponent())
         let body = NoteRenderer.transcriptBody(lines: lines)
         guard let found = index.find(meeting.id, hint: meeting.notePath.map { URL(fileURLWithPath: $0) } ?? reserved) else {
-            let note = NoteRenderer.render(meeting: meeting, lines: lines, recordingsFolder: folder, timeZone: timeZone)
+            let note = NoteRenderer.render(meeting: meeting, lines: lines, recordingsFolder: folder, timeZone: timeZone,
+                                           slides: SlideLog.load(from: folder).count)
             try Self.createExclusively(Data(note.utf8), at: reserved)
             meeting.transcriptSectionHash = NoteSections.hash(body)
             return reserved
@@ -165,10 +166,11 @@ public struct MeetingProcessor: Sendable {
             meeting.transcriptSectionHash = NoteSections.hash(loaded.document.transcript)
             return loaded.url
         }
-        let (minutes, warnings) = (NoteRenderer.durationMinutes(of: meeting), meeting.warnings)
+        let (minutes, warnings, slides) = (NoteRenderer.durationMinutes(of: meeting), meeting.warnings, SlideLog.load(from: folder).count)
         let saved = try index.update(loaded) { doc in
             doc.transcript = body
             doc.front.durationMin = minutes
+            doc.front.slides = slides
             doc.warnings += warnings.filter { !doc.warnings.contains($0) }
         }
         meeting.transcriptSectionHash = NoteSections.hash(body)
