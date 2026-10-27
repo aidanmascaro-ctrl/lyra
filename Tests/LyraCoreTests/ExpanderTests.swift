@@ -218,6 +218,15 @@ final class ExpanderTests: XCTestCase {
         XCTAssertTrue(prompt.contains("Australian spelling"))
     }
 
+    func testPromptRequiresAGroupForEveryOneOfAidansNotes() {
+        let prompt = Prompts.expandUser(ctx: ctx(notes: [b("frameworks when approaching clients", .paragraph),
+                                                         b("Gift box")]))
+        XCTAssertTrue(prompt.contains("at least one @<n> group for every one of Aidan's numbered notes"))
+        XCTAssertTrue(prompt.contains("heading or label"))
+        XCTAssertTrue(prompt.contains("one-line summary of what the meeting said about that topic"))
+        XCTAssertFalse(prompt.contains("Skip a note the transcript adds nothing to"))
+    }
+
     func testContextTrimsLongTranscriptFromMiddle() {
         let lines = (0..<5_000).map { line("Sam", Double($0), "line number \($0) of a long meeting here") }
         let prompt = Prompts.expandUser(ctx: ctx(transcript: lines))
