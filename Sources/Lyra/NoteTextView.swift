@@ -68,18 +68,32 @@ final class NoteTextView: NSTextView {
     // MARK: Editing
 
     override func shouldChangeText(in range: NSRange, replacementString: String?) -> Bool {
-        guard super.shouldChangeText(in: range, replacementString: replacementString) else { return false }
         let replaying = undoManager?.isUndoing == true || undoManager?.isRedoing == true
-        if !programmatic, !replaying {
-            typedRange = NSRange(location: range.location, length: (replacementString ?? "").utf16.count)
-            // Deleting the last characters of a lone bullet or heading leaves it empty, not plain.
-            if (replacementString ?? "").isEmpty, range.length == (string as NSString).length {
-                let current = blocks
-                emptyBlock = current.count == 1
-                    ? NoteText.emptyBlock(of: [NoteBlock(kind: current[0].kind, indent: current[0].indent, runs: [])]) : nil
-            }
+        let typing = !programmatic && !replaying
+        // Deleting all the text: a lone bullet or heading stays that kind, left empty. Its own undo step (not
+        // coalesced into earlier typing), so undo brings back the text and the empty block's old value together.
+        let emptying = typing && (replacementString ?? "").isEmpty && range.length > 0 && range.length == (string as NSString).length
+        let before = emptying ? blocks : []
+        if emptying { breakUndoCoalescing() }
+        guard super.shouldChangeText(in: range, replacementString: replacementString) else { return false }
+        guard typing else { return true }
+        typedRange = NSRange(location: range.location, length: (replacementString ?? "").utf16.count)
+        if emptying {
+            setEmptyBlock(before.count == 1
+                ? NoteText.emptyBlock(of: [NoteBlock(kind: before[0].kind, indent: before[0].indent, runs: [])]) : nil)
         }
         return true
+    }
+
+    /// Changes the held empty block as a step of the same undo group as the text change it goes with, so undo
+    /// and redo bring back the empty block that went with each text (undoing "- " on an empty note leaves it plain).
+    private func setEmptyBlock(_ block: NoteBlock?) {
+        let old = emptyBlock
+        guard old != block else { return }
+        emptyBlock = block
+        undoManager?.registerUndo(withTarget: self) { view in
+            MainActor.assumeIsolated { view.setEmptyBlock(old) }
+        }
     }
 
     /// Re-applies each touched block's keys across its whole paragraph (typing at a block's edge can
@@ -248,7 +262,8 @@ final class NoteTextView: NSTextView {
 
     private func replace(with blocks: [NoteBlock], selection: NSRange) {
         guard let storage = textStorage else { return }
-        emptyBlock = NoteText.emptyBlock(of: blocks)
+        breakUndoCoalescing()  // so the held block's undo joins this edit's step, not earlier typing
+        setEmptyBlock(NoteText.emptyBlock(of: blocks))
         edit(NSRange(location: 0, length: storage.length), with: NoteStyle.styled(NoteText.attributed(blocks)))
         let location = min(selection.location, storage.length)
         setSelectedRange(NSRange(location: location, length: min(selection.length, storage.length - location)))

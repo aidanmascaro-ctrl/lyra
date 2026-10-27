@@ -24,7 +24,7 @@ struct LyraApp: App {
             .defaultLaunchBehavior(.suppressed)
             .restorationBehavior(.disabled)
         // The front door: opened at launch, from the Dock icon and from the menu's Open Lyra.
-        Window("Lyra", id: "home") { HomeWindow(app: delegate.model) }
+        Window("Lyra", id: "home") { HomeWindow(app: delegate.model).modifier(HomeOpener(presence: delegate.presence)) }
             .windowStyle(.hiddenTitleBar)
             .defaultSize(width: 760, height: 760)
             .defaultLaunchBehavior(.presented)
@@ -47,10 +47,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.launch()
     }
 
-    /// The Dock icon clicked, or Lyra opened again while running: home, in front.
+    /// The Dock icon clicked, or Lyra opened again while running: Lyra's windows forward (minimised ones restored),
+    /// or home when none is open.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        guard let openHome = presence.openHome else { return true }  // not wired yet: AppKit's default
-        openHome()
+        presence.reopen()
         return false
     }
 

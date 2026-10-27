@@ -17,6 +17,8 @@ let package = Package(
         ]),
         .executableTarget(name: "Lyra", dependencies: ["LyraCore", "LyraAudio", "LyraSpeech"]),
         .testTarget(name: "LyraCoreTests", dependencies: ["LyraCore"]),
+        // AppKit views that hold logic AppKit drives (the note editor's typing and undo), tested headless.
+        .testTarget(name: "LyraAppTests", dependencies: ["Lyra"]),
         .testTarget(
             name: "LyraIntegrationTests",
             dependencies: ["LyraAudio", "LyraSpeech"],
