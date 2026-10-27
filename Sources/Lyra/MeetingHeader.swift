@@ -9,6 +9,7 @@ struct MeetingHeader: View {
     @State private var newSeries: String?
     @State private var confirmTrash = false
     @State private var showTags = Self.tagsOpenAtLaunch
+    @State private var showPeople = Self.peopleOpenAtLaunch
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -43,7 +44,10 @@ struct MeetingHeader: View {
                 Pill { Label(Self.when(date), systemImage: "calendar") }.headerPill()
             }
             seriesChip.headerPill()
-            if !people.isEmpty {
+            if people.count > MeetingOverview.peopleShown {
+                peopleToggle
+                if showPeople { ForEach(people, id: \.self) { name in TagPill(text: MeetingOverview.shortName(name)) } }
+            } else if !people.isEmpty {
                 Pill { Label(MeetingOverview.peoplePill(people), systemImage: "person.2") }
                     .headerPill()
                     .help(people.joined(separator: ", "))
@@ -67,6 +71,17 @@ struct MeetingHeader: View {
         }
         .buttonStyle(.plain)
         .help(showTags ? "Hide tags" : "Show tags")
+    }
+
+    /// More people than the pill can name: like the tags, clicking lays every name out as its own pill.
+    private var peopleToggle: some View {
+        Button { withAnimation(.easeOut(duration: 0.15)) { showPeople.toggle() } } label: {
+            Pill { Label(showPeople ? "Hide people" : MeetingOverview.peoplePill(people), systemImage: "person.2") }
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .headerPill()
+        .help(showPeople ? "Hide people" : "Show everyone")
     }
 
     @ViewBuilder private var seriesChip: some View {
@@ -135,8 +150,10 @@ struct MeetingHeader: View {
 
     #if DEBUG
     private static var tagsOpenAtLaunch: Bool { DebugLaunch.tagsOpen }
+    private static var peopleOpenAtLaunch: Bool { DebugLaunch.peopleOpen }
     #else
     private static let tagsOpenAtLaunch = false
+    private static let peopleOpenAtLaunch = false
     #endif
 
     static func when(_ date: Date) -> String {
