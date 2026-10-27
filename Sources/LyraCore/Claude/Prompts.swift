@@ -119,6 +119,91 @@ public enum Prompts {
         return compose(ctx: ctx, notes: ctx.myNotes, task: task, constraints: askConstraints)
     }
 
+    // MARK: Insights (title, tags, links, series, one-liner)
+
+    static let insightsHeadChars = 15_000
+    static let insightsTailChars = 5_000
+
+    public static let insightsSystem = """
+    You file one finished meeting for Aidan, who runs a small video and social media business in \
+    Perth, Western Australia. From the meeting window's title, text read off the screen, the \
+    transcript and his notes, you choose a clear title, topic tags, which of his clients it relates \
+    to, whether it belongs to a series, and a one-line summary.
+
+    Your reply is read by a program. Reply with only one JSON object, no code fence and no other \
+    text, shaped exactly like this:
+    {"title": "...", "tags": ["..."], "clients": ["..."], "series": "..." or null, "summary": "..."}
+
+    Before you answer, silently check yourself: list the ways your answer could be wrong — a title \
+    that is vague or only repeats a generic window name, a tag that is too broad or invented, a \
+    client the meeting wasn't really about, a new series name when an existing one fits, a summary \
+    that claims more than the transcript says — and fix each one. Never write that check down.
+    """
+
+    public static func insightsUser(input: InsightsInput) -> String {
+        let screen = input.screenText.isEmpty ? "(Nothing read.)" : input.screenText.joined(separator: "\n")
+        let series = input.existingSeries.keys.sorted().map { name -> String in
+            let recent = (input.existingSeries[name] ?? []).map { "  - \($0)" }.joined(separator: "\n")
+            return recent.isEmpty ? "- \(name)" : "- \(name)\n\(recent)"
+        }.joined(separator: "\n")
+        let notes = input.myNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+        return """
+        <meeting>\(input.windowTitle)</meeting>
+
+        <screen_text>
+        \(screen)
+        </screen_text>
+
+        <my_notes>
+        \(notes.isEmpty ? "(Aidan took no notes.)" : notes)
+        </my_notes>
+
+        <transcript>
+        \(insightsTranscript(input.transcript))
+        </transcript>
+
+        <existing_series>
+        \(series.isEmpty ? "(None.)" : series)
+        </existing_series>
+
+        <known_tags>\(input.knownTags.joined(separator: ", "))</known_tags>
+        <clients>\(input.clients.joined(separator: ", "))</clients>
+        <people>\(input.people.joined(separator: ", "))</people>
+
+        <task>
+        Work out the details of this meeting:
+        - title: a specific title of 3 to 80 characters. If the window title already names the meeting \
+        well (for example a workshop name), keep it; if it is generic ("Google Meet", "Zoom Meeting"), \
+        write a better one from the content.
+        - tags: up to 6 lowercase, hyphenated topic tags (for example content-strategy). Reuse a known \
+        tag whenever one fits.
+        - clients: names from <clients> that this meeting is about, spelt exactly as listed. Empty if none.
+        - series: if the meeting is one of a recurring set, the series name. Use an existing series \
+        name exactly when the meeting plainly belongs to it (a title like "<series> | Workshop 2" belongs \
+        to the series "<series>"); otherwise a short new name, or null when it is a one-off.
+        - summary: one plain sentence of 140 characters or fewer saying what the meeting was about, \
+        for a series page.
+        </task>
+
+        <constraints>
+        - Only what the title, screen text, transcript and notes support; no invented clients or topics.
+        - Australian spelling.
+        - Output only the JSON object.
+        </constraints>
+        """
+    }
+
+    /// The opening and the end of the meeting: titles and series need the start, so the middle goes first.
+    static func insightsTranscript(_ lines: [TranscriptLine]) -> String {
+        guard !lines.isEmpty else { return "(No transcript.)" }
+        let formatted = lines.map { "[\(timestamp($0.start))] \($0.speakerLabel): \($0.text)" }
+        let total = formatted.reduce(0) { $0 + $1.count + 1 }
+        guard total > insightsHeadChars + insightsTailChars else { return formatted.joined(separator: "\n") }
+        let head = fitting(formatted, within: insightsHeadChars)
+        let tail = Array(fitting(formatted[head.count...].reversed(), within: insightsTailChars).reversed())
+        return (head + [trimmedMarker] + tail).joined(separator: "\n")
+    }
+
     // MARK: Building blocks
 
     private static let expandConstraints = """
