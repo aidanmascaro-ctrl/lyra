@@ -111,6 +111,44 @@ final class LiveTranscriptTests: XCTestCase {
         XCTAssertTrue(tail.receive(text: "", confirmed: true).isEmpty)
     }
 
+    /// A briefly unreadable file is retried; only five failures in a row (per track) give up.
+    func testTransientReadFailuresAreRetried() {
+        var health = LiveHealth(windowSeconds: 11)
+        for _ in 1..<LiveHealth.maxConsecutiveReadFailures { XCTAssertFalse(health.readFailed(.mic)) }
+        health.readSucceeded(.mic)
+        XCTAssertFalse(health.readFailed(.meeting))
+        for _ in 1..<LiveHealth.maxConsecutiveReadFailures { XCTAssertFalse(health.readFailed(.mic)) }
+        XCTAssertTrue(health.readFailed(.mic))
+    }
+
+    /// Behind = audio fed minus the windows the recogniser has finished; more than 30 s is falling behind.
+    func testFallingBehindIsDetected() {
+        var health = LiveHealth(windowSeconds: 11)
+        health.fed(.meeting, seconds: 30)
+        XCTAssertFalse(health.isBehind(.meeting))
+        health.fed(.meeting, seconds: 10)
+        XCTAssertTrue(health.isBehind(.meeting))
+        XCTAssertFalse(health.isBehind(.mic))
+        health.windowDone(.meeting)
+        XCTAssertFalse(health.isBehind(.meeting))  // 40 fed, 11 done: 29 behind
+    }
+
+    /// The first read starts at most 20 s back; every read is at most 5 s.
+    func testFirstReadSkipsToRecentAudioAndReadsAreCapped() throws {
+        let rate = 48_000.0
+        let hour = AVAudioFramePosition(3_600 * rate)
+        let first = try XCTUnwrap(GrowingCAFReader.span(after: nil, length: hour, sampleRate: rate))
+        XCTAssertEqual(first.start, hour - AVAudioFramePosition(20 * rate))
+        XCTAssertEqual(first.count, AVAudioFrameCount(5 * rate))
+        let short = try XCTUnwrap(GrowingCAFReader.span(after: nil, length: 1_000, sampleRate: rate))
+        XCTAssertEqual(short.start, 0)
+        XCTAssertEqual(short.count, 1_000)
+        let behind = try XCTUnwrap(GrowingCAFReader.span(after: 0, length: AVAudioFramePosition(12 * rate), sampleRate: rate))
+        XCTAssertEqual(behind.start, 0)
+        XCTAssertEqual(behind.count, AVAudioFrameCount(5 * rate))
+        XCTAssertNil(GrowingCAFReader.span(after: 1_000, length: 1_000, sampleRate: rate))
+    }
+
     private static func toneBuffer(format: AVAudioFormat, frames: AVAudioFrameCount) throws -> AVAudioPCMBuffer {
         let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames))
         buffer.frameLength = frames
