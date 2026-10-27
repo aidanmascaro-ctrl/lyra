@@ -3,7 +3,8 @@ import Foundation
 /// One speaker row in the meeting window.
 public struct SpeakerSummary: Equatable, Sendable {
     public let label: String
-    /// `.setByAidan` if any of the label's lines was named by hand, else `.knownVoice` if any was matched, else nil.
+    /// `.setByAidan` if any of the label's lines was named by hand, else `.knownVoice` if any was matched, else
+    /// `.onScreen` if any was read off the call's tiles, else nil.
     public let source: NameSource?
     /// Sum of the label's line durations.
     public let seconds: Double
@@ -26,7 +27,7 @@ public enum MeetingOverview {
         }
         return order.map { label in
             let s = sources[label] ?? []
-            return SpeakerSummary(label: label, source: s.contains(.setByAidan) ? .setByAidan : s.first, seconds: seconds[label] ?? 0)
+            return SpeakerSummary(label: label, source: [.setByAidan, .knownVoice, .onScreen].first(where: s.contains), seconds: seconds[label] ?? 0)
         }
     }
 

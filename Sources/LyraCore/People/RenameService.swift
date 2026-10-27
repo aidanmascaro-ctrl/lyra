@@ -69,6 +69,7 @@ public struct RenameService: Sendable {
 
         var learnError: Error?
         do {
+            try forgetScreenLearned(picked.map { before[$0] }, in: folder)
             if !isPlaceholder, let person = try learn(from: picked.map { before[$0] }, all: before, as: display, in: folder),
                person.id != existing?.id {
                 label(person.id)  // a new person: their id only exists now
@@ -124,6 +125,18 @@ public struct RenameService: Sendable {
             person = try people.learn(name: name, sample: c.centroid)  // isOwner false: learn never clears it
         }
         return person
+    }
+
+    /// Takes back the voice a tile taught: the lines were named from the call's screen and Aidan says that was wrong.
+    private func forgetScreenLearned(_ lines: [TranscriptLine], in folder: URL) throws {
+        let taught = lines.filter { $0.nameSource == .onScreen && $0.personID != nil }
+        guard !taught.isEmpty else { return }
+        let url = folder.appendingPathComponent("speakers.json")
+        let clusters = try JSONDecoder().decode([SpeakerCluster].self, from: Data(contentsOf: url))
+        for line in taught {  // forgetting a sample already gone does nothing
+            guard let id = line.personID, let c = clusters.first(where: { $0.id == line.speakerID }) else { continue }
+            try people.forget(sample: c.centroid, from: id)
+        }
     }
 
     /// Rewrites the note's transcript section only if it is still as Lyra last wrote it (or Aidan said to overwrite).

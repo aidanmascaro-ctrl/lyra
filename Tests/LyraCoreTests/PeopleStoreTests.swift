@@ -144,3 +144,19 @@ final class PeopleStoreTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: url), junk)
     }
 }
+
+final class PeopleStoreForgetTests: XCTestCase {
+    func testForgetTakesOneSampleBack() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("lyra-forget-\(UUID().uuidString)/people.json")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = PeopleStore(fileURL: url)
+        _ = try store.learn(name: "Tomas", sample: [1, 0])
+        let b = try store.learn(name: "Tomas", sample: [0, 1])
+        try store.forget(sample: [0, 1], from: b.id)
+        XCTAssertEqual(PeopleStore(fileURL: url).all().first?.samples, [[1, 0]], "persisted")
+        try store.forget(sample: [0, 1], from: b.id)  // already gone: nothing happens
+        try store.forget(sample: [1, 0], from: b.id)
+        XCTAssertEqual(store.all().first?.samples, [], "kept in the list, matching nobody")
+        XCTAssertThrowsError(try store.forget(sample: [1, 0], from: UUID()))
+    }
+}

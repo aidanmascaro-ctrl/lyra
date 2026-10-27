@@ -8,11 +8,13 @@ final class AllowPanel {
     private var panel: NSPanel?
     private var timeout: Task<Void, Never>?
 
-    func show(app: String, title: String, onAllow: @escaping () -> Void, onIgnore: @escaping () -> Void,
-              onAlwaysIgnore: @escaping () -> Void) {
+    /// `onAllowSlides` is Allow with slides switched on from the start.
+    func show(app: String, title: String, onAllow: @escaping () -> Void, onAllowSlides: @escaping () -> Void,
+              onIgnore: @escaping () -> Void, onAlwaysIgnore: @escaping () -> Void) {
         close()
         let view = AllowView(app: app, title: title,
                              allow: { [weak self] in self?.close(); onAllow() },
+                             allowSlides: { [weak self] in self?.close(); onAllowSlides() },
                              ignore: { [weak self] in self?.close(); onIgnore() },
                              alwaysIgnore: { [weak self] in self?.close(); onAlwaysIgnore() })
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: 128),
@@ -49,6 +51,7 @@ private struct AllowView: View {
     let app: String
     let title: String
     let allow: () -> Void
+    let allowSlides: () -> Void
     let ignore: () -> Void
     let alwaysIgnore: () -> Void
 
@@ -59,6 +62,7 @@ private struct AllowView: View {
             HStack {
                 Spacer()
                 Button("Ignore", action: ignore)
+                Button("Allow + slides", action: allowSlides).help("Record, and save the call's slides and shared screens")
                 Button("Allow", action: allow).keyboardShortcut(.defaultAction)
             }
             Button("Always ignore \(app)", action: alwaysIgnore).lineLimit(1)

@@ -1,8 +1,8 @@
 import LyraCore
 import SwiftUI
 
-/// The floating bar: a small capsule that is always there (transcript panel toggle, Record / Resume / Pause, End
-/// while recording) and a wide "Ask anything" capsule. Claude's replies and the inline Ask… field sit just above it.
+/// The floating bar: a small capsule that is always there (transcript panel toggle, Record / Resume / Pause, Slides
+/// and End while recording a call) and a wide "Ask anything" capsule. Claude's replies and the inline Ask… field sit just above it.
 struct BottomBar: View {
     @ObservedObject var model: MeetingModel
     /// Watched directly so Pause / Resume / Record redraw at once.
@@ -50,6 +50,7 @@ struct BottomBar: View {
             Divider().frame(height: 18)
             RecordControl(model: model, app: app)
                 .padding(.leading, 12).padding(.trailing, model.isLive ? 6 : 16).frame(height: 38)
+            if model.isLive, let slides = app.slides { slidesButton(slides) }
             if model.isLive {
                 Button { app.stopRecording() } label: {
                     RoundedRectangle(cornerRadius: 2.5).fill(.secondary).frame(width: 10, height: 10)
@@ -61,6 +62,23 @@ struct BottomBar: View {
         }
         .capsuleSurface()
         .fixedSize()
+    }
+
+    /// Slides on or off for the call being recorded, with how many it has saved. Off until clicked.
+    private func slidesButton(_ slides: CallSlides) -> some View {
+        Button { app.setSlides(!slides.on) } label: {
+            HStack(spacing: 4) {
+                Image(systemName: slides.on ? "rectangle.on.rectangle.fill" : "rectangle.on.rectangle")
+                    .font(.system(size: 12.5))
+                if slides.on && slides.count > 0 {
+                    Text("\(slides.count)").font(.system(size: 12, weight: .medium)).monospacedDigit()
+                }
+            }
+            .foregroundStyle(slides.on ? AnyShapeStyle(Chrome.live) : AnyShapeStyle(.secondary))
+            .padding(.horizontal, 6).frame(height: 38).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(slides.on ? "Saving the call's slides (\(slides.count) so far). Click to stop." : "Save the call's slides and shared screens")
     }
 
     private var askCapsule: some View {

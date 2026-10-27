@@ -2,9 +2,9 @@ import Foundation
 
 public enum NoteRenderer {
     public static func render(meeting: Meeting, lines: [TranscriptLine], recordingsFolder: URL,
-                              timeZone: TimeZone = .current) -> String {
+                              timeZone: TimeZone = .current, slides: Int = 0) -> String {
         let front = NoteFrontmatter(lyraID: meeting.id, title: meeting.title, date: meeting.startedAt, app: meeting.appName,
-                                    durationMin: durationMinutes(of: meeting), recordings: recordingsFolder)
+                                    durationMin: durationMinutes(of: meeting), recordings: recordingsFolder, slides: slides)
         return NoteDocument(front: front, warnings: meeting.warnings, myNotes: "", expanded: "",
                             transcript: transcriptBody(lines: lines)).render(timeZone: timeZone)
     }
@@ -22,7 +22,11 @@ public enum NoteRenderer {
     /// What goes between the lyra transcript markers. Rename re-renders the section with this, so both paths share one format.
     public static func transcriptBody(lines: [TranscriptLine]) -> String {
         lines.map { line in
-            let badge = line.nameSource == .knownVoice ? " _(known voice)_" : ""
+            let badge = switch line.nameSource {
+            case .knownVoice: " _(known voice)_"
+            case .onScreen: " _(on screen)_"
+            case .setByAidan, nil: ""
+            }
             return "**\(escapeName(line.speakerLabel))**\(badge) [\(stamp(line.start))] \(line.text.replacingOccurrences(of: "<!--", with: "&lt;!--"))"
         }.joined(separator: "\n\n")
     }

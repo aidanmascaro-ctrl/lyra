@@ -53,6 +53,19 @@ final class RecordingPartsTests: XCTestCase {
         XCTAssertEqual(meeting.expandedHashes, ["a"], "so untouched Expanded can be rewritten")
     }
 
+    /// Tile names belong to the part they were seen in; slides stay where the note links them.
+    func testOnScreenNamesFiledWithTheirPartSlidesStay() throws {
+        _ = try finishedMeeting(seconds: 300)
+        try OnScreenLog.save([OnScreenSample(t: 3, name: "Flo")], in: folder)
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("slides"), withIntermediateDirectories: true)
+        try Data("[]".utf8).write(to: folder.appendingPathComponent("slides.json"))
+        _ = try RecordingParts.archive(folder: folder)
+        XCTAssertTrue(exists("parts/1/onscreen.json"))
+        XCTAssertFalse(exists("onscreen.json"))
+        XCTAssertTrue(exists("slides"))
+        XCTAssertTrue(exists("slides.json"))
+    }
+
     func testASecondResumeAddsTheSecondPartsLength() throws {
         var meeting = try finishedMeeting(seconds: 120)
         meeting.earlierParts = 1

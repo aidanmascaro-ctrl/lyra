@@ -112,6 +112,7 @@ struct TranscriptTab: View {
     static func badge(_ source: NameSource?) -> String? {
         switch source {
         case .knownVoice: "known voice"
+        case .onScreen: "on screen"
         case .setByAidan: "named by you"
         case nil: nil
         }

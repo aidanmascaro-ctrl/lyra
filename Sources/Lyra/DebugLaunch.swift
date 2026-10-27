@@ -30,7 +30,13 @@ enum DebugLaunch {
     /// `LYRA_DEBUG_OPEN`: a meeting folder to show. `LYRA_DEBUG_WIDTH` / `LYRA_DEBUG_HEIGHT`: the window's size;
     /// the width may be a comma-separated list, applied half a second apart, to try a series of resizes.
     static func apply(to model: AppModel) {
-        if let folder = env["LYRA_DEBUG_OPEN"] { model.route = .meeting(URL(fileURLWithPath: folder, isDirectory: true)) }
+        if let folder = env["LYRA_DEBUG_OPEN"] {
+            let url = URL(fileURLWithPath: folder, isDirectory: true)
+            model.route = .meeting(url)
+            // `LYRA_DEBUG_LIVE_SLIDES`: show it as a call being recorded, with this many slides saved (0: Slides off).
+            if let slides = env["LYRA_DEBUG_LIVE_SLIDES"].flatMap({ Int($0) }) { model.debugShowLiveCall(folder: url, slides: slides) }
+        }
+        if env["LYRA_DEBUG_ALLOW"] == "1" { model.debugShowAllowPanel() }  // `LYRA_DEBUG_ALLOW=1`: the Allow panel
         let widths = (env["LYRA_DEBUG_WIDTH"] ?? "").split(separator: ",").compactMap { Double($0) }
         let height = env["LYRA_DEBUG_HEIGHT"].flatMap(Double.init) ?? 860
         Task { @MainActor in

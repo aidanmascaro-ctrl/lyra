@@ -4,11 +4,15 @@ import LyraCore
 import LyraSpeech
 
 /// One recording in progress: its reserved folder and note, `meeting.json`, the two-track recorder, the
-/// on-screen text read from the meeting app's window, and the rough live transcript.
+/// on-screen text read from the meeting app's window, the call window watched for lit tiles and slides, and the
+/// rough live transcript.
 @MainActor
 final class MeetingSession {
     private static let screenTextInterval: Duration = .seconds(60)
     private static let screenTextLimit = 200
+    private static let callFrameInterval: Duration = .seconds(1)
+    /// Frames between saves of what the call window showed, so a crash keeps most of it.
+    private static let callFlushEvery = 30
     static let liveStoppedMessage = "Live transcript stopped — the full transcript will still be made after the meeting."
 
     private(set) var meeting: Meeting
@@ -18,6 +22,15 @@ final class MeetingSession {
     private let recorder: TwoTrackRecorder
     private(set) var isPaused = false
     private var screenReader: Task<Void, Never>?
+    private var callReader: Task<Void, Never>?
+    private let callWatcher: CallWatcher
+    /// Seconds into the recording, less paused time: where tile and slide times sit on the transcript's timeline.
+    private var clock = RecordingClock()
+    /// Slides for this call: off at the start of every recording; nothing is saved while off. Read by the watcher
+    /// for each frame, so a quick on-off-on lands in order.
+    private var slidesOn = false
+    /// Gets the number of slides saved so far, each time one is saved.
+    var onSlideSaved: (@MainActor (Int) -> Void)?
     private var live: LiveTranscriber?
     private var liveReader: Task<Void, Never>?
     private var liveLines = LiveLines()
@@ -34,6 +47,7 @@ final class MeetingSession {
         self.onLive = onLive
         (folder, noteURL) = try paths.reserve(for: meeting, timeZone: .current)
         recorder = TwoTrackRecorder(target: target)
+        callWatcher = CallWatcher(folder: folder)
         var madeNote = false
         do {
             try MeetingProcessor.createSkeletonNote(for: meeting, recordingsFolder: folder, at: noteURL)
@@ -51,7 +65,10 @@ final class MeetingSession {
             if madeNote { try? FileManager.default.removeItem(at: noteURL) }
             throw error
         }
-        if let target { readScreenText(pid: target.pid) }
+        if let target {
+            readScreenText(pid: target.pid)
+            watchCall(pid: target.pid)
+        }
         transcribeLive()
     }
 
@@ -73,6 +90,7 @@ final class MeetingSession {
         self.folder = folder
         self.noteURL = noteURL
         recorder = TwoTrackRecorder(target: nil)
+        callWatcher = CallWatcher(folder: folder)  // never started: a note recorded into has no call window
         do { try await startRecorder() } catch {
             // A half-opened file would make crash recovery treat this note as a recording.
             for kind in [TrackKind.mic, .meeting] { try? FileManager.default.removeItem(at: folder.appendingPathComponent("\(kind.rawValue).caf")) }
@@ -93,6 +111,7 @@ final class MeetingSession {
             meeting.warnings.append(warning)
             try? meeting.save(in: folder)  // stop() saves it again
         }
+        clock = RecordingClock()  // the tracks' first frames arrived just now: the transcript's zero
     }
 
     /// How loud the meeting is now; nothing while paused.
@@ -103,6 +122,7 @@ final class MeetingSession {
     func pause() throws {
         guard !isPaused else { return }
         isPaused = true
+        clock.pause()
         try recorder.pause()
     }
 
@@ -113,8 +133,12 @@ final class MeetingSession {
             meeting.warn(warning)
             try? meeting.save(in: folder)
         }
+        clock.resume()
         isPaused = false
     }
+
+    /// Slides on or off for this call. Off at the start of every recording; nothing is saved while off.
+    func setSlides(_ on: Bool) { slidesOn = on }
 
     /// Stops both tracks (CAFs are finalised) and saves the end time, track levels and screen text in `meeting.json`,
     /// so a meeting recovered on a later launch still gets its silent-track warning.
@@ -122,6 +146,13 @@ final class MeetingSession {
     func stop() async -> [TrackResult] {
         screenReader?.cancel()
         screenReader = nil
+        callReader?.cancel()
+        await callReader?.value  // a frame being read when Stop came is finished before saving
+        callReader = nil
+        do { try await callWatcher.flush() } catch {
+            meeting.warn("Lyra couldn't save who was on screen during this call, so speakers are named by voice only. (\(error.localizedDescription))")
+        }
+        if let slideError = await callWatcher.slideError { meeting.warn(slideError) }
         liveReader?.cancel()
         liveReader = nil
         let tracks = await recorder.stop()
@@ -138,11 +169,34 @@ final class MeetingSession {
         screenReader = Task { [weak self] in
             while !Task.isCancelled {
                 if self?.isPaused == false {
-                    let lines = await ScreenText.read(pid: pid)
+                    let lines = await ScreenText.read(pid: pid, startTitle: self?.meeting.title ?? "")
                     guard !Task.isCancelled else { return }
                     self?.keep(lines)
                 }
                 try? await Task.sleep(for: Self.screenTextInterval)
+            }
+        }
+    }
+
+    /// Looks at the call window once a second while recording: whose tile is lit, and new slides when switched on.
+    /// Frames stay in memory; only names, times and (switched on) slides are kept.
+    private func watchCall(pid: pid_t) {
+        let startTitle = meeting.title
+        let watcher = callWatcher
+        callReader = Task { [weak self] in
+            var frames = 0
+            while !Task.isCancelled {
+                guard let self else { return }
+                if !isPaused, let image = await CallWindow.frame(pid: pid, startTitle: startTitle), !Task.isCancelled, !isPaused {
+                    let t = clock.seconds  // when the frame came back, not when it was asked for
+                    if let text = await watcher.look(at: image, t: t, saveSlides: slidesOn) {
+                        keep(text)
+                        onSlideSaved?(await watcher.slideCount)
+                    }
+                    frames += 1
+                    if frames % Self.callFlushEvery == 0 { try? await watcher.flush() }  // stop() saves it again, and says if it can't
+                }
+                try? await Task.sleep(for: Self.callFrameInterval)
             }
         }
     }

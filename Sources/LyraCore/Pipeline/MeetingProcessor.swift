@@ -19,18 +19,22 @@ public struct MeetingProcessor: Sendable {
     private let timeZone: TimeZone
     private let people: @Sendable () -> [Person]
     private let policy: MatchPolicy
+    private let learn: (@Sendable (_ name: String, _ sample: [Float]) throws -> Person)?
 
     /// `convert(caf, m4a)` must throw unless `m4a` ends up playable with a non-zero duration.
-    /// `people` is read once per meeting; naming only reads it, it never writes to the people store.
+    /// `people` is read once per meeting. The only write is `learn`: a voice named from the call's tiles is learned
+    /// under that name, so it is a known voice next time (nil: learn nothing).
     public init(trackTranscriber: TrackTranscriber, loader: @escaping @Sendable (URL) throws -> [Float],
                 convert: @escaping @Sendable (URL, URL) async throws -> Void, timeZone: TimeZone = .current,
-                people: @escaping @Sendable () -> [Person] = { [] }, policy: MatchPolicy = .init()) {
+                people: @escaping @Sendable () -> [Person] = { [] }, policy: MatchPolicy = .init(),
+                learn: (@Sendable (_ name: String, _ sample: [Float]) throws -> Person)? = nil) {
         self.trackTranscriber = trackTranscriber
         self.loader = loader
         self.convert = convert
         self.timeZone = timeZone
         self.people = people
         self.policy = policy
+        self.learn = learn
     }
 
     public func process(meeting: Meeting, tracks: [TrackResult], folder: URL, noteURL: URL) async throws -> URL {
@@ -58,7 +62,10 @@ public struct MeetingProcessor: Sendable {
         let (echoFree, allClusters) = TranscriptMerger.dropVoiceEcho(
             lines: TranscriptMerger.merge(meeting: lines[.meeting] ?? [], mic: lines[.mic] ?? []),
             clusters: (clusters[.meeting] ?? []) + (clusters[.mic] ?? []), people: known, policy: policy)
-        let named = SpeakerNamer.name(lines: echoFree, clusters: allClusters, people: known, policy: policy)
+        let byVoice = SpeakerNamer.name(lines: echoFree, clusters: allClusters, people: known, policy: policy)
+        let named = learnFromScreen(OnScreenNamer.name(lines: byVoice, clusters: allClusters,
+                                                       samples: OnScreenLog.load(from: folder), people: known),
+                                    known: known, meeting: &meeting)
 
         // Convert first (keeping the CAFs) so a failure can be warned about in the note itself.
         var converted: [URL] = []
@@ -97,6 +104,29 @@ public struct MeetingProcessor: Sendable {
         return noteAt
     }
 
+    /// Learns each voice the call's tiles named, and gives its lines that person's id. If a voice can't be learned
+    /// the name stays (the tiles were sure) and the note says so.
+    private func learnFromScreen(_ result: (lines: [TranscriptLine], learn: [OnScreenNamer.Learn]), known: [Person],
+                                 meeting: inout Meeting) -> [TranscriptLine] {
+        guard let learn else { return result.lines }
+        var lines = result.lines
+        for item in result.learn {
+            do {
+                for cluster in item.clusters {
+                    // A meeting processed again (after a crash) must not count the same voice twice.
+                    let already = known.first { $0.name == item.name && $0.samples.contains(cluster.centroid) }
+                    let person = try already ?? learn(item.name, cluster.centroid)
+                    for i in lines.indices where lines[i].speakerID == cluster.id && lines[i].nameSource == .onScreen {
+                        lines[i].personID = person.id
+                    }
+                }
+            } catch {
+                meeting.warn("Lyra named \(item.name) from the call's screen but couldn't remember their voice for next time. (\(error.localizedDescription))")
+            }
+        }
+        return lines
+    }
+
     /// The note made when recording starts, so Aidan can type in it during the meeting: header, empty sections.
     /// Never replaces a file already at `noteURL`.
     public static func createSkeletonNote(for meeting: Meeting, recordingsFolder: URL, at noteURL: URL) throws {
@@ -111,7 +141,8 @@ public struct MeetingProcessor: Sendable {
         let index = NoteIndex(notesRoot: reserved.deletingLastPathComponent(), vaultRoot: reserved.deletingLastPathComponent())
         let body = NoteRenderer.transcriptBody(lines: lines)
         guard let found = index.find(meeting.id, hint: meeting.notePath.map { URL(fileURLWithPath: $0) } ?? reserved) else {
-            let note = NoteRenderer.render(meeting: meeting, lines: lines, recordingsFolder: folder, timeZone: timeZone)
+            let note = NoteRenderer.render(meeting: meeting, lines: lines, recordingsFolder: folder, timeZone: timeZone,
+                                           slides: SlideLog.load(from: folder).count)
             try Self.createExclusively(Data(note.utf8), at: reserved)
             meeting.transcriptSectionHash = NoteSections.hash(body)
             return reserved
@@ -135,10 +166,11 @@ public struct MeetingProcessor: Sendable {
             meeting.transcriptSectionHash = NoteSections.hash(loaded.document.transcript)
             return loaded.url
         }
-        let (minutes, warnings) = (NoteRenderer.durationMinutes(of: meeting), meeting.warnings)
+        let (minutes, warnings, slides) = (NoteRenderer.durationMinutes(of: meeting), meeting.warnings, SlideLog.load(from: folder).count)
         let saved = try index.update(loaded) { doc in
             doc.transcript = body
             doc.front.durationMin = minutes
+            doc.front.slides = slides
             doc.warnings += warnings.filter { !doc.warnings.contains($0) }
         }
         meeting.transcriptSectionHash = NoteSections.hash(body)

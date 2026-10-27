@@ -53,6 +53,30 @@ final class RenameServiceTests: XCTestCase {
             .write(to: note, atomically: true, encoding: .utf8)
     }
 
+    /// A tile named Speaker 2 "Tomas" and taught Lyra the voice; Aidan says it's Marco: the voice leaves Tomas.
+    func testRenamingATileNamedSpeakerTakesTheVoiceBack() throws {
+        let tomas = try store.learn(name: "Tomas", sample: [0, 1, 0])
+        _ = try store.learn(name: "Tomas", sample: [0, 0, 1])
+        var lines = standardLines
+        for i in [1, 3] { lines[i].speakerLabel = "Tomas"; lines[i].personID = tomas.id; lines[i].nameSource = .onScreen }
+        let (folder, note) = try makeMeeting(lines: lines)
+        try RenameService(people: store).rename(speakerLabel: "Tomas", to: "Marco", inMeetingFolder: folder, note: note)
+        XCTAssertEqual(store.person(named: "Tomas")?.samples, [[0, 0, 1]])
+        XCTAssertEqual(store.person(named: "Marco")?.samples, [[0, 1, 0]])
+        XCTAssertEqual(try self.lines(folder).filter { $0.speakerLabel == "Marco" }.map(\.nameSource), [.setByAidan, .setByAidan])
+    }
+
+    /// Renaming back to a placeholder still takes the wrongly taught voice back, and teaches nobody.
+    func testTileNamedSpeakerBackToPlaceholderForgets() throws {
+        let tomas = try store.learn(name: "Tomas", sample: [0, 1, 0])
+        var lines = standardLines
+        for i in [1, 3] { lines[i].speakerLabel = "Tomas"; lines[i].personID = tomas.id; lines[i].nameSource = .onScreen }
+        let (folder, note) = try makeMeeting(lines: lines)
+        try RenameService(people: store).rename(speakerLabel: "Tomas", to: "Speaker 2", inMeetingFolder: folder, note: note)
+        XCTAssertEqual(store.person(named: "Tomas")?.samples, [])
+        XCTAssertEqual(store.all().count, 1)
+    }
+
     func testRenameUpdatesAllLinesOfThatSpeaker() throws {
         let (folder, note) = try makeMeeting()
         let outcome = try RenameService(people: store).rename(speakerLabel: "Speaker 2", to: "Marco", inMeetingFolder: folder, note: note)
