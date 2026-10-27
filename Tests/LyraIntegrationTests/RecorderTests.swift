@@ -50,6 +50,7 @@ final class RecorderTests: XCTestCase {
     }
 
     func testMicResumesAfterConfigurationChange() async throws {
+        if AudioInputs.chosenCaptureDevice() != nil { throw XCTSkip("a Bluetooth default is recorded through the Mac's own mic, not the engine") }
         let recorder = MicRecorder()
         try recorder.start(writingTo: folder.appendingPathComponent("mic.caf"))
         let started = Date()  // once capture runs; engine setup before it isn't recording time
