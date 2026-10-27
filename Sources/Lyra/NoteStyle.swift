@@ -39,19 +39,34 @@ enum NoteStyle {
     }
 
     /// A lone empty paragraph with text on both sides is drawn `blankLineHeight` tall. The blank line stays in the
-    /// text (and the file); only its height changes, and typing into it makes an ordinary line again.
+    /// text (and the file); only its height changes, and typing into it makes an ordinary line again. The editor
+    /// gives the one the cursor is on its full height back so there is room to type.
     private static func compactBlankLines(in text: NSMutableAttributedString) {
-        let lines = text.string.components(separatedBy: "\n")
-        guard lines.count >= 3 else { return }
+        for location in gapLocations(in: text.string) {
+            text.addAttribute(.paragraphStyle, value: gapStyle, range: NSRange(location: location, length: 1))
+        }
+    }
+
+    static var gapStyle: NSParagraphStyle {
+        let style = NSMutableParagraphStyle()
+        style.minimumLineHeight = blankLineHeight
+        style.maximumLineHeight = blankLineHeight
+        return style
+    }
+
+    /// Where each lone blank line between two lines of text starts (its newline).
+    static func gapLocations(in string: String) -> [Int] {
+        let lines = string.components(separatedBy: "\n")
+        guard lines.count >= 3 else { return [] }
+        var result: [Int] = []
         var location = 0
         for i in lines.indices {
             defer { location += (lines[i] as NSString).length + 1 }
-            guard i > 0, i < lines.count - 1, lines[i].isEmpty, !lines[i - 1].isEmpty, !lines[i + 1].isEmpty else { continue }
-            let style = NSMutableParagraphStyle()
-            style.minimumLineHeight = blankLineHeight
-            style.maximumLineHeight = blankLineHeight
-            text.addAttribute(.paragraphStyle, value: style, range: NSRange(location: location, length: 1))
+            if i > 0, i < lines.count - 1, lines[i].isEmpty, !lines[i - 1].isEmpty, !lines[i + 1].isEmpty {
+                result.append(location)
+            }
         }
+        return result
     }
 
     /// The note keys in `attrs` plus the look they stand for.

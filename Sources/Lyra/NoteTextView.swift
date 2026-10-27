@@ -116,8 +116,25 @@ final class NoteTextView: NSTextView {
         }
         typedRange = nil
         refreshTyping()
+        refreshGaps()
         needsDisplay = true
         super.didChangeText()
+    }
+
+    /// Small paragraph gaps stay small except the one the cursor is on, which gets a full line to type on.
+    private func refreshGaps() {
+        guard let storage = textStorage, storage.editedMask.isEmpty else { return }
+        let sel = selectedRange()
+        let caret = sel.length == 0 ? sel.location : nil
+        for location in NoteStyle.gapLocations(in: storage.string) {
+            let current = storage.attribute(.paragraphStyle, at: location, effectiveRange: nil) as? NSParagraphStyle
+            let isSmall = current?.maximumLineHeight == NoteStyle.blankLineHeight
+            let wantSmall = location != caret
+            guard isSmall != wantSmall else { continue }
+            let style = wantSmall ? NoteStyle.gapStyle
+                : NoteStyle.display(storage.attributes(at: location, effectiveRange: nil))[.paragraphStyle] as Any
+            storage.addAttribute(.paragraphStyle, value: style, range: NSRange(location: location, length: 1))
+        }
     }
 
     override func insertText(_ string: Any, replacementRange: NSRange) {
@@ -509,6 +526,7 @@ final class NoteTextView: NSTextView {
 
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+        refreshGaps()
         if stillSelecting { selectionMenu.isHidden = true; return }
         if selectedRange().length == 0 { refreshTyping() }
         updateSelectionMenu()

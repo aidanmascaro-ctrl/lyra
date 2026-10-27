@@ -153,6 +153,25 @@ final class NoteTextViewTests: XCTestCase {
         XCTAssertEqual(NoteMarkdown.render(view.blocks), "one\nx\ntwo")
     }
 
+    func testReturnBetweenTwoLinesGivesAFullHeightLineToTypeOn() {
+        view.load([paragraph("one"), paragraph("two")])
+        view.setSelectedRange(NSRange(location: 3, length: 0))
+        key { $0.insertNewline(nil) }
+        XCTAssertEqual(view.blocks, [paragraph("one"), paragraph(""), paragraph("two")])
+        XCTAssertEqual(view.selectedRange().location, 4)
+        XCTAssertEqual(lineHeightCap(at: 4), 0, "the line the cursor is on")
+    }
+
+    func testTheBlankLineShrinksOnceTheCursorLeavesAndGrowsWhenItComesBack() {
+        view.load([paragraph("one"), paragraph(""), paragraph("two")])
+        view.setSelectedRange(NSRange(location: 4, length: 0))
+        XCTAssertEqual(lineHeightCap(at: 4), 0)
+        view.setSelectedRange(NSRange(location: 0, length: 0))
+        XCTAssertEqual(lineHeightCap(at: 4), NoteStyle.blankLineHeight)
+        view.setSelectedRange(NSRange(location: 4, length: 0))
+        XCTAssertEqual(lineHeightCap(at: 4), 0)
+    }
+
     func testBlankLinesStillRoundTrip() {
         let blocks = NoteMarkdown.parse("one\n\ntwo\n\n- three")
         view.load(blocks)
