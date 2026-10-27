@@ -425,4 +425,46 @@ final class AfterMeetingTests: XCTestCase {
         try await after(again).run(folder: folder)
         XCTAssertEqual(again.insightsCalls, 0)
     }
+
+    /// What Aidan's editor does: saves Expanded over the note as it is now.
+    private static func typeExpanded(_ index: NoteIndex, _ id: UUID, _ change: (String) -> String) throws {
+        let loaded = try index.load(id, hint: nil)
+        _ = try index.update(loaded) { $0.expanded = change($0.expanded) }
+    }
+
+    /// Aidan types in Expanded before Claude's first line arrives: his text stays and the stream stops.
+    func testTypingInExpandedBeforeTheFirstWriteIsKept() async throws {
+        let (calls, index, id) = (Seen(), index, meeting.id)
+        let typer: @Sendable ([NoteBlock]) async -> Void = { blocks in
+            await calls.add(blocks)
+            if await calls.blocks.count == 1 { try? Self.typeExpanded(index, id) { _ in "- my own write-up" } }
+        }
+        let claude = ScriptedClaude(insights: .success(insightsJSON), expansion: expansionLines)
+        try await after(claude, saveInterval: .zero).run(folder: folder, onExpansion: typer)
+
+        XCTAssertEqual(try index.load(meeting.id, hint: nil).document.expanded, "- my own write-up")
+        let saved = try Meeting.load(from: folder)
+        XCTAssertEqual(saved.expandError, AfterMeeting.keptYourTextMessage)
+        XCTAssertEqual(saved.afterMeetingDone, true)
+    }
+
+    /// Aidan edits Expanded after Lyra's first streamed write: no later write (or restore) replaces his text.
+    func testTypingInExpandedMidStreamIsKept() async throws {
+        try typeMyNotes("- pricing")
+        let (written, index, id) = (Seen(), index, meeting.id)
+        let typer: @Sendable ([NoteBlock]) async -> Void = { blocks in
+            guard blocks.contains(where: \.byClaude) else { return }
+            await written.add(blocks)
+            if await written.blocks.count == 2 { try? Self.typeExpanded(index, id) { $0 + "\n- my extra point" } }
+        }
+        let claude = ScriptedClaude(insights: .success(insightsJSON), expansion: expansionLines,
+                                    expansionError: ClaudeError.failed("Claude stopped before finishing its answer."))
+        try await after(claude, saveInterval: .zero).run(folder: folder, onExpansion: typer)
+
+        let expanded = NoteMarkdown.parse(try index.load(meeting.id, hint: nil).document.expanded)
+        XCTAssertEqual(expanded.map(\.plainText), ["pricing", "They agreed $200 per unit", "my extra point"])
+        let saved = try Meeting.load(from: folder)
+        XCTAssertEqual(saved.expandError, AfterMeeting.keptYourTextMessage)
+        XCTAssertTrue(saved.expandedHashes?.contains(ExpandedMerge.hashes(of: [expanded[1]])[0]) == true)  // still known as Lyra's grey
+    }
 }

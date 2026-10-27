@@ -10,6 +10,8 @@ import Foundation
 public struct AfterMeeting: Sendable {
     /// Saved as `expandError` while the expansion streams: if Lyra quits, the meeting shows Retry.
     public static let unfinishedMessage = "Lyra stopped before finishing these notes."
+    /// Saved as `expandError` when Aidan typed in Expanded while Claude was writing it: his text won.
+    public static let keptYourTextMessage = "You typed in Expanded while Claude was writing it, so Lyra stopped and kept your text. Re-expand adds Claude's notes."
     private static let recentTitlesPerSeries = 5
 
     private let index: NoteIndex
@@ -58,6 +60,7 @@ public struct AfterMeeting: Sendable {
         }
 
         let current = try Meeting.load(from: folder)
+        note = try index.load(meeting.id, hint: note.url)  // Aidan may have typed while Claude filed the meeting
         guard Self.mayWriteExpanded(note.document, meeting: current) else {
             // Aidan's own Expanded text (or Lyra's, edited since): nothing to do here; Re-expand is for that.
             try Self.updateMeeting(in: folder) { $0.expandError = nil; $0.afterMeetingDone = true }
@@ -65,8 +68,14 @@ public struct AfterMeeting: Sendable {
         }
         let previousHashes = current.expandedHashes
         try Self.updateMeeting(in: folder) { $0.expandError = Self.unfinishedMessage }
+        // Expanded is Lyra's to write from here: the meeting window shows it read-only until the stream ends.
+        await onExpansion(NoteMarkdown.parse(note.document.expanded))
         do {
-            let final = try await expand(note, lines: Self.transcript(in: folder), folder: folder, onExpansion: onExpansion)
+            guard let final = try await expand(note, lines: Self.transcript(in: folder), folder: folder, onExpansion: onExpansion) else {
+                // Aidan typed in Expanded meanwhile: his text stays, with the grey Lyra wrote before it still known.
+                try Self.updateMeeting(in: folder) { $0.expandError = Self.keptYourTextMessage; $0.afterMeetingDone = true }
+                return
+            }
             try Self.updateMeeting(in: folder) {
                 $0.expandedHashes = ExpandedMerge.hashes(of: final)
                 $0.expandError = nil
@@ -128,9 +137,10 @@ public struct AfterMeeting: Sendable {
 
     /// Streams the expansion into the note, at most once per `saveInterval` and at the end. The grey written so far
     /// is recorded (before the note is written) so Retry can tell an unfinished stream from edited text. On failure
-    /// the Expanded section goes back to what it was, so no half-written grey is left behind.
+    /// the Expanded section goes back to what it was, so no half-written grey is left behind. Returns nil, having
+    /// stopped the stream, once Expanded on disk is no longer what Lyra last wrote there (Aidan typed in it).
     private func expand(_ note: LoadedNote, lines: [TranscriptLine], folder: URL,
-                        onExpansion: @Sendable ([NoteBlock]) async -> Void) async throws -> [NoteBlock] {
+                        onExpansion: @Sendable ([NoteBlock]) async -> Void) async throws -> [NoteBlock]? {
         let ctx = Self.context(for: note, lines: lines, index: index)
         let original = note.document.expanded
         var current = note
@@ -141,23 +151,34 @@ public struct AfterMeeting: Sendable {
                 latest = blocks
                 await onExpansion(blocks)
                 if ContinuousClock.now - lastSave >= saveInterval {
-                    current = try writeExpanded(blocks, over: current, folder: folder)
+                    guard let written = try writeExpanded(blocks, over: current, folder: folder) else { return nil }
+                    current = written
                     lastSave = .now
                 }
             }
-            _ = try writeExpanded(latest, over: current, folder: folder)
-            return latest
+            return try writeExpanded(latest, over: current, folder: folder) == nil ? nil : latest
         } catch {
             if current.document.expanded != original { try? restoreExpanded(original, lastWritten: current) }
             throw error
         }
     }
 
-    private func writeExpanded(_ blocks: [NoteBlock], over note: LoadedNote, folder: URL) throws -> LoadedNote {
+    /// Writes `blocks` as Expanded only while it still holds what Lyra last wrote (`note`'s, the original before the
+    /// first write); otherwise writes nothing and returns nil. The check is made on the note as read inside the save.
+    private func writeExpanded(_ blocks: [NoteBlock], over note: LoadedNote, folder: URL) throws -> LoadedNote? {
         try Self.updateMeeting(in: folder) { $0.expandedHashes = Self.union($0.expandedHashes ?? [], ExpandedMerge.hashes(of: blocks)) }
+        let lastWritten = Self.canonical(note.document.expanded)
         let text = NoteMarkdown.render(blocks)
-        return try index.update(note) { $0.expanded = text }
+        var kept = false
+        let saved = try index.update(note) { doc in
+            kept = Self.canonical(doc.expanded) != lastWritten
+            if !kept { doc.expanded = text }
+        }
+        return kept ? nil : saved
     }
+
+    /// Text as the editor would write it back, so formatting differences alone never count as Aidan's edit.
+    private static func canonical(_ text: String) -> String { NoteMarkdown.render(NoteMarkdown.parse(text)) }
 
     /// Puts back the section as it was before expanding, unless it changed since Lyra last wrote it. The check is
     /// made on the note as freshly read inside the save, so an edit landing meanwhile is never overwritten.
@@ -165,7 +186,7 @@ public struct AfterMeeting: Sendable {
         let written = lastWritten.document.expanded
         let onDisk = try index.load(lastWritten.document.front.lyraID, hint: lastWritten.url)
         _ = try index.update(onDisk) { doc in
-            if doc.expanded == written { doc.expanded = original }
+            if Self.canonical(doc.expanded) == Self.canonical(written) { doc.expanded = original }
         }
     }
 
