@@ -14,6 +14,7 @@ public enum NoteIndexError: Error, Equatable, LocalizedError {
     case changedOnDisk(URL)
     case seriesFolderMissing(String)
     case seriesFolderExists(String)
+    case notASeriesPage(String)
 
     public var errorDescription: String? {
         switch self {
@@ -21,6 +22,7 @@ public enum NoteIndexError: Error, Equatable, LocalizedError {
         case .changedOnDisk: "This note was changed in Obsidian since Lyra opened it, so Lyra didn't save over it."
         case .seriesFolderMissing(let name): "Lyra couldn't find a series folder called “\(name)”."
         case .seriesFolderExists(let name): "There is already a series folder called “\(name)”, so Lyra didn't rename into it."
+        case .notASeriesPage(let name): "There's already a note called “\(name)” in that series folder, so Lyra didn't replace it with the series page."
         }
     }
 }

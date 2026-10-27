@@ -82,7 +82,13 @@ public enum SeriesLibrary {
 
         let folder = index.notesRoot.appendingPathComponent(folderName, isDirectory: true)
         let url = folder.appendingPathComponent(folderName + ".md")
-        if let existing = try? String(contentsOf: url, encoding: .utf8), existing == page { return }
+        if FileManager.default.fileExists(atPath: url.path) {
+            // Never replace a note Aidan wrote by hand that happens to share the series' name.
+            guard let existing = try? String(contentsOf: url, encoding: .utf8), isSeriesPage(existing) else {
+                throw NoteIndexError.notASeriesPage(name)
+            }
+            if existing == page { return }
+        }
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try NoteIndex.writeAtomically(Data(page.utf8), to: url)
     }
@@ -96,6 +102,12 @@ public enum SeriesLibrary {
         let folder = parent.lastPathComponent
         if let frontmatter, MeetingPaths.sanitise(frontmatter).caseInsensitiveCompare(folder) == .orderedSame { return nil }
         return folder
+    }
+
+    private static func isSeriesPage(_ text: String) -> Bool {
+        guard text.hasPrefix("---\n"), let close = text.range(of: "\n---\n", range: text.index(text.startIndex, offsetBy: 3)..<text.endIndex)
+        else { return false }
+        return text[..<close.lowerBound].split(separator: "\n").contains("lyra_series: true")
     }
 
     private static func topTags(of meetings: [MeetingSummary]) -> [String] {

@@ -127,4 +127,25 @@ final class SeriesLibraryTests: XCTestCase {
         let page = meetings.appendingPathComponent("Fresh/Fresh.md")
         XCTAssertEqual(try String(contentsOf: page, encoding: .utf8), "---\nlyra_series: true\n---\n# Fresh\n\n")
     }
+
+    func testWriteSeriesPageRefusesToReplaceHandWrittenNote() throws {
+        let dir = meetings.appendingPathComponent("Weekly")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let mine = dir.appendingPathComponent("Weekly.md")
+        let original = "# Weekly\n\nMy own thoughts, no frontmatter.\n"
+        try original.write(to: mine, atomically: true, encoding: .utf8)
+
+        XCTAssertThrowsError(try SeriesLibrary.writeSeriesPage(name: "Weekly", index: index)) { error in
+            XCTAssertEqual(error.localizedDescription,
+                           "There's already a note called “Weekly” in that series folder, so Lyra didn't replace it with the series page.")
+        }
+        XCTAssertEqual(try Data(contentsOf: mine), Data(original.utf8))
+    }
+
+    func testFolderKeepsFrontmatterSeriesWhenItOnlyDiffersBySanitising() {
+        let note = loaded(title: "Slashy", day: 2, series: "A/B", in: meetings.appendingPathComponent("A-B"))
+        let lower = loaded(title: "Cased", day: 3, series: "a/b", in: meetings.appendingPathComponent("A-B"))
+        let result = SeriesLibrary.summaries(notes: [note, lower], meetingsByID: [:], notesRoot: meetings)
+        XCTAssertEqual(result.map(\.series), ["A/B", "a/b"])
+    }
 }
