@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 320" width="880" height="320" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title>How Lyra works: a call starts, you click Allow, it records, transcribes on your Mac, and writes one note</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1 1 L8 5 L1 9" fill="none" stroke="#7A7A7A" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+  <rect width="880" height="320" rx="18" fill="#292929"/>
+
+  <g>
+    <rect x="20" y="24" width="152" height="150" rx="14" fill="#333333" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <circle cx="48" cy="56" r="14" fill="#4DCC73"/><text x="48" y="61" text-anchor="middle" font-size="14" font-weight="700" fill="#1E1E1E">1</text>
+    <text x="38" y="104" font-size="15" font-weight="600" fill="#EDEDED">A call starts</text>
+    <text x="38" y="128" font-size="12.5" fill="#A0A0A0">Zoom, Meet, Teams,</text>
+    <text x="38" y="146" font-size="12.5" fill="#A0A0A0">FaceTime, anything</text>
+  </g>
+  <g>
+    <rect x="192" y="24" width="152" height="150" rx="14" fill="#333333" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <circle cx="220" cy="56" r="14" fill="#4DCC73"/><text x="220" y="61" text-anchor="middle" font-size="14" font-weight="700" fill="#1E1E1E">2</text>
+    <text x="210" y="104" font-size="15" font-weight="600" fill="#EDEDED">You click Allow</text>
+    <text x="210" y="128" font-size="12.5" fill="#A0A0A0">Nothing records</text>
+    <text x="210" y="146" font-size="12.5" fill="#A0A0A0">until you do</text>
+  </g>
+  <g>
+    <rect x="364" y="24" width="152" height="150" rx="14" fill="#333333" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <circle cx="392" cy="56" r="14" fill="#4DCC73"/><text x="392" y="61" text-anchor="middle" font-size="14" font-weight="700" fill="#1E1E1E">3</text>
+    <text x="382" y="104" font-size="15" font-weight="600" fill="#EDEDED">It records</text>
+    <text x="382" y="128" font-size="12.5" fill="#A0A0A0">the call and your mic,</text>
+    <text x="382" y="146" font-size="12.5" fill="#A0A0A0">even on headphones</text>
+  </g>
+  <g>
+    <rect x="536" y="24" width="152" height="150" rx="14" fill="#333333" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <circle cx="564" cy="56" r="14" fill="#4DCC73"/><text x="564" y="61" text-anchor="middle" font-size="14" font-weight="700" fill="#1E1E1E">4</text>
+    <text x="554" y="104" font-size="15" font-weight="600" fill="#EDEDED">Transcribes</text>
+    <text x="554" y="128" font-size="12.5" fill="#A0A0A0">on your Mac, with</text>
+    <text x="554" y="146" font-size="12.5" fill="#A0A0A0">names for who spoke</text>
+  </g>
+  <g>
+    <rect x="708" y="24" width="152" height="150" rx="14" fill="#333333" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <circle cx="736" cy="56" r="14" fill="#4DCC73"/><text x="736" y="61" text-anchor="middle" font-size="14" font-weight="700" fill="#1E1E1E">5</text>
+    <text x="726" y="104" font-size="15" font-weight="600" fill="#EDEDED">Writes the note</text>
+    <text x="726" y="128" font-size="12.5" fill="#A0A0A0">Claude expands the</text>
+    <text x="726" y="146" font-size="12.5" fill="#A0A0A0">notes you typed</text>
+  </g>
+
+  <g stroke="#7A7A7A" stroke-width="1.6" fill="none" marker-end="url(#arrow)">
+    <line x1="175" y1="99" x2="189" y2="99"/>
+    <line x1="347" y1="99" x2="361" y2="99"/>
+    <line x1="519" y1="99" x2="533" y2="99"/>
+    <line x1="691" y1="99" x2="705" y2="99"/>
+    <line x1="784" y1="178" x2="784" y2="208"/>
+  </g>
+
+  <rect x="20" y="212" width="840" height="88" rx="14" fill="#333333" stroke="#4DCC73" stroke-opacity="0.45"/>
+  <g transform="translate(40 238)" fill="none" stroke="#EDEDED" stroke-width="1.5" stroke-linejoin="round">
+    <path d="M0 0 H14 L20 6 V28 H0 Z"/><path d="M14 0 V6 H20"/><path d="M4 14 H16 M4 19 H16 M4 24 H11" stroke-linecap="round"/>
+  </g>
+  <text x="74" y="252" font-size="15" font-weight="600" fill="#EDEDED">One Markdown note in your Obsidian vault</text>
+  <text x="74" y="274" font-size="12.5" fill="#A0A0A0">Series become folders; people and tags go in the note</text>
+
+  <g text-anchor="middle">
+    <rect x="474" y="234" width="116" height="44" rx="22" fill="#FFFFFF" fill-opacity="0.07"/>
+    <text x="532" y="252" font-size="13" font-weight="600" fill="#EDEDED">My notes</text>
+    <text x="532" y="268" font-size="11" fill="#A0A0A0">what you typed</text>
+    <rect x="598" y="234" width="130" height="44" rx="22" fill="#FFFFFF" fill-opacity="0.07"/>
+    <text x="663" y="252" font-size="13" font-weight="600" fill="#EDEDED">Expanded</text>
+    <text x="663" y="268" font-size="11" fill="#A0A0A0">Claude fills the gaps</text>
+    <rect x="736" y="234" width="112" height="44" rx="22" fill="#FFFFFF" fill-opacity="0.07"/>
+    <text x="792" y="252" font-size="13" font-weight="600" fill="#EDEDED">Transcript</text>
+    <text x="792" y="268" font-size="11" fill="#A0A0A0">who said what</text>
+  </g>
+</svg>

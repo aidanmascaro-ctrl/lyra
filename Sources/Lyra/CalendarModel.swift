@@ -21,7 +21,11 @@ final class CalendarModel: ObservableObject {
     /// The "paste your Microsoft app ID" alert.
     @Published var askingForMicrosoftID = false
 
-    private let service = CalendarService(store: CalendarStore(fileURL: CalendarStore.defaultURL), builtIn: CalendarModel.builtInApps())
+    /// `LYRA_CALENDARS_FILE` points Lyra at a scratch calendar list, like `LYRA_PEOPLE_FILE` for voices.
+    private let service = CalendarService(
+        store: CalendarStore(fileURL: ProcessInfo.processInfo.environment["LYRA_CALENDARS_FILE"]
+            .map { URL(fileURLWithPath: $0) } ?? CalendarStore.defaultURL),
+        builtIn: CalendarModel.builtInApps())
     private var eventsByAccount: [String: [CalendarEvent]] = [:]
     private var fetchedAt: Date?
     private var fetching = false
