@@ -6,14 +6,17 @@ enum SelectionAction { case expand, find, ask }
 
 /// The note canvas: plain text with bold, underline, two headings, bullets, numbered lists and indent.
 /// `blocks` from outside replace the text only when they differ from what the editor last sent out, and not
-/// while it holds unsent typing; `onExternal` says which (true: shown, false: refused). Raising `forceLoad` shows
-/// `blocks` whatever was typed (Reload). With `editable` off it takes no typing and gives up the keyboard.
+/// while it holds unsent typing. A new `pushID` marks a push from `NoteSync`: every one is answered through
+/// `onExternal(id, shown)`, true when the editor now shows it (or already did), false when unsent typing refused
+/// it. Raising `forceLoad` shows `blocks` whatever was typed (Reload). With `editable` off it takes no typing and
+/// gives up the keyboard.
 struct NoteEditor: NSViewRepresentable {
     var blocks: [NoteBlock]
     var onChange: ([NoteBlock]) -> Void
     var selectionActions = false
     var onSelectionAction: ((SelectionAction, String, Int) -> Void)?
-    var onExternal: ((Bool) -> Void)?
+    var pushID = 0
+    var onExternal: ((Int, Bool) -> Void)?
     var forceLoad = 0
     var editable = true
 
@@ -31,6 +34,7 @@ struct NoteEditor: NSViewRepresentable {
         context.coordinator.textView = textView
         context.coordinator.lastKnown = blocks
         context.coordinator.forced = forceLoad
+        context.coordinator.answered = pushID
         textView.load(blocks)
         return scroll
     }
@@ -45,7 +49,12 @@ struct NoteEditor: NSViewRepresentable {
         }
         if forceLoad != coordinator.forced {
             coordinator.forced = forceLoad
+            coordinator.answered = pushID
             coordinator.replace(with: blocks)
+        } else if pushID != coordinator.answered {
+            coordinator.answered = pushID
+            let (id, answer) = (pushID, onExternal)
+            coordinator.receive(blocks) { shown in answer?(id, shown) }
         } else {
             coordinator.receive(blocks)
         }
@@ -63,6 +72,8 @@ struct NoteEditor: NSViewRepresentable {
         /// What the editor last showed from outside or sent out: an equal `blocks` is not a change.
         var lastKnown: [NoteBlock] = []
         var forced = 0
+        /// The last push answered (or skipped by a Reload).
+        var answered = 0
         private var unsent = false
         private var pendingSave: Task<Void, Never>?
         /// The editor's own undo history (not the window's), so a reload from outside can clear it.
@@ -77,18 +88,20 @@ struct NoteEditor: NSViewRepresentable {
         }
 
         /// Typed words win: with unsent edits the incoming blocks are skipped and the edits go out instead.
-        func receive(_ blocks: [NoteBlock]) {
-            guard blocks != lastKnown, let textView else { return }
-            let answer = parent.onExternal
+        /// `answer` is called on the next turn (never during a view update), and before any typing it flushes.
+        func receive(_ blocks: [NoteBlock], answer: ((Bool) -> Void)? = nil) {
+            guard blocks != lastKnown, let textView else {
+                if let answer { Task { @MainActor in answer(true) } }  // already showing it
+                return
+            }
             if unsent {
-                // Answered before the flush below, so the refusal is known when the typing arrives.
-                Task { @MainActor in answer?(false) }
+                if let answer { Task { @MainActor in answer(false) } }
                 flush(deferred: true)
                 return
             }
             lastKnown = blocks
             textView.load(blocks)
-            Task { @MainActor in answer?(true) }
+            if let answer { Task { @MainActor in answer(true) } }
         }
 
         /// Reload: shows `blocks`, dropping any unsent typing.
@@ -103,7 +116,8 @@ struct NoteEditor: NSViewRepresentable {
         func setEditable(_ editable: Bool) {
             guard let textView, textView.isEditable != editable else { return }
             if !editable, let window = textView.window, window.firstResponder === textView {
-                window.makeFirstResponder(nil)  // ends editing, which sends any unsent typing out
+                flush(deferred: true)  // this runs inside a view update: the typing goes out on the next turn
+                window.makeFirstResponder(nil)
             }
             textView.isEditable = editable
         }
@@ -132,7 +146,8 @@ struct NoteEditor: NSViewRepresentable {
             }
         }
 
-        func textDidEndEditing(_ notification: Notification) { flush() }
+        /// Deferred: focus can be taken away during a view update (a tab switch, streaming starting).
+        func textDidEndEditing(_ notification: Notification) { flush(deferred: true) }
 
         func undoManager(for view: NSTextView) -> UndoManager? { undo }
 

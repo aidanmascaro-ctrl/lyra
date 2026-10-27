@@ -68,7 +68,8 @@ extension MeetingModel {
 
     func reExpand() {
         guard working == nil, let id = meeting?.id else { return }
-        edited(expandedBlocks, in: .expanded)
+        // Expanded is not saved here: the editor saves its own typing, and Re-expand refuses if Expanded changes
+        // while Claude writes.
         working = "Re-expanding…"
         claudeError = nil
         Task {
@@ -103,10 +104,13 @@ extension MeetingModel {
         }
     }
 
-    /// Pushes Claude's version of Expanded to the editor, saves it, and records its new grey as Lyra's.
+    /// Saves Claude's version of Expanded, pushes it to the editor, and records its new grey as Lyra's.
     private func addClaude(_ blocks: [NoteBlock]) {
         let before = Set(expandedBlocks.map { NoteMarkdown.render([$0]) })
-        edited(blocks, in: .expanded)
+        guard lyraWrite(blocks, to: .expanded) else {
+            claudeError = "Expanded was being changed (in Obsidian or by your typing) while Claude worked, so Lyra didn't add its answer. Try again."
+            return
+        }
         let added = blocks.filter { $0.byClaude && !before.contains(NoteMarkdown.render([$0])) }
         do { try NoteEdits.rememberGrey(added, meetingFolder: folder) } catch {
             notice = "Lyra couldn't update this meeting's records: \(error.localizedDescription)"

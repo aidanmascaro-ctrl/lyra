@@ -77,7 +77,8 @@ private struct MeetingContent: View {
         return NoteEditor(blocks: blocks, onChange: { model.edited($0, in: section) },
                           selectionActions: actions,
                           onSelectionAction: { model.selectionAction($0, text: $1, block: $2) },
-                          onExternal: { model.acknowledged(section, accepted: $0) },
+                          pushID: model.pushID[section] ?? 0,
+                          onExternal: { model.acknowledged(section, id: $0, accepted: $1) },
                           forceLoad: model.forceLoad[section] ?? 0,
                           editable: active)
             .overlay(alignment: .topLeading) { if active { placeholder(blocks, text) } }
@@ -99,10 +100,12 @@ private struct MeetingContent: View {
     @ViewBuilder private var banners: some View {
         VStack(spacing: 6) {
             if let error = model.loadError { Banner(text: error) }
-            if model.conflict != nil {
-                Banner(text: "This note changed in Obsidian.") {
-                    Button("Reload") { model.takeDisk() }
-                    Button("Keep mine") { model.keepMine() }
+            ForEach([NoteSection.myNotes, .expanded], id: \.self) { section in
+                if model.conflicts[section] != nil {
+                    Banner(text: "\(section == .myNotes ? "My notes" : "Expanded") changed in Obsidian while you were typing.") {
+                        Button("Reload") { model.takeDisk(section) }
+                        Button("Keep mine") { model.keepMine(section) }
+                    }
                 }
             }
             if let notice = model.notice {

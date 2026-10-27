@@ -2,21 +2,21 @@ import Foundation
 
 /// Keeps a note's two editors and its file in step, never writing over text the other side hasn't seen.
 ///
-/// `loaded` is the file as last known; `shown` is what each editor holds (what it sent out, or a push it
-/// accepted). Any newer version of the file — from the watcher, a merge during a save, a rename — goes through
-/// `accept`, which pushes every section whose text differs from what its editor shows. The editor answers each
-/// push with `ack`: it took it, or it had unsent typing and refused, which is a conflict for that section.
-/// While a section is in conflict nothing is saved to it until Aidan picks Reload or Keep mine.
+/// Each section is tracked on its own: what its editor shows (`shown`: what it sent out, or a push it accepted),
+/// the push it hasn't answered yet, and its conflict. Any newer version of the file (watcher, a merge during a
+/// save, a rename, Lyra's own write) goes through `accept`, which pushes every section whose text differs from
+/// what its editor shows. Each push has an id; the editor answers it with `ack` (took it, or refused because it
+/// had unsent typing). A refusal, or the editor sending text while a push is still unanswered, is a conflict for
+/// that section, and nothing is written to a section in conflict until Aidan picks Reload or Keep mine.
 public struct NoteSync: Sendable {
     public enum Effect: Equatable, Sendable {
-        /// Show these blocks unless the editor has unsent typing (it answers with `ack`).
-        case push(NoteSection, [NoteBlock])
+        /// Show these blocks unless the editor has unsent typing; answer with `ack(section, id:, accepted:)`.
+        case push(NoteSection, [NoteBlock], id: Int)
         /// Show these blocks, dropping any unsent typing (Aidan chose Reload).
         case forcePush(NoteSection, [NoteBlock])
     }
 
     public struct Conflict: Sendable {
-        public let section: NoteSection
         /// The editor's text, kept up to date while Aidan decides.
         public internal(set) var mine: [NoteBlock]
         /// The file as it is now.
@@ -24,10 +24,10 @@ public struct NoteSync: Sendable {
     }
 
     public private(set) var loaded: LoadedNote
-    public private(set) var conflict: Conflict?
+    public private(set) var conflicts: [NoteSection: Conflict] = [:]
     private var shown: [NoteSection: String] = [:]
-    /// Pushes not yet answered by their editor.
-    private var pushed: [NoteSection: String] = [:]
+    private var pending: [NoteSection: (id: Int, text: String)] = [:]
+    private var nextID = 1
 
     public init(loaded: LoadedNote) {
         self.loaded = loaded
@@ -43,63 +43,86 @@ public struct NoteSync: Sendable {
     /// A newer version of the file, wherever it came from. `saved` is the section the editor just wrote.
     public mutating func accept(_ note: LoadedNote, saved: NoteSection? = nil) -> [Effect] {
         loaded = note
-        conflict?.disk = note
+        for section in conflicts.keys { conflicts[section]?.disk = note }
         var effects: [Effect] = []
-        for section in NoteSection.allCases where section != saved && section != conflict?.section {
+        for section in NoteSection.allCases where section != saved && conflicts[section] == nil {
             let text = Self.canonical(section.text(in: note.document))
-            guard text != (pushed[section] ?? shown[section]) else { continue }
-            pushed[section] = text
-            effects.append(.push(section, NoteMarkdown.parse(text)))
+            guard text != (pending[section]?.text ?? shown[section]) else { continue }
+            pending[section] = (nextID, text)
+            effects.append(.push(section, NoteMarkdown.parse(text), id: nextID))
+            nextID += 1
         }
         return effects
     }
 
-    /// The editor's answer to the last push for `section`.
-    public mutating func ack(_ section: NoteSection, accepted: Bool) {
-        guard let text = pushed.removeValue(forKey: section) else { return }
-        if accepted {
-            shown[section] = text
-        } else if conflict == nil {
-            conflict = Conflict(section: section, mine: NoteMarkdown.parse(shown[section] ?? ""), disk: loaded)
-        }
+    /// The editor's answer to push `id`. An answer to an older push than the one pending is ignored.
+    public mutating func ack(_ section: NoteSection, id: Int, accepted: Bool) {
+        guard let push = pending[section], push.id == id else { return }
+        pending[section] = nil
+        if accepted { shown[section] = push.text } else { openConflict(section, mine: NoteMarkdown.parse(shown[section] ?? "")) }
     }
 
-    /// The editor sent out its blocks: saved, unless the section is in conflict or the save finds one.
+    /// The editor sent out its blocks: saved, unless the section is in conflict, a push to it is still unanswered
+    /// (the editor never showed what the file now holds), or the save finds a change made meanwhile.
     public mutating func edited(_ blocks: [NoteBlock], in section: NoteSection, index: NoteIndex) throws -> [Effect] {
-        if conflict?.section == section {
-            conflict?.mine = blocks
+        let text = Self.canonical(NoteMarkdown.render(blocks))
+        if conflicts[section] != nil {
+            conflicts[section]?.mine = blocks
             return []
         }
-        // The editor's own text supersedes any push it hasn't answered.
-        pushed[section] = nil
-        shown[section] = Self.canonical(NoteMarkdown.render(blocks))
+        if let push = pending.removeValue(forKey: section) {
+            // Sent before the push was answered: unless it is that very text, it was typed over an older version.
+            guard push.text == text else {
+                openConflict(section, mine: blocks)
+                return []
+            }
+            shown[section] = text
+            return []
+        }
+        shown[section] = text
         switch try NoteEdits.save(blocks, to: section, over: loaded, index: index) {
         case .saved(let note):
             return accept(note, saved: section)
         case .conflict(let disk):
-            if conflict == nil { conflict = Conflict(section: section, mine: blocks, disk: disk) }
+            openConflict(section, mine: blocks)
             return accept(disk, saved: section)
         }
     }
 
+    /// Lyra writing a section itself (Claude's additions): saved only while the section is settled, then pushed to
+    /// its editor like any outside change, so typing in flight still wins and is asked about.
+    public mutating func write(_ blocks: [NoteBlock], to section: NoteSection,
+                               index: NoteIndex) throws -> (effects: [Effect], written: Bool) {
+        guard conflicts[section] == nil, pending[section] == nil else { return ([], false) }
+        switch try NoteEdits.save(blocks, to: section, over: loaded, index: index) {
+        case .saved(let note): return (accept(note), true)
+        case .conflict(let disk): return (accept(disk), false)
+        }
+    }
+
     /// "Reload": the file's text wins, unsent typing included.
-    public mutating func reload() -> [Effect] {
-        guard let conflict else { return [] }
-        self.conflict = nil
-        let text = Self.canonical(conflict.section.text(in: conflict.disk.document))
-        shown[conflict.section] = text
-        pushed[conflict.section] = nil
-        return [.forcePush(conflict.section, NoteMarkdown.parse(text))] + accept(conflict.disk, saved: conflict.section)
+    public mutating func reload(_ section: NoteSection) -> [Effect] {
+        guard conflicts.removeValue(forKey: section) != nil else { return [] }
+        let text = Self.canonical(section.text(in: loaded.document))
+        shown[section] = text
+        pending[section] = nil
+        return [.forcePush(section, NoteMarkdown.parse(text))]
     }
 
     /// "Keep mine": the editor's text is written over the section as the file is right now.
-    public mutating func keepMine(index: NoteIndex) throws -> [Effect] {
-        guard let conflict else { return [] }
+    public mutating func keepMine(_ section: NoteSection, index: NoteIndex) throws -> [Effect] {
+        guard let conflict = conflicts[section] else { return [] }
         let fresh = try index.load(conflict.disk.document.front.lyraID, hint: conflict.disk.url)
-        let note = try NoteEdits.keepMine(conflict.mine, section: conflict.section, over: fresh, index: index)
-        self.conflict = nil
-        shown[conflict.section] = Self.canonical(NoteMarkdown.render(conflict.mine))
-        return accept(note, saved: conflict.section)
+        let note = try NoteEdits.keepMine(conflict.mine, section: section, over: fresh, index: index)
+        conflicts[section] = nil
+        pending[section] = nil
+        shown[section] = Self.canonical(NoteMarkdown.render(conflict.mine))
+        return accept(note, saved: section)
+    }
+
+    private mutating func openConflict(_ section: NoteSection, mine: [NoteBlock]) {
+        pending[section] = nil
+        if conflicts[section] == nil { conflicts[section] = Conflict(mine: mine, disk: loaded) }
     }
 
     /// Text as the editor would write it back, so formatting differences alone never count as a change.

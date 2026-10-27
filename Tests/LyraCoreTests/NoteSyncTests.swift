@@ -34,6 +34,21 @@ final class NoteSyncTests: XCTestCase {
 
     private func start() throws -> NoteSync { NoteSync(loaded: try index.load(id, hint: url)) }
 
+    /// Effects without push ids, for comparing.
+    private func plain(_ effects: [NoteSync.Effect]) -> [String] {
+        effects.map {
+            switch $0 {
+            case .push(let s, let b, _): "push \(s) \(NoteMarkdown.render(b))"
+            case .forcePush(let s, let b): "force \(s) \(NoteMarkdown.render(b))"
+            }
+        }
+    }
+
+    /// The id of the only push in `effects`.
+    private func pushID(_ effects: [NoteSync.Effect]) -> Int {
+        effects.compactMap { if case .push(_, _, let id) = $0 { id } else { nil } }.first ?? -1
+    }
+
     func testOwnSaveIsNotAnOutsideChange() throws {
         var sync = try start()
         XCTAssertEqual(try sync.edited(blocks("- mine\n- more"), in: .myNotes, index: index), [])
@@ -43,9 +58,10 @@ final class NoteSyncTests: XCTestCase {
     func testOutsideChangeWithNoUnsentEditsIsPushedAndAccepted() throws {
         var sync = try start()
         let changed = try writeElsewhere { $0.myNotes = "- from Obsidian" }
-        XCTAssertEqual(sync.diskChanged(changed), [.push(.myNotes, blocks("- from Obsidian"))])
-        sync.ack(.myNotes, accepted: true)
-        XCTAssertNil(sync.conflict)
+        let effects = sync.diskChanged(changed)
+        XCTAssertEqual(plain(effects), ["push myNotes - from Obsidian"])
+        sync.ack(.myNotes, id: pushID(effects), accepted: true)
+        XCTAssertTrue(sync.conflicts.isEmpty)
         _ = try sync.edited(blocks("- from Obsidian\n- typed after"), in: .myNotes, index: index)
         XCTAssertEqual(try disk().myNotes, "- from Obsidian\n- typed after")
     }
@@ -53,21 +69,21 @@ final class NoteSyncTests: XCTestCase {
     func testOutsideChangeWithUnsentEditsIsAConflictAndNothingIsWritten() throws {
         var sync = try start()
         let changed = try writeElsewhere { $0.myNotes = "- from Obsidian" }
-        _ = sync.diskChanged(changed)
-        sync.ack(.myNotes, accepted: false)  // the editor had unsent typing
-        XCTAssertEqual(sync.conflict?.section, .myNotes)
+        let effects = sync.diskChanged(changed)
+        sync.ack(.myNotes, id: pushID(effects), accepted: false)  // the editor had unsent typing
+        XCTAssertNotNil(sync.conflicts[.myNotes])
         XCTAssertEqual(try sync.edited(blocks("- mine typed"), in: .myNotes, index: index), [])
         XCTAssertEqual(try disk().myNotes, "- from Obsidian")
-        XCTAssertEqual(sync.conflict?.mine, blocks("- mine typed"))
+        XCTAssertEqual(sync.conflicts[.myNotes]?.mine, blocks("- mine typed"))
     }
 
     func testReloadForcesDiskEvenOverLaterTyping() throws {
         var sync = try start()
-        _ = sync.diskChanged(try writeElsewhere { $0.myNotes = "- from Obsidian" })
-        sync.ack(.myNotes, accepted: false)
+        let effects = sync.diskChanged(try writeElsewhere { $0.myNotes = "- from Obsidian" })
+        sync.ack(.myNotes, id: pushID(effects), accepted: false)
         _ = try sync.edited(blocks("- typed after the banner"), in: .myNotes, index: index)
-        XCTAssertEqual(sync.reload(), [.forcePush(.myNotes, blocks("- from Obsidian"))])
-        XCTAssertNil(sync.conflict)
+        XCTAssertEqual(plain(sync.reload(.myNotes)), ["force myNotes - from Obsidian"])
+        XCTAssertTrue(sync.conflicts.isEmpty)
         XCTAssertEqual(try disk().myNotes, "- from Obsidian")
         _ = try sync.edited(blocks("- from Obsidian\n- next"), in: .myNotes, index: index)
         XCTAssertEqual(try disk().myNotes, "- from Obsidian\n- next")
@@ -75,12 +91,12 @@ final class NoteSyncTests: XCTestCase {
 
     func testKeepMineWritesMineAndKeepsTheRest() throws {
         var sync = try start()
-        _ = sync.diskChanged(try writeElsewhere { $0.myNotes = "- from Obsidian"; $0.expanded = "- other" })
-        sync.ack(.myNotes, accepted: false)
-        sync.ack(.expanded, accepted: true)
+        let effects = sync.diskChanged(try writeElsewhere { $0.myNotes = "- from Obsidian"; $0.expanded = "- other" })
+        let ids = effects.compactMap { if case .push(let s, _, let id) = $0 { (s, id) } else { nil } }
+        for (section, id) in ids { sync.ack(section, id: id, accepted: section == .expanded) }
         _ = try sync.edited(blocks("- mine typed"), in: .myNotes, index: index)
-        XCTAssertEqual(try sync.keepMine(index: index), [])
-        XCTAssertNil(sync.conflict)
+        XCTAssertEqual(try sync.keepMine(.myNotes, index: index), [])
+        XCTAssertTrue(sync.conflicts.isEmpty)
         XCTAssertEqual(try disk().myNotes, "- mine typed")
         XCTAssertEqual(try disk().expanded, "- other")
     }
@@ -89,7 +105,7 @@ final class NoteSyncTests: XCTestCase {
         var sync = try start()
         _ = try writeElsewhere { $0.myNotes = "- from Obsidian" }
         XCTAssertEqual(try sync.edited(blocks("- mine typed"), in: .myNotes, index: index), [])
-        XCTAssertEqual(sync.conflict?.section, .myNotes)
+        XCTAssertNotNil(sync.conflicts[.myNotes])
         XCTAssertEqual(try disk().myNotes, "- from Obsidian")
     }
 
@@ -98,8 +114,8 @@ final class NoteSyncTests: XCTestCase {
         _ = try writeElsewhere { $0.expanded = "- mine\n  - <span class=\"lyra\">streamed</span>" }
         // Typing saves before the watcher reports the stream: merged, and the new Expanded goes to its editor.
         let effects = try sync.edited(blocks("- mine\n- typed"), in: .myNotes, index: index)
-        XCTAssertEqual(effects, [.push(.expanded, blocks("- mine\n  - <span class=\"lyra\">streamed</span>"))])
-        sync.ack(.expanded, accepted: true)
+        XCTAssertEqual(plain(effects), ["push expanded - mine\n  - <span class=\"lyra\">streamed</span>"])
+        sync.ack(.expanded, id: pushID(effects), accepted: true)
         XCTAssertEqual(sync.diskChanged(try index.load(id, hint: url)), [])  // already seen
         // Editing Expanded later starts from the streamed version, so nothing streamed is lost.
         _ = try sync.edited(blocks("- mine\n  - <span class=\"lyra\">streamed</span>\n- my point"), in: .expanded, index: index)
@@ -110,7 +126,82 @@ final class NoteSyncTests: XCTestCase {
     func testAcceptedNoteFromElsewherePushesChangedSections() throws {
         var sync = try start()
         let renamed = try writeElsewhere { $0.front.title = "New"; $0.expanded = "- grey added" }
-        XCTAssertEqual(sync.accept(renamed), [.push(.expanded, blocks("- grey added"))])
+        XCTAssertEqual(plain(sync.accept(renamed)), ["push expanded - grey added"])
         XCTAssertEqual(sync.loaded.document.front.title, "New")
+    }
+
+    // MARK: Round 2
+
+    func testSecondSectionConflictWhileTheFirstIsOpen() throws {
+        var sync = try start()
+        let first = sync.diskChanged(try writeElsewhere { $0.myNotes = "- Obsidian notes" })
+        sync.ack(.myNotes, id: pushID(first), accepted: false)
+        let second = sync.diskChanged(try writeElsewhere { $0.expanded = "- Obsidian expanded" })
+        sync.ack(.expanded, id: pushID(second), accepted: false)  // typing in Expanded too
+        XCTAssertEqual(try sync.edited(blocks("- my expanded"), in: .expanded, index: index), [])
+        XCTAssertNotNil(sync.conflicts[.myNotes])
+        XCTAssertNotNil(sync.conflicts[.expanded])
+        XCTAssertEqual(try disk().expanded, "- Obsidian expanded")
+        XCTAssertEqual(try disk().myNotes, "- Obsidian notes")
+    }
+
+    func testSaveHittingASecondSectionChangeIsItsOwnConflict() throws {
+        var sync = try start()
+        let first = sync.diskChanged(try writeElsewhere { $0.myNotes = "- Obsidian notes" })
+        sync.ack(.myNotes, id: pushID(first), accepted: false)
+        _ = try writeElsewhere { $0.expanded = "- Obsidian expanded" }  // the watcher hasn't reported it yet
+        _ = try sync.edited(blocks("- my expanded"), in: .expanded, index: index)
+        XCTAssertNotNil(sync.conflicts[.expanded])
+        XCTAssertNotNil(sync.conflicts[.myNotes])
+        XCTAssertEqual(try disk().expanded, "- Obsidian expanded")
+    }
+
+    func testEditArrivingBeforeThePushIsAnsweredIsAConflict() throws {
+        var sync = try start()
+        _ = sync.diskChanged(try writeElsewhere { $0.myNotes = "- from Obsidian" })
+        // The editor's debounce fires before it has even seen the push.
+        XCTAssertEqual(try sync.edited(blocks("- mine typed"), in: .myNotes, index: index), [])
+        XCTAssertNotNil(sync.conflicts[.myNotes])
+        XCTAssertEqual(try disk().myNotes, "- from Obsidian")
+    }
+
+    func testEditEqualToThePendingPushIsNotAConflict() throws {
+        var sync = try start()
+        _ = sync.diskChanged(try writeElsewhere { $0.myNotes = "- from Obsidian" })
+        _ = try sync.edited(blocks("- from Obsidian"), in: .myNotes, index: index)
+        XCTAssertTrue(sync.conflicts.isEmpty)
+    }
+
+    func testStaleAnswerDoesNotResolveANewerPush() throws {
+        var sync = try start()
+        let a = sync.diskChanged(try writeElsewhere { $0.myNotes = "- A" })
+        let b = sync.diskChanged(try writeElsewhere { $0.myNotes = "- B" })
+        XCTAssertNotEqual(pushID(a), pushID(b))
+        sync.ack(.myNotes, id: pushID(a), accepted: true)  // late answer to A
+        // B is still unanswered, so typing now must not save over it.
+        _ = try sync.edited(blocks("- typed"), in: .myNotes, index: index)
+        XCTAssertNotNil(sync.conflicts[.myNotes])
+        XCTAssertEqual(try disk().myNotes, "- B")
+        sync.ack(.myNotes, id: pushID(b), accepted: false)  // and B's answer changes nothing more
+        XCTAssertEqual(sync.conflicts[.myNotes]?.mine, blocks("- typed"))
+    }
+
+    func testLyraWriteIsPushedAndAnswered() throws {
+        var sync = try start()
+        let grey = blocks("- mine\n  - <span class=\"lyra\">added</span>")
+        let result = try sync.write(grey, to: .expanded, index: index)
+        XCTAssertTrue(result.written)
+        XCTAssertEqual(plain(result.effects), ["push expanded " + NoteMarkdown.render(grey)])
+        XCTAssertEqual(try disk().expanded, NoteMarkdown.render(grey))
+        sync.ack(.expanded, id: pushID(result.effects), accepted: false)  // Aidan was typing
+        XCTAssertNotNil(sync.conflicts[.expanded])
+    }
+
+    func testLyraWriteWaitsWhileTheSectionIsUnsettled() throws {
+        var sync = try start()
+        _ = sync.diskChanged(try writeElsewhere { $0.expanded = "- from Obsidian" })
+        let result = try sync.write(blocks("- claude"), to: .expanded, index: index)
+        XCTAssertFalse(result.written)
+        XCTAssertEqual(try disk().expanded, "- from Obsidian")
     }
 }

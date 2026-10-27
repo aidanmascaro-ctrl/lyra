@@ -25,6 +25,8 @@ final class MeetingModel: ObservableObject {
     @Published var expandedBlocks: [NoteBlock] = []
     /// Raised to make an editor show its blocks over unsent typing (Reload).
     @Published private(set) var forceLoad: [NoteSection: Int] = [:]
+    /// The id of the latest push to each editor, which it answers through `acknowledged`.
+    @Published private(set) var pushID: [NoteSection: Int] = [:]
     @Published var tab: MeetingTab
     @Published var titleDraft = ""
     /// While the title field has focus, the file's title doesn't overwrite what is being typed.
@@ -60,7 +62,8 @@ final class MeetingModel: ObservableObject {
     }
 
     var loaded: LoadedNote? { sync?.loaded }
-    var conflict: NoteSync.Conflict? { sync?.conflict }
+    /// Sections changed elsewhere while they had typing Lyra hadn't saved; each waits for Reload or Keep mine.
+    var conflicts: [NoteSection: NoteSync.Conflict] { sync?.conflicts ?? [:] }
     var isLive: Bool { app.liveMeeting?.folder == folder }
     var streaming: [NoteBlock]? { meeting.flatMap { app.liveExpansion[$0.id] } }
     var speakers: [SpeakerSummary] { MeetingOverview.speakers(in: lines) }
@@ -135,8 +138,9 @@ final class MeetingModel: ObservableObject {
     private func apply(_ effects: [NoteSync.Effect]) {
         for effect in effects {
             switch effect {
-            case .push(let section, let blocks):
+            case .push(let section, let blocks, let id):
                 setBlocks(blocks, for: section)
+                pushID[section] = id
             case .forcePush(let section, let blocks):
                 setBlocks(blocks, for: section)
                 forceLoad[section, default: 0] += 1
@@ -170,24 +174,39 @@ final class MeetingModel: ObservableObject {
         }
     }
 
-    /// An editor's answer to a push: shown, or refused because of unsent typing.
-    func acknowledged(_ section: NoteSection, accepted: Bool) {
-        sync?.ack(section, accepted: accepted)
+    /// An editor's answer to push `id`: shown, or refused because of unsent typing.
+    func acknowledged(_ section: NoteSection, id: Int, accepted: Bool) {
+        sync?.ack(section, id: id, accepted: accepted)
+    }
+
+    /// Lyra writing Expanded itself (Claude's additions). False when the section is unsettled (a conflict, or a
+    /// change it hasn't shown yet), in which case nothing is written.
+    func lyraWrite(_ blocks: [NoteBlock], to section: NoteSection) -> Bool {
+        guard var sync else { return false }
+        do {
+            let result = try sync.write(blocks, to: section, index: notes)
+            self.sync = sync
+            apply(result.effects)
+            return result.written
+        } catch {
+            notice = "Lyra couldn't save this note: \(error.localizedDescription)"
+            return false
+        }
     }
 
     /// "Reload": the file's version wins, even over typing not yet sent.
-    func takeDisk() {
+    func takeDisk(_ section: NoteSection) {
         guard var sync else { return }
-        let effects = sync.reload()
+        let effects = sync.reload(section)
         self.sync = sync
         apply(effects)
     }
 
     /// "Keep mine": this section is written over Obsidian's, as the file is right now.
-    func keepMine() {
+    func keepMine(_ section: NoteSection) {
         guard var sync else { return }
         do {
-            let effects = try sync.keepMine(index: notes)
+            let effects = try sync.keepMine(section, index: notes)
             self.sync = sync
             apply(effects)
         } catch { notice = "Lyra couldn't save your version: \(error.localizedDescription)" }
