@@ -21,7 +21,7 @@ final class CalendarModel: ObservableObject {
     /// The "paste your Microsoft app ID" alert.
     @Published var askingForMicrosoftID = false
 
-    private let service = CalendarService(store: CalendarStore(fileURL: CalendarStore.defaultURL))
+    private let service = CalendarService(store: CalendarStore(fileURL: CalendarStore.defaultURL), builtIn: CalendarModel.builtInApps())
     private var eventsByAccount: [String: [CalendarEvent]] = [:]
     private var fetchedAt: Date?
     private var fetching = false
@@ -73,12 +73,12 @@ final class CalendarModel: ObservableObject {
         NSWorkspace.shared.open(url)
     }
 
-    /// Signs in to one more account (or again to one that was signed out). The first time for a provider, Aidan
-    /// gives the app details he registered: Google's downloaded file, or Microsoft's application ID.
+    /// Signs in to one more account (or again to one that was signed out) with Lyra's built-in app details, so it's
+    /// only a sign-in. A build without them asks for the app details instead.
     func connect(_ provider: CalendarProvider) {
         guard signingIn == nil else { return }
         Task {
-            if let client = try? await service.settings().client(for: provider) { return await signIn(provider, client: client) }
+            if let client = try? await service.client(for: provider) { return await signIn(provider, client: client) }
             changeAppDetails(provider)
         }
     }
@@ -139,6 +139,15 @@ final class CalendarModel: ObservableObject {
         await reloadAccounts()
         fetchedAt = nil
         refresh()
+    }
+
+    /// `CalendarApps.json` in the app bundle; none (a build without it) means connecting asks for app details.
+    private static func builtInApps() -> [String: OAuthClient] {
+        guard let url = Bundle.main.url(forResource: "CalendarApps", withExtension: "json") else { return [:] }
+        do { return try BuiltInApps.parse(Data(contentsOf: url)) } catch {
+            NSLog("Lyra: couldn't read the built-in calendar app details: \(error)")
+            return [:]
+        }
     }
 
     private func reloadAccounts() async {

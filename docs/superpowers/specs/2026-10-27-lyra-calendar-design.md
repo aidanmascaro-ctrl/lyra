@@ -35,20 +35,33 @@
   a little before he is admitted. Zoom's and Teams' apps only connect audio once he is let in.
 
 ## Sign-in (both providers)
+- **Connecting is only a sign-in, for anyone.** Lyra ships its own app details in `Resources/CalendarApps.json`.
+  The file is kept out of git; `scripts/build-app.sh` copies it into the app. Its format is
+  `{"google": {"clientID", "clientSecret"}, "microsoft": {"clientID"}}`.
+  - **Google:** Cloud project "Lyra", a Desktop app client.
+  - **Microsoft:** the app "Lyra", ID `(kept in Resources/CalendarApps.json)`. It lives in Aidan's own Azure
+    organisation (Default Directory, the owner's own Azure tenant). Account types: any Entra organisation plus
+    personal accounts. Platform: mobile/desktop, redirect `http://localhost`.
+  - Details chosen with "Change app details…" win over the built-in ones. A build without the file asks for app
+    details, as before.
 - **Flow:** the standard installed-app flow, PKCE plus a loopback redirect. A one-shot listener runs on 127.0.0.1,
   and on ::1 at the same port when possible. The page opens in his default browser.
 - **Scopes (read-only):**
   - Google: `openid email calendar.readonly`.
   - Microsoft: `openid profile email offline_access Calendars.Read`.
   - The ID token in the token answer is read only to label the account with its email.
-- **Google:** Aidan made a Cloud "Desktop app" client, published so tokens don't expire after 7 days. Lyra imports
-  its downloaded JSON through a file picker that opens on Downloads. Redirect: `http://127.0.0.1:<port>`.
+- **Google:** Aidan made a Cloud "Desktop app" client, published so tokens don't expire after 7 days. Redirect:
+  `http://127.0.0.1:<port>`.
+  - For other people, until Google verifies Lyra: an "unverified app" warning, and a cap of 100 users.
+  - Verification needs a website with a privacy policy and a demo video.
 - **Microsoft:**
   - Aidan registers one app in Microsoft Entra:
     - Account types: any organisation's accounts plus personal Microsoft accounts.
     - Platform: Public client/native.
     - Redirect URI: `http://localhost` (Microsoft ignores the port for loopback).
-  - Lyra asks for the Application (client) ID once. There is no client secret, and none is sent.
+  - There is no client secret, and none is sent.
+  - Other companies' work accounts may need their IT admin to approve Lyra, until it is a verified publisher.
+    Verification needs a free Microsoft partner (MPN) ID.
   - Endpoint: `common`. Each sign-in uses `prompt=select_account`, so he can add the work and the personal
     account one after the other.
   - A work organisation may require admin approval (AADSTS65001 / 90094 / 90095). Lyra says so plainly.
