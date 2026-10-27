@@ -60,6 +60,31 @@ final class NoteTextTests: XCTestCase {
         }
     }
 
+    /// "- " typed on the empty first line of an empty note: the line becomes an empty bullet with no characters
+    /// of its own, so nothing in the text can carry its kind. The editor keeps it as its empty block instead.
+    func testShortcutOnTheEmptyFirstLineSurvivesTheRoundTrip() {
+        for (typed, kind) in [("-", BlockKind.bullet), ("1.", .numbered), ("#", .heading1), ("##", .heading2)] {
+            let shortcut = NoteText.shortcut(forLinePrefix: typed + " ")
+            XCTAssertEqual(shortcut?.0, kind, typed)
+            let after = [b("", kind)]
+            let text = NoteText.attributed(after)
+            XCTAssertEqual(text.string, "")
+            XCTAssertEqual(NoteText.blocks(text, emptyBlock: NoteText.emptyBlock(of: after)), after, typed)
+        }
+    }
+
+    func testEmptyBlockIsOnlyKeptForAnEmptyText() {
+        XCTAssertNil(NoteText.emptyBlock(of: []))
+        XCTAssertNil(NoteText.emptyBlock(of: [b("x")]))
+        XCTAssertNil(NoteText.emptyBlock(of: [b("", .paragraph)]), "an empty note reads as no blocks, as before")
+        XCTAssertNil(NoteText.emptyBlock(of: [b("", .heading1), b("", .paragraph)]))
+        XCTAssertEqual(NoteText.emptyBlock(of: [b("", .bullet, indent: 1)]), b("", .bullet, indent: 1))
+        // Once there is text, the text alone says what the blocks are.
+        let typed = NoteText.attributed([b("a", .paragraph)])
+        XCTAssertEqual(NoteText.blocks(typed, emptyBlock: b("", .heading1)), [b("a", .paragraph)])
+        XCTAssertEqual(NoteText.blocks(NSAttributedString(string: ""), emptyBlock: nil), [])
+    }
+
     func testListContinuationNumbersUp() {
         let next = NoteText.continuation(after: b("first", .numbered, indent: 1, grey: true))
         XCTAssertEqual(next, b("", .numbered, indent: 1))

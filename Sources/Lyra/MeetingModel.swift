@@ -179,12 +179,12 @@ final class MeetingModel: ObservableObject {
         sync?.ack(section, id: id, accepted: accepted)
     }
 
-    /// Lyra writing Expanded itself (Claude's additions). False when the section is unsettled (a conflict, or a
-    /// change it hasn't shown yet), in which case nothing is written.
-    func lyraWrite(_ blocks: [NoteBlock], to section: NoteSection) -> Bool {
+    /// Lyra writing Expanded itself (Claude's additions; never My notes). False when the section is unsettled (a
+    /// conflict, or a change it hasn't shown yet), in which case nothing is written.
+    func lyraWriteExpanded(_ blocks: [NoteBlock]) -> Bool {
         guard var sync else { return false }
         do {
-            let result = try sync.write(blocks, to: section, index: notes)
+            let result = try sync.writeExpanded(blocks, index: notes)
             self.sync = sync
             apply(result.effects)
             return result.written

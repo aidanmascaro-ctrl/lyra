@@ -2,14 +2,16 @@ import AppKit
 import LyraCore
 import SwiftUI
 
-/// Lyra's home, Granola-style: New note for the meeting happening now, series suggestions to confirm, each series
-/// with its meetings, and every meeting newest first.
+/// Lyra's home and front door, Granola-style: New note (the live meeting's notes, or a new in-person recording),
+/// series suggestions to confirm, each series with its meetings, and every meeting newest first.
 struct HomeWindow: View {
     @ObservedObject var app: AppModel
     @StateObject private var model: HomeModel
     @Environment(\.openWindow) private var openWindow
     @State private var renaming: String?
     @State private var newName = ""
+    /// New note started a recording: its meeting window opens as soon as the meeting exists.
+    @State private var openWhenStarted = false
 
     init(app: AppModel) {
         self.app = app
@@ -20,14 +22,14 @@ struct HomeWindow: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 Text("Meetings").font(Chrome.titleFont)
-                if let live = app.liveMeeting { newNote(live) }
+                newNote
                 if let notice = model.notice { Banner(text: notice) { Button("OK") { model.notice = nil } } }
                 ForEach(model.suggestions) { suggestionCard($0) }
                 if !model.groups.isEmpty { section("Series") { ForEach(model.groups, id: \.name) { seriesCard($0) } } }
                 if !model.recent.isEmpty {
                     section("Recent") { VStack(spacing: 0) { ForEach(model.recent) { row($0, showSeries: true) } }.padding(.horizontal, -8) }
                 } else if !model.loading {
-                    Text("No meetings yet. Lyra asks to record when a call starts, or start one in person from the menu bar.")
+                    Text("No meetings yet. Lyra asks to record when a call starts, or press New note to start one in person.")
                         .font(.system(size: 14)).foregroundStyle(.tertiary)
                 }
             }
@@ -39,7 +41,19 @@ struct HomeWindow: View {
         .lyraWindow()
         .onAppear { model.refresh() }
         .onChange(of: app.revision) { model.refresh() }
-        .onChange(of: app.liveMeeting) { model.refresh() }
+        .onChange(of: app.liveMeeting) {
+            model.refresh()
+            if openWhenStarted, let live = app.liveMeeting {
+                openWhenStarted = false
+                open(live.folder)
+            }
+        }
+        .onChange(of: app.starting) {
+            // Couldn't start: say why here, where New note was pressed.
+            guard openWhenStarted, !app.starting, app.liveMeeting == nil else { return }
+            openWhenStarted = false
+            model.notice = app.lastError
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in model.refresh() }
         .alert("Rename series", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Series name", text: $newName)
@@ -48,16 +62,35 @@ struct HomeWindow: View {
         } message: { Text("The series folder, its page and links to it are renamed in Obsidian too.") }
     }
 
-    private func newNote(_ live: LiveMeeting) -> some View {
-        Button { open(live.folder) } label: {
+    /// Always there: the live meeting's notes while one is recording, otherwise a new in-person recording, which
+    /// is what every Lyra note is (a meeting with a transcript).
+    private var newNote: some View {
+        Button(action: newNoteTapped) {
             HStack(spacing: 8) {
-                Circle().fill(Chrome.live).frame(width: 8, height: 8)
-                Text("New note — \(live.appName) (live)").font(.system(size: 14, weight: .medium))
+                if let live = app.liveMeeting {
+                    Circle().fill(Chrome.live).frame(width: 8, height: 8)
+                    Text("New note — \(live.appName) (live)")
+                } else if openWhenStarted || app.starting {
+                    ProgressView().controlSize(.small)
+                    Text("Starting…")
+                } else {
+                    Image(systemName: "square.and.pencil")
+                    Text("New note")
+                }
             }
+            .font(.system(size: 14, weight: .medium))
             .padding(.horizontal, 16).frame(height: 36)
             .capsuleSurface()
         }
         .buttonStyle(.plain)
+        .disabled(app.liveMeeting == nil && (openWhenStarted || app.starting))
+        .help(app.liveMeeting == nil ? "Start recording in person and write notes" : "Write notes for the meeting being recorded")
+    }
+
+    private func newNoteTapped() {
+        if let live = app.liveMeeting { return open(live.folder) }
+        openWhenStarted = true
+        app.startInPerson()
     }
 
     private func suggestionCard(_ s: MeetingSummary) -> some View {

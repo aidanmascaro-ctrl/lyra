@@ -10,6 +10,8 @@ final class NoteTextView: NSTextView {
     /// Where the last typing landed (in the new text), so the blocks it touched can turn white.
     private var typedRange: NSRange?
     private var programmatic = false
+    /// The note's only block while the text is empty (an empty heading or list item): see `NoteText.blocks`.
+    private var emptyBlock: NoteBlock?
     private var hoveredBlock: Int?
     private var drag: (from: Int, to: Int)?
     private lazy var selectionMenu = SelectionMenu { [weak self] action in self?.runSelectionAction(action) }
@@ -47,7 +49,7 @@ final class NoteTextView: NSTextView {
         if textContainerInset.width != side { textContainerInset = NSSize(width: side, height: textContainerInset.height) }
     }
 
-    var blocks: [NoteBlock] { NoteText.blocks(textStorage ?? NSTextStorage()) }
+    var blocks: [NoteBlock] { NoteText.blocks(textStorage ?? NSTextStorage(), emptyBlock: emptyBlock) }
 
     /// Shows `blocks` without an undo step, keeping the caret where it was as far as the text allows.
     func load(_ blocks: [NoteBlock]) {
@@ -55,6 +57,7 @@ final class NoteTextView: NSTextView {
         let caret = selectedRange()
         // `NoteEditor` gives each editor its own undo manager, so this clears only this note's history.
         undoManager?.removeAllActions()
+        emptyBlock = NoteText.emptyBlock(of: blocks)
         storage.setAttributedString(NoteStyle.styled(NoteText.attributed(blocks)))
         let location = min(caret.location, storage.length)
         setSelectedRange(NSRange(location: location, length: min(caret.length, storage.length - location)))
@@ -67,7 +70,15 @@ final class NoteTextView: NSTextView {
     override func shouldChangeText(in range: NSRange, replacementString: String?) -> Bool {
         guard super.shouldChangeText(in: range, replacementString: replacementString) else { return false }
         let replaying = undoManager?.isUndoing == true || undoManager?.isRedoing == true
-        if !programmatic, !replaying { typedRange = NSRange(location: range.location, length: (replacementString ?? "").utf16.count) }
+        if !programmatic, !replaying {
+            typedRange = NSRange(location: range.location, length: (replacementString ?? "").utf16.count)
+            // Deleting the last characters of a lone bullet or heading leaves it empty, not plain.
+            if (replacementString ?? "").isEmpty, range.length == (string as NSString).length {
+                let current = blocks
+                emptyBlock = current.count == 1
+                    ? NoteText.emptyBlock(of: [NoteBlock(kind: current[0].kind, indent: current[0].indent, runs: [])]) : nil
+            }
+        }
         return true
     }
 
@@ -237,6 +248,7 @@ final class NoteTextView: NSTextView {
 
     private func replace(with blocks: [NoteBlock], selection: NSRange) {
         guard let storage = textStorage else { return }
+        emptyBlock = NoteText.emptyBlock(of: blocks)
         edit(NSRange(location: 0, length: storage.length), with: NoteStyle.styled(NoteText.attributed(blocks)))
         let location = min(selection.location, storage.length)
         setSelectedRange(NSRange(location: location, length: min(selection.length, storage.length - location)))

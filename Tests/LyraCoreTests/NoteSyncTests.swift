@@ -189,10 +189,11 @@ final class NoteSyncTests: XCTestCase {
     func testLyraWriteIsPushedAndAnswered() throws {
         var sync = try start()
         let grey = blocks("- mine\n  - <span class=\"lyra\">added</span>")
-        let result = try sync.write(grey, to: .expanded, index: index)
+        let result = try sync.writeExpanded(grey, index: index)
         XCTAssertTrue(result.written)
         XCTAssertEqual(plain(result.effects), ["push expanded " + NoteMarkdown.render(grey)])
         XCTAssertEqual(try disk().expanded, NoteMarkdown.render(grey))
+        XCTAssertEqual(try disk().myNotes, "- mine", "Lyra's writes never touch My notes")
         sync.ack(.expanded, id: pushID(result.effects), accepted: false)  // Aidan was typing
         XCTAssertNotNil(sync.conflicts[.expanded])
     }
@@ -200,7 +201,7 @@ final class NoteSyncTests: XCTestCase {
     func testLyraWriteWaitsWhileTheSectionIsUnsettled() throws {
         var sync = try start()
         _ = sync.diskChanged(try writeElsewhere { $0.expanded = "- from Obsidian" })
-        let result = try sync.write(blocks("- claude"), to: .expanded, index: index)
+        let result = try sync.writeExpanded(blocks("- claude"), index: index)
         XCTAssertFalse(result.written)
         XCTAssertEqual(try disk().expanded, "- from Obsidian")
     }

@@ -50,6 +50,21 @@ public enum NoteText {
         return blocks
     }
 
+    /// An editor's blocks. An empty text has no characters to carry a kind, so a note that is one empty heading or
+    /// list item (just made by "- " on the first line) is held by the editor as `emptyBlock`, used only while the
+    /// text is empty.
+    public static func blocks(_ text: NSAttributedString, emptyBlock: NoteBlock?) -> [NoteBlock] {
+        text.length == 0 ? emptyBlock.map { [$0] } ?? [] : blocks(text)
+    }
+
+    /// The block an editor showing `blocks` must hold itself: their only block, when it has no characters and is
+    /// more than a plain empty line (an empty note is no blocks).
+    public static func emptyBlock(of blocks: [NoteBlock]) -> NoteBlock? {
+        guard blocks.count == 1, let only = blocks.first, only.runs.isEmpty,
+              only != NoteBlock(kind: .paragraph, runs: []) else { return nil }
+        return only
+    }
+
     /// The block a typed line prefix turns its line into, and how many characters the shortcut used.
     public static func shortcut(forLinePrefix prefix: String) -> (BlockKind, consumed: Int)? {
         switch prefix {

@@ -89,12 +89,12 @@ public struct NoteSync: Sendable {
         }
     }
 
-    /// Lyra writing a section itself (Claude's additions): saved only while the section is settled, then pushed to
-    /// its editor like any outside change, so typing in flight still wins and is asked about.
-    public mutating func write(_ blocks: [NoteBlock], to section: NoteSection,
-                               index: NoteIndex) throws -> (effects: [Effect], written: Bool) {
-        guard conflicts[section] == nil, pending[section] == nil else { return ([], false) }
-        switch try NoteEdits.save(blocks, to: section, over: loaded, index: index) {
+    /// Lyra writing Expanded (Claude's additions): saved only while the section is settled, then pushed to its
+    /// editor like any outside change, so typing in flight still wins and is asked about. Lyra never writes My
+    /// notes, so there is no way to name it here.
+    public mutating func writeExpanded(_ blocks: [NoteBlock], index: NoteIndex) throws -> (effects: [Effect], written: Bool) {
+        guard conflicts[.expanded] == nil, pending[.expanded] == nil else { return ([], false) }
+        switch try NoteEdits.save(blocks, to: .expanded, over: loaded, index: index) {
         case .saved(let note): return (accept(note), true)
         case .conflict(let disk): return (accept(disk), false)
         }

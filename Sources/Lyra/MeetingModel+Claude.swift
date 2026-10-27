@@ -107,7 +107,7 @@ extension MeetingModel {
     /// Saves Claude's version of Expanded, pushes it to the editor, and records its new grey as Lyra's.
     private func addClaude(_ blocks: [NoteBlock]) {
         let before = Set(expandedBlocks.map { NoteMarkdown.render([$0]) })
-        guard lyraWrite(blocks, to: .expanded) else {
+        guard lyraWriteExpanded(blocks) else {
             claudeError = "Expanded was being changed (in Obsidian or by your typing) while Claude worked, so Lyra didn't add its answer. Try again."
             return
         }
