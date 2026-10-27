@@ -11,6 +11,12 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN/Lyra" "$APP/Contents/MacOS/Lyra"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 
+# The app icon is drawn at build time (no image files in the repo).
+ICON_TMP="$(mktemp -d)"
+trap 'rm -rf "$ICON_TMP"' EXIT
+swift scripts/make-icon.swift "$ICON_TMP/AppIcon.iconset"
+iconutil -c icns "$ICON_TMP/AppIcon.iconset" -o "$APP/Contents/Resources/AppIcon.icns"
+
 ID="${LYRA_SIGN_ID:-Lyra Local}"
 # Captured first: `grep -q` exits on the first match, and under pipefail the SIGPIPE it gives
 # `security` would fail the pipeline and force a false ad-hoc fallback.

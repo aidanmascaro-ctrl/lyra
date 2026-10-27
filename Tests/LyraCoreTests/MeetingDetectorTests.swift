@@ -7,7 +7,11 @@ final class MeetingDetectorTests: XCTestCase {
     let t0 = Date(timeIntervalSince1970: 1_000_000)
 
     func detector(ignored: Set<String> = []) -> MeetingDetector {
-        MeetingDetector(ownPID: 1, ignoredBundleIDs: ignored, endGrace: 10)
+        detector(ignore: { ignored.contains($0.bundleID) })
+    }
+
+    func detector(ignore: @escaping (MicUser) -> Bool) -> MeetingDetector {
+        MeetingDetector(ownPID: 1, ignore: ignore, endGrace: 10)
     }
 
     func testStartsOnceForNewMicUser() {
@@ -94,6 +98,12 @@ final class MeetingDetectorTests: XCTestCase {
     func testIgnoredBundle() {
         let memos = MicUser(pid: 300, bundleID: "com.apple.VoiceMemos", appName: "Voice Memos")
         XCTAssertEqual(detector(ignored: ["com.apple.VoiceMemos"]).update(users: [memos], now: t0), [])
+    }
+
+    func testDetectorSkipsIgnoredApp() {
+        let d = detector(ignore: { $0 == self.zoom })
+        XCTAssertEqual(d.update(users: [zoom], now: t0), [])
+        XCTAssertEqual(d.update(users: [zoom, chrome], now: t0.addingTimeInterval(1)), [.meetingStarted(chrome)])
     }
 
     /// Ignoring a long-running mic user must not block detection of every other app.

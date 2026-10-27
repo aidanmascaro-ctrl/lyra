@@ -3,33 +3,15 @@ import Foundation
 public enum NoteRenderer {
     public static func render(meeting: Meeting, lines: [TranscriptLine], recordingsFolder: URL,
                               timeZone: TimeZone = .current) -> String {
-        let iso = ISO8601DateFormatter()
-        iso.timeZone = timeZone
-        iso.formatOptions = [.withInternetDateTime, .withColonSeparatorInTimeZone]
-        let minutes = meeting.endedAt.map { max(0, Int((($0.timeIntervalSince(meeting.startedAt)) / 60).rounded())) } ?? 0
-        let warnings = meeting.warnings.map { "> [!warning] \($0)\n" }.joined(separator: "\n")
-        let transcript = transcriptBody(lines: lines)
-        return """
-        ---
-        lyra_id: \(meeting.id.uuidString)
-        date: \(iso.string(from: meeting.startedAt))
-        app: "\(meeting.appName.replacingOccurrences(of: "\"", with: "\\\""))"
-        duration_min: \(minutes)
-        recordings: "\(recordingsFolder.absoluteString)"
-        tags: [meeting]
-        ---
-        # \(meeting.title)
+        let front = NoteFrontmatter(lyraID: meeting.id, title: meeting.title, date: meeting.startedAt, app: meeting.appName,
+                                    durationMin: durationMinutes(of: meeting), recordings: recordingsFolder)
+        return NoteDocument(front: front, warnings: meeting.warnings, myNotes: "", expanded: "",
+                            transcript: transcriptBody(lines: lines)).render(timeZone: timeZone)
+    }
 
-        \(warnings.isEmpty ? "" : warnings + "\n")## Notes
-        <!-- lyra:notes:start -->
-        <!-- lyra:notes:end -->
-
-        ## Transcript
-        <!-- lyra:transcript:start -->
-        \(transcript)
-        <!-- lyra:transcript:end -->
-
-        """
+    /// Whole minutes from start to end; 0 while the meeting is still being recorded.
+    public static func durationMinutes(of meeting: Meeting) -> Int {
+        meeting.endedAt.map { max(0, Int((($0.timeIntervalSince(meeting.startedAt)) / 60).rounded())) } ?? 0
     }
 
     /// What goes between the lyra transcript markers. Rename re-renders the section with this, so both paths share one format.

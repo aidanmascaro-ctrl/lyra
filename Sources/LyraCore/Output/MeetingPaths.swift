@@ -53,12 +53,13 @@ public struct MeetingPaths: @unchecked Sendable {
         }
     }
 
-    /// Replace forbidden and control scalars with "-", collapse spaces, trim, then cap at `limit`
-    /// Characters and `byteLimit` UTF-8 bytes (cut on a Character boundary).
+    /// Replace forbidden and control scalars with "-", drop the ones that break Obsidian links (`# [ ] ^ |`),
+    /// collapse spaces, trim, then cap at `limit` Characters and `byteLimit` UTF-8 bytes (cut on a Character boundary).
     static func sanitise(_ title: String, limit: Int = 120, byteLimit: Int = 200) -> String {
-        let bad = Set("/:\\?*\"<>|".unicodeScalars)
+        let bad = Set("/:\\?*\"<>".unicodeScalars)
+        let breaksLinks = Set("#[]^|".unicodeScalars)
         var scalars = String.UnicodeScalarView()
-        for u in title.unicodeScalars {
+        for u in title.unicodeScalars where !breaksLinks.contains(u) {
             scalars.append(bad.contains(u) || u.properties.generalCategory == .control ? "-" : u)
         }
         var s = String(scalars)

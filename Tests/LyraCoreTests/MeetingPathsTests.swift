@@ -40,6 +40,12 @@ final class MeetingPathsTests: XCTestCase {
         XCTAssertTrue(emoji.hasSuffix("🚀"))
     }
 
+    /// `# [ ] ^ |` break Obsidian links to the note, so they are left out of names.
+    func testLinkBreakingCharactersAreStripped() {
+        XCTAssertEqual(paths.folderName(title: "Workshop #2 | [Draft] ^v1", startedAt: date, timeZone: perth),
+                       "2026-11-01 1700 — Workshop 2 Draft v1")
+    }
+
     func testEmptyTitleFallsBackToAppName() throws {
         let n = try paths.reserve(for: meeting("  "), timeZone: perth).folder.lastPathComponent
         XCTAssertTrue(n.hasSuffix("— Zoom"))

@@ -8,12 +8,14 @@ final class AllowPanel {
     private var panel: NSPanel?
     private var timeout: Task<Void, Never>?
 
-    func show(app: String, title: String, onAllow: @escaping () -> Void, onIgnore: @escaping () -> Void) {
+    func show(app: String, title: String, onAllow: @escaping () -> Void, onIgnore: @escaping () -> Void,
+              onAlwaysIgnore: @escaping () -> Void) {
         close()
         let view = AllowView(app: app, title: title,
                              allow: { [weak self] in self?.close(); onAllow() },
-                             ignore: { [weak self] in self?.close(); onIgnore() })
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: 96),
+                             ignore: { [weak self] in self?.close(); onIgnore() },
+                             alwaysIgnore: { [weak self] in self?.close(); onAlwaysIgnore() })
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: 128),
                             styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
         panel.contentView = NSHostingView(rootView: view)
         panel.level = .statusBar
@@ -48,6 +50,7 @@ private struct AllowView: View {
     let title: String
     let allow: () -> Void
     let ignore: () -> Void
+    let alwaysIgnore: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -58,6 +61,7 @@ private struct AllowView: View {
                 Button("Ignore", action: ignore)
                 Button("Allow", action: allow).keyboardShortcut(.defaultAction)
             }
+            Button("Always ignore \(app)", action: alwaysIgnore).lineLimit(1)
         }
         .padding(12)
         .frame(width: 320)

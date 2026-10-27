@@ -192,6 +192,59 @@ final class MeetingProcessorTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appendingPathComponent("mic.caf").path))
     }
 
+    // MARK: Note from the start of recording
+
+    private var notesRoot: URL { dir.appendingPathComponent("notes") }
+
+    func testNoteSkeletonExistsWhenRecordingStarts() throws {
+        let recording = Meeting(title: "Call", appName: "zoom.us", startedAt: meeting.startedAt)
+        try MeetingProcessor.createSkeletonNote(for: recording, recordingsFolder: folder, at: note)
+        let doc = try NoteDocument.parse(String(contentsOf: note, encoding: .utf8))
+        XCTAssertEqual(doc.front.lyraID, recording.id)
+        XCTAssertEqual(doc.front.title, "Call")
+        XCTAssertEqual(doc.front.recordings, folder)
+        XCTAssertEqual([doc.myNotes, doc.expanded, doc.transcript], ["", "", ""])
+        // Exclusive: never replaces a file already there.
+        XCTAssertThrowsError(try MeetingProcessor.createSkeletonNote(for: recording, recordingsFolder: folder, at: note))
+        XCTAssertEqual(try NoteDocument.parse(String(contentsOf: note, encoding: .utf8)).front.lyraID, recording.id)
+    }
+
+    func testProcessFillsTranscriptOfMovedSkeleton() async throws {
+        try MeetingProcessor.createSkeletonNote(for: meeting, recordingsFolder: folder, at: note)
+        let moved = notesRoot.appendingPathComponent("Northwind/Moved by Aidan.md")
+        try FileManager.default.createDirectory(at: moved.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: note, to: moved)
+
+        let url = try await processor().process(meeting: meeting, tracks: [track(.meeting), track(.mic)], folder: folder, noteURL: note)
+        XCTAssertEqual(url.standardizedFileURL, moved.standardizedFileURL)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: note.path))  // no duplicate at the reserved path
+        let text = try String(contentsOf: moved, encoding: .utf8)
+        let doc = try NoteDocument.parse(text)
+        XCTAssertTrue(doc.transcript.contains("hello from zoom"))
+        XCTAssertEqual(doc.front.durationMin, 10)
+        let saved = try Meeting.load(from: folder)
+        XCTAssertEqual(saved.notePath.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath() }, moved.resolvingSymlinksInPath())
+        XCTAssertEqual(saved.transcriptSectionHash, NoteSections.transcriptBody(of: text).map(NoteSections.hash))
+    }
+
+    func testProcessKeepsTypedMyNotes() async throws {
+        let quiet = Meeting(title: "Call", appName: "Google Chrome", startedAt: meeting.startedAt, endedAt: meeting.endedAt)
+        try MeetingProcessor.createSkeletonNote(for: quiet, recordingsFolder: folder, at: note)
+        let index = NoteIndex(notesRoot: notesRoot, vaultRoot: dir)
+        let loaded = try index.load(quiet.id, hint: note)
+        var typed = loaded.document
+        typed.myNotes = "- pricing up **20%**\n  - <u>ask</u> about reels"
+        typed.expanded = "kept as is"
+        _ = try index.save(typed, over: loaded)
+
+        _ = try await processor().process(meeting: quiet, tracks: [track(.meeting, peak: 0), track(.mic)], folder: folder, noteURL: note)
+        let doc = try NoteDocument.parse(String(contentsOf: note, encoding: .utf8))
+        XCTAssertEqual(doc.myNotes, typed.myNotes)
+        XCTAssertEqual(doc.expanded, "kept as is")
+        XCTAssertTrue(doc.transcript.contains("hi back"))
+        XCTAssertEqual(doc.warnings, [MeetingProcessor.noSoundWarning(appName: "Google Chrome")])
+    }
+
     func testPendingFoldersFindsUnprocessedCAFs() throws {
         let root = dir.appendingPathComponent("rec")
         let done = root.appendingPathComponent("done")

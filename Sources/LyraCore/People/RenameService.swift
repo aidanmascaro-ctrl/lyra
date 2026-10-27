@@ -83,6 +83,27 @@ public struct RenameService: Sendable {
         return outcome
     }
 
+    /// As `rename(…note:)`, with the note found by its `lyra_id` (hint: `meeting.notePath`), wherever Aidan moved it.
+    @discardableResult
+    public func rename(speakerLabel: String, to name: String, inMeetingFolder folder: URL, index: NoteIndex,
+                       overwriteEditedNote: Bool = false) throws -> RenameOutcome {
+        try rename(speakerLabel: speakerLabel, to: name, inMeetingFolder: folder,
+                   note: Self.noteURL(inMeetingFolder: folder, index: index), overwriteEditedNote: overwriteEditedNote)
+    }
+
+    public func rewriteNote(inMeetingFolder folder: URL, index: NoteIndex) throws {
+        try rewriteNote(inMeetingFolder: folder, note: Self.noteURL(inMeetingFolder: folder, index: index))
+    }
+
+    /// Where the meeting's note is now. When it can't be found, the last known path, so the rename still updates
+    /// transcript.json and then reports `noteMissing`.
+    public static func noteURL(inMeetingFolder folder: URL, index: NoteIndex) throws -> URL {
+        let meeting = try Meeting.load(from: folder)
+        let hint = meeting.notePath.map { URL(fileURLWithPath: $0) }
+        return index.find(meeting.id, hint: hint)
+            ?? hint ?? index.notesRoot.appendingPathComponent(folder.lastPathComponent + ".md")
+    }
+
     /// The confirm action for `.needsConfirmation`: re-renders the note's transcript section from the current
     /// transcript.json, overwriting Aidan's edits inside it (text outside the section is kept), and records the new hash.
     public func rewriteNote(inMeetingFolder folder: URL, note: URL) throws {
@@ -109,20 +130,27 @@ public struct RenameService: Sendable {
     private func writeNote(lines: [TranscriptLine], previous: [TranscriptLine], folder: URL, note: URL,
                            overwrite: Bool) throws -> RenameOutcome {
         var meeting = try Meeting.load(from: folder)
-        let text: String
-        do { text = try String(contentsOf: note, encoding: .utf8) }
-        catch let e as CocoaError where e.code == .fileReadNoSuchFile || e.code == .fileNoSuchFile { throw RenameError.noteMissing(note) }
-        guard let current = NoteSections.transcriptBody(of: text) else { throw NoteSectionsError.missingTranscriptMarkers }
-        // Old meetings have no hash: unedited only if the section still renders identically from the old transcript.
-        let lyraWrote = meeting.transcriptSectionHash ?? NoteSections.hash(NoteRenderer.transcriptBody(lines: previous))
         let body = NoteRenderer.transcriptBody(lines: lines)
-        // Already matching (e.g. Aidan made the same change himself): no write, just record the hash.
-        if current != body {
+        // Read, compare and write under the note write lock, so Lyra's other saves and moves can't interleave.
+        let written: RenameOutcome = try NoteIndex.withWriteLock {
+            let text: String
+            do { text = try String(contentsOf: note, encoding: .utf8) }
+            catch let e as CocoaError where e.code == .fileReadNoSuchFile || e.code == .fileNoSuchFile { throw RenameError.noteMissing(note) }
+            guard let current = NoteSections.transcriptBody(of: text) else { throw NoteSectionsError.missingTranscriptMarkers }
+            // Old meetings have no hash: unedited only if the section still renders identically from the old transcript.
+            let lyraWrote = meeting.transcriptSectionHash ?? NoteSections.hash(NoteRenderer.transcriptBody(lines: previous))
+            // Already matching (e.g. Aidan made the same change himself): no write, just record the hash.
+            guard current != body else { return .done }
             guard overwrite || NoteSections.hash(current) == lyraWrote else { return .needsConfirmation }
-            try NoteSections.replaceTranscript(in: text, with: body).write(to: note, atomically: true, encoding: .utf8)
+            do {
+                try NoteIndex.writeAtomically(Data(NoteSections.replaceTranscript(in: text, with: body).utf8), to: note)
+            } catch let e as CocoaError where e.code == .fileNoSuchFile { throw RenameError.noteMissing(note) }
+            return .done
         }
-        if meeting.transcriptSectionHash != NoteSections.hash(body) {
+        guard written == .done else { return written }
+        if meeting.transcriptSectionHash != NoteSections.hash(body) || meeting.notePath != note.path {
             meeting.transcriptSectionHash = NoteSections.hash(body)
+            meeting.notePath = note.path
             try meeting.save(in: folder)
         }
         return .done

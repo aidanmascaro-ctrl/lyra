@@ -8,7 +8,7 @@ public enum DetectorEvent: Equatable {
 /// Turns successive mic-usage snapshots into start/end events. Not thread-safe; drive from one actor/queue.
 public final class MeetingDetector {
     private let ownPID: pid_t
-    private let ignoredBundleIDs: Set<String>
+    private let ignore: (MicUser) -> Bool
     private let endGrace: TimeInterval
     private var active: MicUser?
     /// Users seen recently (value = last-seen time), kept until absent for `endGrace`; only users not in it count as newly started.
@@ -18,9 +18,9 @@ public final class MeetingDetector {
     /// Set by the owner while a recording is in progress; suppresses new starts.
     public var isRecording = false
 
-    public init(ownPID: pid_t, ignoredBundleIDs: Set<String>, endGrace: TimeInterval = 10) {
+    public init(ownPID: pid_t, ignore: @escaping (MicUser) -> Bool, endGrace: TimeInterval = 10) {
         self.ownPID = ownPID
-        self.ignoredBundleIDs = ignoredBundleIDs
+        self.ignore = ignore
         self.endGrace = endGrace
     }
 
@@ -29,7 +29,7 @@ public final class MeetingDetector {
     public func dismiss() { active = nil }
 
     public func update(users: [MicUser], now: Date) -> [DetectorEvent] {
-        let eligible = users.filter { $0.pid != ownPID && !ignoredBundleIDs.contains($0.bundleID) }
+        let eligible = users.filter { $0.pid != ownPID && !ignore($0) }
 
         known = known.filter { now.timeIntervalSince($0.value) < endGrace }
         let fresh = eligible.filter { known[$0] == nil }

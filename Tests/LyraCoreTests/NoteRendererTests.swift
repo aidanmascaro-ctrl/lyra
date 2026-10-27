@@ -13,8 +13,9 @@ final class NoteRendererTests: XCTestCase {
     func testRenderHasMarkersAndTimestamps() {
         let out = NoteRenderer.render(meeting: meeting(), lines: lines, recordingsFolder: folder,
                                       timeZone: TimeZone(secondsFromGMT: 8 * 3600)!)
-        for m in ["<!-- lyra:notes:start -->", "<!-- lyra:notes:end -->",
-                  "<!-- lyra:transcript:start -->", "<!-- lyra:transcript:end -->"] {
+        for m in ["## My notes", "<!-- lyra:mynotes:start -->", "<!-- lyra:mynotes:end -->",
+                  "## Expanded", "<!-- lyra:expanded:start -->", "<!-- lyra:expanded:end -->",
+                  "## Transcript", "<!-- lyra:transcript:start -->", "<!-- lyra:transcript:end -->"] {
             XCTAssertTrue(out.contains(m), m)
         }
         XCTAssertTrue(out.contains("**Speaker 1** [00:00:04] hi all"))
@@ -36,7 +37,7 @@ final class NoteRendererTests: XCTestCase {
 
     func testTwoWarningsSeparatedByBlankLine() {
         let out = NoteRenderer.render(meeting: meeting(warnings: ["A", "B"]), lines: lines, recordingsFolder: folder)
-        XCTAssertTrue(out.contains("> [!warning] A\n\n> [!warning] B\n"))
+        XCTAssertTrue(out.contains("> [!warning] A\n\n> [!warning] B\n\n"))
     }
 
     func testRenderKnownVoiceBadge() {

@@ -11,14 +11,35 @@ final class AppModel: ObservableObject {
     @Published private(set) var recordingSince: Date?
     @Published private(set) var state = RecordingState()
     @Published private(set) var processingCount = 0
-    /// Newest processed meeting folder, for "Open last meeting". Found at launch and again as each meeting finishes.
-    @Published private(set) var lastMeeting: URL?
-    /// The meeting the meeting window shows; set just before it opens.
-    @Published var shownMeeting: URL?
+    /// Goes up whenever processing or the after-meeting step finishes a meeting, so open windows re-read it.
+    @Published private(set) var revision = 0
+    /// The meeting being recorded now, for New note.
+    @Published private(set) var liveMeeting: LiveMeeting?
+    /// What Lyra's one window shows: home, or a meeting.
+    @Published var route: Route = .home
     @Published private(set) var lastError: String?
     @Published private(set) var now = Date()
+    /// Apps the user chose to never be prompted about; mirrors the saved list so the menu refreshes.
+    @Published private(set) var ignoredList: [IgnoredApp] = []
+    /// Claude's Expanded section as it streams in, by meeting id; gone once it is saved in the note.
+    @Published private(set) var liveExpansion: [UUID: [NoteBlock]] = [:]
+    /// The rough live transcript of the meeting being recorded; thrown away when it stops.
+    @Published private(set) var liveLines: [LiveLine] = []
+    /// Set when live transcription gives up mid-meeting; the recording carries on regardless.
+    @Published private(set) var liveError: String?
 
-    let paths = MeetingPaths(recordingsRoot: MeetingPaths.defaultRecordingsRoot, notesDir: MeetingPaths.defaultNotesDir)
+    let paths = MeetingPaths(recordingsRoot: AppModel.recordingsRoot, notesDir: AppModel.notesRoot)
+    /// Notes are found by `lyra_id` anywhere under Meetings/; links are rewritten across the whole vault.
+    let notes = NoteIndex(notesRoot: AppModel.notesRoot, vaultRoot: AppModel.notesRoot.deletingLastPathComponent())
+    /// For Claude's in-window actions (Expand this, Ask, add an idea).
+    let expander = Expander(claude: ClaudeCLI())
+
+    /// `LYRA_RECORDINGS_DIR` / `LYRA_NOTES_DIR` point Lyra at scratch copies, for trying changes without
+    /// touching the real recordings or vault.
+    private static let recordingsRoot = ProcessInfo.processInfo.environment["LYRA_RECORDINGS_DIR"]
+        .map { URL(fileURLWithPath: $0, isDirectory: true) } ?? MeetingPaths.defaultRecordingsRoot
+    private static let notesRoot = ProcessInfo.processInfo.environment["LYRA_NOTES_DIR"]
+        .map { URL(fileURLWithPath: $0, isDirectory: true) } ?? MeetingPaths.defaultNotesDir
     /// The one people store: processing, enrolment and renames all share it, so a new voice is used by the next meeting.
     /// An unreadable store loads as nobody (naming finds no one) and refuses writes with a plain-English error.
     let people = PeopleStore(fileURL: PeopleStore.defaultURL)
@@ -30,17 +51,39 @@ final class AppModel: ObservableObject {
             convert: M4AConverter.convert,
             people: { people.all() })
     }()
+    private lazy var afterMeeting: AfterMeeting = { [notes] in
+        let claude = ClaudeCLI()
+        return AfterMeeting(index: notes, claude: claude, expander: Expander(claude: claude), vaultRoot: notes.vaultRoot)
+    }()
+    /// The tail of the background queue: processing and after-meeting work run one at a time, in order.
+    private var pipeline: Task<Void, Never>?
+    /// Meeting folders with processing, expansion or re-expansion queued or running (count per folder path).
+    private var busyFolders: [String: Int] = [:]
     private let micUsage = CoreAudioMicUsage()
-    private let detector = MeetingDetector(ownPID: ProcessInfo.processInfo.processIdentifier,
-                                           ignoredBundleIDs: [Bundle.main.bundleIdentifier ?? "au.aidos.lyra"])
+    private let ignoredApps = IgnoredApps(defaults: .standard)
+    private let detector: MeetingDetector
     private let panel = AllowPanel()
     private var session: MeetingSession?
     private var prompted: MicUser?
     private var poller: Task<Void, Never>?
 
+    init() {
+        let ignoredApps = ignoredApps
+        let ownBundleID = Bundle.main.bundleIdentifier ?? "au.aidos.lyra"
+        detector = MeetingDetector(ownPID: ProcessInfo.processInfo.processIdentifier,
+                                   ignore: { $0.bundleID == ownBundleID || ignoredApps.contains($0) })
+        ignoredList = ignoredApps.all()
+    }
+
+    func stopIgnoring(_ app: IgnoredApp) {
+        ignoredApps.remove(app)
+        ignoredList = ignoredApps.all()
+    }
+
     func launch() {
-        lastMeeting = MeetingOverview.lastFolder(in: paths.recordingsRoot)
         recoverUnprocessed()
+        // Processed, but Lyra quit before titles and expansion were done: finish them (after any recovery above).
+        for folder in AfterMeeting.pendingFolders(in: paths.recordingsRoot) { runAfterMeeting(folder: folder) }
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -79,7 +122,14 @@ final class AppModel: ObservableObject {
                                Self.askForWindowTitlesOnce()
                            },
                            // Also the 60 s timeout. Frees the detector so other apps can still prompt.
-                           onIgnore: { [weak self] in self?.prompted = nil; self?.detector.dismiss() })
+                           onIgnore: { [weak self] in self?.prompted = nil; self?.detector.dismiss() },
+                           onAlwaysIgnore: { [weak self] in
+                               guard let self else { return }
+                               ignoredApps.add(IgnoredApp(user: user))
+                               ignoredList = ignoredApps.all()
+                               prompted = nil
+                               detector.dismiss()
+                           })
             case .meetingEnded(let user):
                 if prompted == user { panel.close(); prompted = nil }
                 if state.meetingEnded(user) { stopSession() }
@@ -117,19 +167,25 @@ final class AppModel: ObservableObject {
         guard state.begin(target: target) else { return }
         detector.isRecording = true
         lastError = nil
+        liveLines = []
+        liveError = nil
         let meeting = Meeting(title: title, appName: target?.appName ?? "In person",
                               bundleID: target.map(\.bundleID), startedAt: Date())
         Task {
             do {
-                let started = try await MeetingSession(meeting: meeting, target: target, paths: paths)
+                let started = try await MeetingSession(meeting: meeting, target: target, paths: paths) { [weak self = self] lines, error in
+                    self?.liveLines = lines
+                    self?.liveError = error
+                }
                 session = started
                 recordingSince = meeting.startedAt
+                liveMeeting = LiveMeeting(folder: started.folder, appName: meeting.appName)
                 // The call ended (or Stop was clicked) while we were still starting.
                 if state.started() { stopSession() }
             } catch {
                 state.failed()
                 detector.isRecording = false
-                lastError = "Couldn't start recording: \(error)"
+                lastError = ErrorBrief.sentence("Couldn't start recording", error)
             }
         }
     }
@@ -144,6 +200,9 @@ final class AppModel: ObservableObject {
         guard let session else { return }
         self.session = nil
         recordingSince = nil
+        liveMeeting = nil
+        liveLines = []  // the live draft is thrown away; the full transcript comes from processing
+        liveError = nil
         detector.isRecording = false
         Task {
             let tracks = await session.stop()
@@ -163,29 +222,92 @@ final class AppModel: ObservableObject {
 
     private typealias Job = (meeting: Meeting, tracks: [TrackResult], folder: URL, note: URL)
 
-    /// Processes jobs one at a time, off the main actor; each result hops back here.
+    /// Processes jobs one at a time, off the main actor, then files and expands each one; results hop back here.
     private func run(_ jobs: [Job]) {
         guard !jobs.isEmpty else { return }
         processingCount += jobs.count
         let processor = processor
-        Task.detached {
-            for job in jobs {
+        for job in jobs {
+            enqueue(folder: job.folder) {
                 let result = await Result { try await processor.process(meeting: job.meeting, tracks: job.tracks, folder: job.folder, noteURL: job.note) }
                 await self.finished(result, folder: job.folder)
+                if case .success = result { await self.expand(folder: job.folder, id: job.meeting.id) }
             }
         }
     }
 
+    /// Runs the after-meeting step again for an already processed meeting (the meeting window's Retry).
+    func runAfterMeeting(folder: URL) {
+        enqueue(folder: folder) {
+            do { await self.expand(folder: folder, id: try Meeting.load(from: folder).id) } catch {
+                await self.report("Couldn't read \(folder.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Re-expand from the meeting window: streams into `liveExpansion` like the first expansion. Throws in plain
+    /// English; the note is left as it was on failure.
+    func reExpand(folder: URL, id: UUID) async throws {
+        let after = afterMeeting
+        busyFolders[folder.standardizedFileURL.path, default: 0] += 1
+        defer { showExpansion(nil, for: id); endBusy(folder); revision += 1 }
+        try await after.reExpand(folder: folder) { blocks in await self.showExpansion(blocks, for: id) }
+    }
+
+    private func enqueue(folder: URL, _ work: @escaping @Sendable () async -> Void) {
+        busyFolders[folder.standardizedFileURL.path, default: 0] += 1
+        let previous = pipeline
+        pipeline = Task.detached {
+            await previous?.value
+            await work()
+            await self.release(folder)
+        }
+    }
+
+    private func release(_ folder: URL) { endBusy(folder) }
+
+    private func endBusy(_ folder: URL) {
+        let key = folder.standardizedFileURL.path
+        busyFolders[key] = (busyFolders[key] ?? 1) > 1 ? (busyFolders[key] ?? 1) - 1 : nil
+    }
+
+    /// True while this meeting is being recorded, processed, queued or expanded: it can't be moved to the Trash then.
+    func isBusy(folder: URL?, id: UUID?) -> Bool {
+        if let id, liveExpansion[id] != nil { return true }
+        guard let folder else { return false }
+        let key = folder.standardizedFileURL.path
+        return busyFolders[key] != nil || session?.folder.standardizedFileURL.path == key
+            || liveMeeting?.folder.standardizedFileURL.path == key
+    }
+
+    /// Title, tags, rename and Claude's expansion. A failure is saved in meeting.json for the meeting window.
+    private nonisolated func expand(folder: URL, id: UUID) async {
+        let after = await afterMeeting
+        do {
+            try await after.run(folder: folder) { blocks in await self.showExpansion(blocks, for: id) }
+        } catch {
+            await report(ErrorBrief.sentence("Couldn't finish the notes for \(folder.lastPathComponent)", error))
+        }
+        await showExpansion(nil, for: id)
+        await bumpRevision()
+    }
+
+    private func bumpRevision() { revision += 1 }
+
+    private func showExpansion(_ blocks: [NoteBlock]?, for id: UUID) {
+        liveExpansion[id] = blocks
+    }
+
     private func finished(_ result: Result<URL, Error>, folder: URL) {
         processingCount -= 1
-        switch result {
-        case .success: lastMeeting = MeetingOverview.lastFolder(in: paths.recordingsRoot)  // a recovered meeting may be older
-        case .failure(let error): report("Processing \(folder.lastPathComponent) failed (will retry next launch): \(error.localizedDescription)")
+        revision += 1
+        if case .failure(let error) = result {
+            report("Processing \(folder.lastPathComponent) failed (will retry next launch): \(error.localizedDescription)")
         }
     }
 
     private func report(_ message: String) {
-        lastError = [lastError, message].compactMap { $0 }.joined(separator: "\n")
+        lastError = message  // the latest problem only
     }
 
     /// Any folder with `.caf` files but no `transcript.json` was cut short by a crash or quit.
@@ -208,4 +330,14 @@ private extension Result where Failure == Error {
     init(catching body: () async throws -> Success) async {
         do { self = .success(try await body()) } catch { self = .failure(error) }
     }
+}
+
+enum Route: Equatable {
+    case home
+    case meeting(URL)
+}
+
+struct LiveMeeting: Equatable {
+    let folder: URL
+    let appName: String
 }

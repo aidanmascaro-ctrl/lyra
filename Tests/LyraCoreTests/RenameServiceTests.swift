@@ -119,7 +119,7 @@ final class RenameServiceTests: XCTestCase {
         try store.learn(name: "Marco", sample: [0, 1, 0])
         let (folder, note) = try makeMeeting()
         try editNote(note, "] two", "] two (edited)")
-        try editNote(note, "<!-- lyra:notes:start -->\n", "<!-- lyra:notes:start -->\nmy notes\n")
+        try editNote(note, "<!-- lyra:mynotes:start -->\n", "<!-- lyra:mynotes:start -->\nmy notes\n")
         let service = RenameService(people: store)
         XCTAssertEqual(try service.rename(speakerLabel: "Speaker 2", to: "marco", inMeetingFolder: folder, note: note), .needsConfirmation)
         // Aidan confirms: rewriteNote is the confirm action; it doesn't learn again.
@@ -128,7 +128,7 @@ final class RenameServiceTests: XCTestCase {
         let out = try lines(folder)
         XCTAssertEqual(out.map(\.speakerLabel), ["Speaker 1", "Marco", "Speaker 1", "Marco"])
         XCTAssertEqual(NoteSections.transcriptBody(of: text), NoteRenderer.transcriptBody(lines: out))
-        XCTAssertTrue(text.contains("<!-- lyra:notes:start -->\nmy notes\n"))
+        XCTAssertTrue(text.contains("<!-- lyra:mynotes:start -->\nmy notes\n"))
         XCTAssertEqual(store.person(named: "Marco")?.samples.count, 2)
         XCTAssertEqual(try Meeting.load(from: folder).transcriptSectionHash, NoteSections.hash(NoteRenderer.transcriptBody(lines: out)))
         // Now the note matches, a later rename goes straight through.
@@ -255,5 +255,18 @@ final class RenameServiceTests: XCTestCase {
             XCTAssertEqual($0.localizedDescription, "The renamed transcript was saved, but the Obsidian note wasn't found at its original place, so it wasn't updated.")
         }
         XCTAssertEqual(try lines(folder).map(\.speakerLabel), ["Speaker 1", "Marco", "Speaker 1", "Marco"])
+    }
+
+    /// Aidan moved the note into a series folder in Obsidian: the rename finds it by lyra_id and updates it there.
+    func testRenameFindsMovedNoteThroughIndex() throws {
+        let (folder, note) = try makeMeeting()
+        let moved = dir.appendingPathComponent("Series/Moved.md")
+        try FileManager.default.createDirectory(at: moved.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: note, to: moved)
+        let index = NoteIndex(notesRoot: dir, vaultRoot: dir)
+        XCTAssertEqual(try RenameService(people: store).rename(speakerLabel: "Speaker 2", to: "Marco", inMeetingFolder: folder, index: index), .done)
+        XCTAssertTrue(try String(contentsOf: moved, encoding: .utf8).contains("**Marco**"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: note.path))
+        XCTAssertEqual(try Meeting.load(from: folder).notePath.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath() }, moved.resolvingSymlinksInPath())
     }
 }
