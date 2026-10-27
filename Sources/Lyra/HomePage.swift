@@ -11,7 +11,6 @@ struct HomePage: View {
     @State private var newName = ""
     @State private var trashing: MeetingSummary?
     /// New note started a recording: its meeting opens as soon as it exists.
-    @State private var openWhenStarted = false
 
     init(app: AppModel) {
         self.app = app
@@ -30,7 +29,7 @@ struct HomePage: View {
                 if !model.recent.isEmpty {
                     section("Recent") { VStack(spacing: 0) { ForEach(model.recent) { row($0, showSeries: true) } }.padding(.horizontal, -8) }
                 } else if !model.loading {
-                    Text("No meetings yet. Lyra asks to record when a call starts, or press New note to start one in person.")
+                    Text("No meetings yet. Lyra asks to record when a call starts, or press New note to write one.")
                         .font(.system(size: 14)).foregroundStyle(.tertiary)
                 }
             }
@@ -40,19 +39,7 @@ struct HomePage: View {
         }
         .onAppear { model.refresh() }
         .onChange(of: app.revision) { model.refresh() }
-        .onChange(of: app.liveMeeting) {
-            model.refresh()
-            if openWhenStarted, let live = app.liveMeeting {
-                openWhenStarted = false
-                open(live.folder)
-            }
-        }
-        .onChange(of: app.starting) {
-            // Couldn't start: say why here, where New note was pressed.
-            guard openWhenStarted, !app.starting, app.liveMeeting == nil else { return }
-            openWhenStarted = false
-            model.notice = app.lastError
-        }
+        .onChange(of: app.liveMeeting) { model.refresh() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in model.refresh() }
         .alert("Move “\(trashing?.title ?? "")” to the Trash?", isPresented: Binding(get: { trashing != nil }, set: { if !$0 { trashing = nil } })) {
             Button("Move to Trash", role: .destructive) { if let s = trashing { model.trash(s) } }
@@ -65,17 +52,14 @@ struct HomePage: View {
         } message: { Text("The series folder, its page and links to it are renamed in Obsidian too.") }
     }
 
-    /// Always there: the live meeting's notes while one is recording, otherwise a new in-person recording, which
-    /// is what every Lyra note is (a meeting with a transcript).
+    /// Always there: the live meeting's notes while one is recording, otherwise a new plain note. Nothing records
+    /// until Record is pressed in it.
     private var newNote: some View {
         Button(action: newNoteTapped) {
             HStack(spacing: 8) {
                 if let live = app.liveMeeting {
                     Circle().fill(Chrome.live).frame(width: 8, height: 8)
                     Text("New note — \(live.appName) (live)")
-                } else if openWhenStarted || app.starting {
-                    ProgressView().controlSize(.small)
-                    Text("Starting…")
                 } else {
                     Image(systemName: "square.and.pencil")
                     Text("New note")
@@ -86,14 +70,12 @@ struct HomePage: View {
             .capsuleSurface()
         }
         .buttonStyle(.plain)
-        .disabled(app.liveMeeting == nil && (openWhenStarted || app.starting))
-        .help(app.liveMeeting == nil ? "Start recording in person and write notes" : "Write notes for the meeting being recorded")
+        .help(app.liveMeeting == nil ? "Write a new note — press Record in it to have Lyra listen" : "Write notes for the meeting being recorded")
     }
 
     private func newNoteTapped() {
         if let live = app.liveMeeting { return open(live.folder) }
-        openWhenStarted = true
-        app.startInPerson()
+        if let folder = app.newNote() { open(folder) } else { model.notice = app.lastError }
     }
 
     private func suggestionCard(_ s: MeetingSummary) -> some View {

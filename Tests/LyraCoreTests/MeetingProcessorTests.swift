@@ -166,6 +166,59 @@ final class MeetingProcessorTests: XCTestCase {
         XCTAssertEqual(speakers.map(\.id), ["meeting:A"])
     }
 
+    /// Recording again after End: the new part's transcript goes on after the filed one, in the note too.
+    func testResumedPartJoinsTheEarlierTranscript() async throws {
+        let earlierLines = [TranscriptLine(speakerLabel: "Speaker 1", speakerID: "mic:A", track: .mic, start: 3, end: 5, text: "first part")]
+        let part = folder.appendingPathComponent("parts/1")
+        try FileManager.default.createDirectory(at: part, withIntermediateDirectories: true)
+        try JSONEncoder().encode(earlierLines).write(to: part.appendingPathComponent("transcript.json"))
+        try JSONEncoder().encode([SpeakerCluster(id: "mic:A", track: .mic, centroid: [1, 0], speechSeconds: 2)])
+            .write(to: part.appendingPathComponent("speakers.json"))
+        var resumed = meeting
+        resumed.earlierParts = 1
+        resumed.recordedBefore = 600
+        _ = try await processor().process(meeting: resumed, tracks: [track(.mic)], folder: folder, noteURL: note)
+        let lines = try JSONDecoder().decode([TranscriptLine].self, from: Data(contentsOf: folder.appendingPathComponent("transcript.json")))
+        XCTAssertEqual(lines.map(\.text), ["first part", "hi back"])
+        XCTAssertEqual(lines.map(\.speakerLabel), ["Speaker 1", "Speaker 2"])
+        XCTAssertEqual(lines[1].start, 601)
+        let speakers = try JSONDecoder().decode([SpeakerCluster].self, from: Data(contentsOf: folder.appendingPathComponent("speakers.json")))
+        XCTAssertEqual(speakers.map(\.id), ["mic:A", "part2/mic:A"])
+        let text = try String(contentsOf: note, encoding: .utf8)
+        XCTAssertTrue(text.contains("first part") && text.contains("hi back"))
+    }
+
+    /// End to end: write up part 1 into its note, Resume (file it away), write up part 2 — the note has both.
+    func testResumedPartReachesTheExistingNote() async throws {
+        var first = meeting
+        first.notePath = note.path
+        try MeetingProcessor.createSkeletonNote(for: first, recordingsFolder: folder, at: note)
+        _ = try await processor().process(meeting: first, tracks: [track(.mic)], folder: folder, noteURL: note)
+        _ = try RecordingParts.archive(folder: folder)
+        let resumed = try Meeting.load(from: folder)
+        _ = try await processor().process(meeting: resumed, tracks: [track(.mic)], folder: folder, noteURL: note)
+        let text = try String(contentsOf: note, encoding: .utf8)
+        XCTAssertEqual(text.components(separatedBy: "hi back").count - 1, 2, "both parts in the note's transcript")
+        let section = try XCTUnwrap(NoteSections.transcriptBody(of: text))
+        XCTAssertEqual(try Meeting.load(from: folder).transcriptSectionHash, NoteSections.hash(section))
+    }
+
+    /// A transcript edited by hand in Obsidian is never replaced; the joined one is still saved in transcript.json.
+    func testResumedPartLeavesAHandEditedTranscriptAlone() async throws {
+        var first = meeting
+        first.notePath = note.path
+        try MeetingProcessor.createSkeletonNote(for: first, recordingsFolder: folder, at: note)
+        _ = try await processor().process(meeting: first, tracks: [track(.mic)], folder: folder, noteURL: note)
+        let edited = try String(contentsOf: note, encoding: .utf8).replacingOccurrences(of: "hi back", with: "hi back (fixed by hand)")
+        try edited.write(to: note, atomically: true, encoding: .utf8)
+        _ = try RecordingParts.archive(folder: folder)
+        _ = try await processor().process(meeting: try Meeting.load(from: folder), tracks: [track(.mic)], folder: folder, noteURL: note)
+        let text = try String(contentsOf: note, encoding: .utf8)
+        XCTAssertTrue(text.contains("hi back (fixed by hand)"))
+        XCTAssertEqual(text.components(separatedBy: "hi back").count - 1, 1)
+        XCTAssertTrue(try Meeting.load(from: folder).warnings.contains(MeetingProcessor.editedTranscriptWarning))
+    }
+
     func testMicOnlyMeeting() async throws {
         _ = try await processor().process(meeting: meeting, tracks: [track(.mic)], folder: folder, noteURL: note)
         let text = try String(contentsOf: note, encoding: .utf8)

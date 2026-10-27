@@ -1,10 +1,12 @@
 import LyraCore
 import SwiftUI
 
-/// The floating bar: while recording, a small capsule (live transcript toggle with a level dot row, and stop);
-/// always, a wide "Ask anything" capsule. Claude's replies and the inline Ask… field sit just above it.
+/// The floating bar: a small capsule that is always there (transcript panel toggle, Record / Resume / Pause, End
+/// while recording) and a wide "Ask anything" capsule. Claude's replies and the inline Ask… field sit just above it.
 struct BottomBar: View {
     @ObservedObject var model: MeetingModel
+    /// Watched directly so Pause / Resume / Record redraw at once.
+    @ObservedObject var app: AppModel
     @Binding var drawerOpen: Bool
     @State private var draft = ""
     @State private var question = ""
@@ -18,32 +20,44 @@ struct BottomBar: View {
                 Banner(text: error) { Button("OK") { model.claudeError = nil } }.frame(maxWidth: 560)
             }
             HStack(spacing: 10) {
-                if model.isLive { liveCapsule }
+                transcriptCapsule
                 askCapsule
             }
             .frame(maxWidth: 560)
         }
     }
 
-    private var liveCapsule: some View {
+    /// Always there: the transcript panel toggle (breathing dots while recording, "Paused", or a still waveform),
+    /// then Record / Resume / Pause, and End while recording.
+    private var transcriptCapsule: some View {
         HStack(spacing: 0) {
             Button { drawerOpen.toggle() } label: {
                 HStack(spacing: 6) {
-                    LevelDots()
+                    if model.isLive && app.isPaused {
+                        Text("Paused").font(.system(size: 12.5, weight: .medium)).foregroundStyle(.secondary)
+                    } else if model.isLive {
+                        LevelDots()
+                    } else {
+                        Image(systemName: "waveform").font(.system(size: 13)).foregroundStyle(.secondary)
+                    }
                     Image(systemName: drawerOpen ? "chevron.down" : "chevron.up").font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
                 }
                 .padding(.leading, 14).padding(.trailing, 10).frame(height: 38).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(drawerOpen ? "Hide the live transcript" : "Show the live transcript")
+            .help(drawerOpen ? "Hide the transcript" : "Show the transcript")
             Divider().frame(height: 18)
-            Button { model.app.stopRecording() } label: {
-                RoundedRectangle(cornerRadius: 2.5).fill(.secondary).frame(width: 10, height: 10)
-                    .padding(.leading, 10).padding(.trailing, 14).frame(height: 38).contentShape(Rectangle())
+            RecordControl(model: model, app: app)
+                .padding(.leading, 12).padding(.trailing, model.isLive ? 6 : 16).frame(height: 38)
+            if model.isLive {
+                Button { app.stopRecording() } label: {
+                    RoundedRectangle(cornerRadius: 2.5).fill(.secondary).frame(width: 10, height: 10)
+                        .padding(.leading, 6).padding(.trailing, 14).frame(height: 38).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("End recording and write it up")
             }
-            .buttonStyle(.plain)
-            .help("Stop recording")
         }
         .capsuleSurface()
         .fixedSize()
@@ -108,7 +122,7 @@ struct BottomBar: View {
 }
 
 /// Granola's little green "•••": three dots breathing in turn while Lyra records.
-private struct LevelDots: View {
+struct LevelDots: View {
     var body: some View {
         TimelineView(.animation(minimumInterval: 1 / 15)) { context in
             let t = context.date.timeIntervalSinceReferenceDate

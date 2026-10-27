@@ -11,6 +11,8 @@ public struct MeetingProcessor: Sendable {
         "No sound came from \(appName) during this meeting, so the transcript is from your microphone only. If other people spoke, check System Settings → Privacy & Security → Screen & System Audio Recording for Lyra."
     }
 
+    public static let editedTranscriptWarning = "This note's transcript was edited by hand, so the part recorded after Resume wasn't added to it. The whole transcript is in transcript.json in the recording folder."
+
     private let trackTranscriber: TrackTranscriber
     private let loader: @Sendable (URL) throws -> [Float]
     private let convert: @Sendable (URL, URL) async throws -> Void
@@ -56,7 +58,7 @@ public struct MeetingProcessor: Sendable {
         let (echoFree, allClusters) = TranscriptMerger.dropVoiceEcho(
             lines: TranscriptMerger.merge(meeting: lines[.meeting] ?? [], mic: lines[.mic] ?? []),
             clusters: (clusters[.meeting] ?? []) + (clusters[.mic] ?? []), people: known, policy: policy)
-        let merged = SpeakerNamer.name(lines: echoFree, clusters: allClusters, people: known, policy: policy)
+        let named = SpeakerNamer.name(lines: echoFree, clusters: allClusters, people: known, policy: policy)
 
         // Convert first (keeping the CAFs) so a failure can be warned about in the note itself.
         var converted: [URL] = []
@@ -73,14 +75,21 @@ public struct MeetingProcessor: Sendable {
             }
         }
 
+        // Only clusters with a line left after the echo filter: an echo-only mic cluster is the remote voice leaking in.
+        // Taken before naming: a join keeps only its first line's raw id, but both clusters still spoke.
+        let kept = Set(echoFree.compactMap(\.speakerID))
+        var speakers = allClusters.filter { kept.contains($0.id) }
+        // Recording resumed after End: this part goes on after the ones filed under parts/.
+        var merged = named
+        if let part = meeting.earlierParts, part > 0 {
+            let earlier = try RecordingParts.earlier(in: folder, part: part)
+            (merged, speakers) = RecordingParts.join(earlier: earlier.lines, earlierClusters: earlier.clusters, new: named,
+                                                     newClusters: speakers, offset: meeting.recordedBefore ?? 0, part: part + 1)
+        }
         let noteAt = try writeTranscript(merged, meeting: &meeting, folder: folder, reserved: noteURL)
         meeting.notePath = noteAt.path
         try meeting.save(in: folder)
         // Before transcript.json: a crash between the two leaves no done marker, so the folder is reprocessed.
-        // Only clusters with a line left after the echo filter: an echo-only mic cluster is the remote voice leaking in.
-        // Taken before naming: a join keeps only its first line's raw id, but both clusters still spoke.
-        let kept = Set(echoFree.compactMap(\.speakerID))
-        let speakers = allClusters.filter { kept.contains($0.id) }
         try PeopleStore.writeOwnerOnly(Self.encoder.encode(speakers), to: folder.appendingPathComponent("speakers.json"))
         try Self.encoder.encode(merged).write(to: folder.appendingPathComponent("transcript.json"), options: .atomic)
         // Only now is the meeting safe without its CAFs; a crash before this point reprocesses the folder.
@@ -114,8 +123,15 @@ public struct MeetingProcessor: Sendable {
             meeting.transcriptSectionHash = NoteSections.transcriptBody(of: existing).map(NoteSections.hash)
             return found
         }
-        guard loaded.document.transcript.isEmpty else {
+        // Recording resumed after End: the section holds the earlier parts. Lyra replaces it with all parts only if
+        // it is still exactly what Lyra wrote; one edited by hand stays, and the note says where the rest is.
+        let earlierPartsUnedited = (meeting.earlierParts ?? 0) > 0
+            && NoteSections.hash(loaded.document.transcript) == meeting.transcriptSectionHash
+        guard loaded.document.transcript.isEmpty || earlierPartsUnedited else {
             // Written by a run a crash cut short (and maybe edited since): leave it as it is.
+            if (meeting.earlierParts ?? 0) > 0, NoteSections.hash(loaded.document.transcript) != NoteSections.hash(body) {
+                meeting.warn(Self.editedTranscriptWarning)
+            }
             meeting.transcriptSectionHash = NoteSections.hash(loaded.document.transcript)
             return loaded.url
         }
@@ -183,7 +199,7 @@ public struct MeetingProcessor: Sendable {
 
 extension Meeting {
     /// Adds a warning once; a reprocessed meeting must not repeat its warnings.
-    mutating func warn(_ text: String) {
+    public mutating func warn(_ text: String) {
         if !warnings.contains(text) { warnings.append(text) }
     }
 

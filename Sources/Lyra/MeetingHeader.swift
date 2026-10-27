@@ -94,7 +94,7 @@ struct MeetingHeader: View {
         HStack(spacing: 2) {
             tab("My notes", .myNotes)
             tab("Expanded", .expanded)
-            tab("Transcript", .transcript)
+            if model.showsTranscriptTab { tab("Transcript", .transcript) }
             Spacer()
             Menu {
                 Button("Re-expand") { model.reExpand() }.disabled(model.working != nil || model.lines.isEmpty)

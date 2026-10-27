@@ -18,6 +18,9 @@ enum DebugLaunch {
         }
     }
 
+    /// `LYRA_DEBUG_PANEL=1`: the meeting opens with its transcript panel up.
+    static var panelOpen: Bool { env["LYRA_DEBUG_PANEL"] == "1" }
+
     /// `LYRA_DEBUG_OPEN`: a meeting folder to show. `LYRA_DEBUG_WIDTH` / `LYRA_DEBUG_HEIGHT`: the window's size;
     /// the width may be a comma-separated list, applied half a second apart, to try a series of resizes.
     static func apply(to model: AppModel) {

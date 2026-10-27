@@ -27,19 +27,26 @@ private struct MeetingContent: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            MeetingHeader(model: model).noteColumn().padding(.top, Chrome.topInset)
+            // Never squeezed: with the transcript panel up, the notes give up the height instead.
+            MeetingHeader(model: model).noteColumn().padding(.top, Chrome.topInset).fixedSize(horizontal: false, vertical: true)
             banners.noteColumn()
             page.frame(maxWidth: .infinity, maxHeight: .infinity)
-            if drawerOpen && model.isLive {
-                LiveDrawer(app: app).noteColumn().transition(.move(edge: .bottom).combined(with: .opacity))
+            if drawerOpen {
+                TranscriptPanel(model: model, app: app) { drawerOpen = false }
+                    .noteColumn().transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            BottomBar(model: model, drawerOpen: $drawerOpen).padding(.horizontal, 24).padding(.vertical, 14)
+            BottomBar(model: model, app: app, drawerOpen: $drawerOpen).padding(.horizontal, 24).padding(.vertical, 14)
         }
         .animation(.easeOut(duration: 0.2), value: drawerOpen)
         .onChange(of: model.streaming == nil) { model.reload() }
         .onChange(of: app.revision) { model.reload() }
-        .onChange(of: model.isLive) { if !model.isLive { drawerOpen = false } }
+        .onChange(of: model.isLive) {
+            if !model.showsTranscriptTab && model.tab == .transcript { model.tab = .myNotes }
+        }
         .onDisappear { model.close() }
+        #if DEBUG
+        .onAppear { if DebugLaunch.panelOpen { drawerOpen = true } }
+        #endif
         .alert("Couldn't finish renaming", isPresented: Binding(get: { model.renameMessage != nil },
                                                                 set: { if !$0 { model.dismissRenameMessage() } })) {
             Button("OK") {}
@@ -85,7 +92,8 @@ private struct MeetingContent: View {
     }
 
     private var expandedPlaceholder: String {
-        model.lines.isEmpty ? "Claude expands your notes from the transcript after the meeting." : "Nothing expanded yet."
+        if model.canRecord && !model.wasRecorded { return "Press Record and Claude expands your notes from the transcript afterwards." }
+        return model.lines.isEmpty ? "Claude expands your notes from the transcript after the meeting." : "Nothing expanded yet."
     }
 
     @ViewBuilder private func placeholder(_ blocks: [NoteBlock], _ text: String) -> some View {

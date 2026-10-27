@@ -13,7 +13,12 @@ struct MenuContent: View {
         }
         Divider()
         if model.isRecording {
-            Button("Stop recording") { model.stopRecording() }
+            if model.isPaused {
+                Button("Resume recording") { model.resumeRecording() }
+            } else {
+                Button("Pause recording") { model.pauseRecording() }
+            }
+            Button("End recording") { model.stopRecording() }
         } else {
             Button("Start recording (in person)") { model.startInPerson() }.disabled(model.starting)
         }
@@ -48,7 +53,7 @@ struct MenuLabel: View {
 
     var body: some View {
         if model.isRecording {
-            Text("🔴 \(model.elapsed)").monospacedDigit()
+            Text("\(model.isPaused ? "⏸" : "🔴") \(model.elapsed)").monospacedDigit()
         } else {
             Image(systemName: "waveform")
         }
