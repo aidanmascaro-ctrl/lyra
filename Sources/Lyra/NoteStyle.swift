@@ -54,19 +54,41 @@ enum NoteStyle {
         return style
     }
 
-    /// Where each lone blank line between two lines of text starts (its newline).
-    static func gapLocations(in string: String) -> [Int] {
-        let lines = string.components(separatedBy: "\n")
-        guard lines.count >= 3 else { return [] }
-        var result: [Int] = []
-        var location = 0
-        for i in lines.indices {
-            defer { location += (lines[i] as NSString).length + 1 }
-            if i > 0, i < lines.count - 1, lines[i].isEmpty, !lines[i - 1].isEmpty, !lines[i + 1].isEmpty {
-                result.append(location)
-            }
+    /// Where each lone blank line between two lines of text starts (its newline). The empty line starting at
+    /// `typing` — the one the cursor is on — counts as text: it is about to be, and the gap beside it stays small.
+    static func gapLocations(in string: String, typing: Int? = nil) -> [Int] {
+        blankLines(in: string).filter { $0.isGap(typing: typing) }.map(\.location)
+    }
+
+    /// Where every empty line starts.
+    static func blankLineLocations(in string: String) -> [Int] {
+        blankLines(in: string).map(\.location)
+    }
+
+    private struct BlankLine {
+        let location: Int
+        let before: (location: Int, isEmpty: Bool)?
+        let after: (location: Int, isEmpty: Bool)?
+
+        func isGap(typing: Int?) -> Bool {
+            guard location != typing, let before, let after else { return false }
+            return (!before.isEmpty || before.location == typing) && (!after.isEmpty || after.location == typing)
         }
-        return result
+    }
+
+    private static func blankLines(in string: String) -> [BlankLine] {
+        let lines = string.components(separatedBy: "\n")
+        var starts: [Int] = []
+        var location = 0
+        for line in lines {
+            starts.append(location)
+            location += (line as NSString).length + 1
+        }
+        return lines.indices.filter { lines[$0].isEmpty }.map { i in
+            BlankLine(location: starts[i],
+                      before: i > 0 ? (starts[i - 1], lines[i - 1].isEmpty) : nil,
+                      after: i < lines.count - 1 ? (starts[i + 1], lines[i + 1].isEmpty) : nil)
+        }
     }
 
     /// The note keys in `attrs` plus the look they stand for.

@@ -162,6 +162,15 @@ final class NoteTextViewTests: XCTestCase {
         XCTAssertEqual(lineHeightCap(at: 4), 0, "the line the cursor is on")
     }
 
+    func testReturnJustAboveASmallGapKeepsThatGapSmall() {
+        view.load([paragraph("one"), paragraph(""), paragraph("two")])
+        view.setSelectedRange(NSRange(location: 3, length: 0))
+        key { $0.insertNewline(nil) }
+        XCTAssertEqual(view.blocks, [paragraph("one"), paragraph(""), paragraph(""), paragraph("two")])
+        XCTAssertEqual(lineHeightCap(at: 4), 0, "the new line the cursor is on")
+        XCTAssertEqual(lineHeightCap(at: 5), NoteStyle.blankLineHeight, "the gap that was already there")
+    }
+
     func testTheBlankLineShrinksOnceTheCursorLeavesAndGrowsWhenItComesBack() {
         view.load([paragraph("one"), paragraph(""), paragraph("two")])
         view.setSelectedRange(NSRange(location: 4, length: 0))
@@ -205,8 +214,18 @@ final class NoteTextViewTests: XCTestCase {
         XCTAssertEqual(caret.maxY, 103 - font.descender, accuracy: 0.5)
     }
 
-    func testABaselineOutsideTheCursorsLineIsIgnored() {
+    /// Just after a blank line changes height AppKit's rect can still be where the line used to be.
+    func testTheCursorFollowsTheLinesBaselineNotAnOutOfDateRect() {
+        let font = NoteStyle.body
+        let stale = NSRect(x: 40, y: 140, width: 1, height: NoteStyle.blankLineHeight)
+        let caret = NoteTextView.caretRect(stale, baseline: 118, font: font)
+        XCTAssertEqual(caret.maxY, 118 - font.descender, accuracy: 0.5)
+        XCTAssertEqual(caret.height, font.ascender - font.descender, accuracy: 0.5)
+        XCTAssertEqual(caret.minX, stale.minX)
+    }
+
+    func testANoteWithNoLayoutKeepsAppKitsRect() {
         let line = NSRect(x: 40, y: 100, width: 1, height: 36)
-        XCTAssertEqual(NoteTextView.caretRect(line, baseline: 400, font: NoteStyle.body), line)
+        XCTAssertEqual(NoteTextView.caretRect(line, baseline: nil, font: NoteStyle.body), line)
     }
 }
