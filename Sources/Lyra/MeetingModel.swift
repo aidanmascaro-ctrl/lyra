@@ -55,8 +55,9 @@ final class MeetingModel: ObservableObject {
         service = RenameService(people: app.people)
         tab = .expanded
         reload()
-        // Live: ready to type. Nothing written yet (a Phase 2 meeting): the transcript is all there is.
-        if app.liveMeeting?.folder == folder { tab = .myNotes }
+        // Live, or a New note not yet recorded: ready to type. Nothing written yet (a Phase 2 meeting): the
+        // transcript is all there is.
+        if app.liveMeeting?.folder == folder || app.canRecord(in: folder) { tab = .myNotes }
         else if expandedBlocks.isEmpty && myBlocks.isEmpty { tab = .transcript }
         #if DEBUG
         if let debugTab = DebugLaunch.tab { tab = debugTab }
@@ -68,6 +69,9 @@ final class MeetingModel: ObservableObject {
     /// Sections changed elsewhere while they had typing Lyra hadn't saved; each waits for Reload or Keep mine.
     var conflicts: [NoteSection: NoteSync.Conflict] { sync?.conflicts ?? [:] }
     var isLive: Bool { app.liveMeeting?.folder == folder }
+    /// A New note never recorded, while nothing else records: the bottom bar offers Record.
+    var canRecord: Bool { app.canRecord(in: folder) }
+    var isStartingRecording: Bool { app.startingFolder == folder }
     var streaming: [NoteBlock]? { meeting.flatMap { app.liveExpansion[$0.id] } }
     var speakers: [SpeakerSummary] { MeetingOverview.speakers(in: lines) }
     var series: String? { loaded.flatMap { SeriesActions.currentSeries(of: $0, index: notes) } }

@@ -54,9 +54,14 @@ public final class TwoTrackRecorder {
         return warning
     }
 
-    /// Both tracks stop capturing together, so they stay lined up once resumed.
-    public func pause() {
-        for recorder in recorders { recorder.pause() }
+    /// Both tracks stop capturing together, so they stay lined up once resumed. Every track is asked even if one
+    /// fails; the first failure is thrown, since that track may still be capturing.
+    public func pause() throws {
+        var failure: Error?
+        for recorder in recorders {
+            do { try recorder.pause() } catch { failure = failure ?? error }
+        }
+        if let failure { throw failure }
     }
 
     /// Restarts both tracks in the same files. A meeting track that won't restart is a warning (the mic carries

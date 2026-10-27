@@ -1,10 +1,12 @@
 import LyraCore
 import SwiftUI
 
-/// The floating bar: while recording, a small capsule (live transcript toggle with a level dot row, and stop);
-/// always, a wide "Ask anything" capsule. Claude's replies and the inline Ask… field sit just above it.
+/// The floating bar: while recording, a small capsule (live transcript toggle with a level dot row, pause or
+/// resume, and end); in a New note not yet recorded, Record; always, a wide "Ask anything" capsule. Claude's replies and the inline Ask… field sit just above it.
 struct BottomBar: View {
     @ObservedObject var model: MeetingModel
+    /// Watched directly so Pause / Resume / Record redraw at once.
+    @ObservedObject var app: AppModel
     @Binding var drawerOpen: Bool
     @State private var draft = ""
     @State private var question = ""
@@ -18,18 +20,43 @@ struct BottomBar: View {
                 Banner(text: error) { Button("OK") { model.claudeError = nil } }.frame(maxWidth: 560)
             }
             HStack(spacing: 10) {
-                if model.isLive { liveCapsule }
+                if model.isLive { liveCapsule } else if model.canRecord || model.isStartingRecording { recordCapsule }
                 askCapsule
             }
             .frame(maxWidth: 560)
         }
     }
 
+    private var recordCapsule: some View {
+        Button { app.record(in: model.folder) } label: {
+            HStack(spacing: 7) {
+                if model.isStartingRecording {
+                    ProgressView().controlSize(.small)
+                    Text("Starting…")
+                } else {
+                    Circle().fill(Chrome.record).frame(width: 9, height: 9)
+                    Text("Record")
+                }
+            }
+            .font(.system(size: 13.5, weight: .medium))
+            .padding(.horizontal, 16).frame(height: 38).contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(model.isStartingRecording)
+        .help("Start recording this note")
+        .capsuleSurface()
+        .fixedSize()
+    }
+
     private var liveCapsule: some View {
         HStack(spacing: 0) {
             Button { drawerOpen.toggle() } label: {
                 HStack(spacing: 6) {
-                    LevelDots()
+                    if app.isPaused {
+                        Text("Paused").font(.system(size: 12.5, weight: .medium)).foregroundStyle(.secondary)
+                    } else {
+                        LevelDots()
+                    }
                     Image(systemName: drawerOpen ? "chevron.down" : "chevron.up").font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
                 }
@@ -38,12 +65,19 @@ struct BottomBar: View {
             .buttonStyle(.plain)
             .help(drawerOpen ? "Hide the live transcript" : "Show the live transcript")
             Divider().frame(height: 18)
-            Button { model.app.stopRecording() } label: {
-                RoundedRectangle(cornerRadius: 2.5).fill(.secondary).frame(width: 10, height: 10)
-                    .padding(.leading, 10).padding(.trailing, 14).frame(height: 38).contentShape(Rectangle())
+            Button { app.isPaused ? app.resumeRecording() : app.pauseRecording() } label: {
+                Image(systemName: app.isPaused ? "play.fill" : "pause.fill").font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 10).frame(height: 38).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Stop recording")
+            .help(app.isPaused ? "Resume recording" : "Pause recording")
+            Button { app.stopRecording() } label: {
+                RoundedRectangle(cornerRadius: 2.5).fill(.secondary).frame(width: 10, height: 10)
+                    .padding(.leading, 4).padding(.trailing, 14).frame(height: 38).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("End recording and write it up")
         }
         .capsuleSurface()
         .fixedSize()

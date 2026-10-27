@@ -255,10 +255,14 @@ final class AppModel: ObservableObject {
     }
 
     /// Pause: the mic and call audio are let go until Resume.
+    /// If the call audio or mic can't be let go of, the recording is ended rather than claim a pause it isn't.
     func pauseRecording() {
         guard let session, state.pause() else { return }
-        session.pause()
-        pausedSince = now
+        pausedSince = Date()
+        do { try session.pause() } catch {
+            lastError = ErrorBrief.sentence("Couldn't pause recording, so it was ended", error)
+            if state.requestStop() { stopSession() }
+        }
     }
 
     /// Resume carries on in the same recording. If the mic won't restart, the recording ends there and is written up.
@@ -361,7 +365,7 @@ final class AppModel: ObservableObject {
         guard let folder else { return false }
         let key = folder.standardizedFileURL.path
         return busyFolders[key] != nil || session?.folder.standardizedFileURL.path == key
-            || liveMeeting?.folder.standardizedFileURL.path == key
+            || liveMeeting?.folder.standardizedFileURL.path == key || startingFolder?.standardizedFileURL.path == key
     }
 
     /// Title, tags, rename and Claude's expansion. A failure is saved in meeting.json for the meeting window.

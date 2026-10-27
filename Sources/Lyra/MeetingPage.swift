@@ -33,7 +33,7 @@ private struct MeetingContent: View {
             if drawerOpen && model.isLive {
                 LiveDrawer(app: app).noteColumn().transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            BottomBar(model: model, drawerOpen: $drawerOpen).padding(.horizontal, 24).padding(.vertical, 14)
+            BottomBar(model: model, app: app, drawerOpen: $drawerOpen).padding(.horizontal, 24).padding(.vertical, 14)
         }
         .animation(.easeOut(duration: 0.2), value: drawerOpen)
         .onChange(of: model.streaming == nil) { model.reload() }
@@ -85,7 +85,8 @@ private struct MeetingContent: View {
     }
 
     private var expandedPlaceholder: String {
-        model.lines.isEmpty ? "Claude expands your notes from the transcript after the meeting." : "Nothing expanded yet."
+        if model.canRecord { return "Press Record and Claude expands your notes from the transcript afterwards." }
+        return model.lines.isEmpty ? "Claude expands your notes from the transcript after the meeting." : "Nothing expanded yet."
     }
 
     @ViewBuilder private func placeholder(_ blocks: [NoteBlock], _ text: String) -> some View {

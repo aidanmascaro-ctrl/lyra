@@ -54,9 +54,10 @@ public final class AppAudioRecorder: TrackRecorder {
         }
     }
 
-    public func pause() {
+    public func pause() throws {
         guard let procID, !paused else { return }
-        paused = AudioDeviceStop(deviceID, procID) == noErr
+        try check(AudioDeviceStop(deviceID, procID), "pause aggregate device")
+        paused = true
     }
 
     public func resume() throws {

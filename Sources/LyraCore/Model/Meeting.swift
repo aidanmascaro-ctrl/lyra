@@ -21,6 +21,8 @@ public struct Meeting: Codable, Sendable {
     public var screenText: [String]? = nil
     /// Where the note was last seen; a hint only, the lyra_id in the note is the identity.
     public var notePath: String? = nil
+    /// When recording began in a note made earlier by New note; nil when recording made the note.
+    public var recordingStartedAt: Date? = nil
     /// Why the after-meeting title/tags call failed, for the UI; nil once it succeeds.
     public var insightsError: String? = nil
     /// Why expanding the notes failed, for the UI's Retry; nil once it succeeds.

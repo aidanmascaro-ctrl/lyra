@@ -169,7 +169,7 @@ final class TwoTrackRecorderTests: XCTestCase {
         var events: [String] = []
         var resumeFails = false
         init(_ kind: TrackKind, fails: Bool) { self.kind = kind; self.fails = fails }
-        func pause() { events.append("pause") }
+        func pause() throws { events.append("pause") }
         func resume() throws {
             events.append("resume")
             if resumeFails { throw AudioError(description: "\(kind.rawValue) wouldn't restart") }
@@ -219,7 +219,7 @@ final class TwoTrackRecorderTests: XCTestCase {
         let meeting = FakeRecorder(.meeting, fails: false), mic = FakeRecorder(.mic, fails: false)
         let recorder = TwoTrackRecorder(target: zoom, meeting: { _ in meeting }, mic: { mic }, retryDelay: .zero)
         _ = try await recorder.start(in: folder)
-        recorder.pause()
+        try recorder.pause()
         XCTAssertNil(try recorder.resume())
         XCTAssertEqual(meeting.events, ["pause", "resume"])
         XCTAssertEqual(mic.events, ["pause", "resume"])
@@ -230,7 +230,7 @@ final class TwoTrackRecorderTests: XCTestCase {
         meeting.resumeFails = true
         let recorder = TwoTrackRecorder(target: zoom, meeting: { _ in meeting }, mic: { mic }, retryDelay: .zero)
         _ = try await recorder.start(in: folder)
-        recorder.pause()
+        try recorder.pause()
         XCTAssertEqual(try recorder.resume(), "Couldn't capture zoom.us audio after resuming: meeting wouldn't restart. Transcript after that is from your microphone only.")
         XCTAssertEqual(mic.events, ["pause", "resume"])
     }
@@ -240,7 +240,7 @@ final class TwoTrackRecorderTests: XCTestCase {
         mic.resumeFails = true
         let recorder = TwoTrackRecorder(target: zoom, meeting: { _ in meeting }, mic: { mic }, retryDelay: .zero)
         _ = try await recorder.start(in: folder)
-        recorder.pause()
+        try recorder.pause()
         XCTAssertThrowsError(try recorder.resume())
     }
 

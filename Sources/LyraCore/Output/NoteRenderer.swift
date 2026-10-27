@@ -14,7 +14,8 @@ public enum NoteRenderer {
     public static func durationMinutes(of meeting: Meeting) -> Int {
         guard let end = meeting.endedAt else { return 0 }
         // A recording recovered after a crash has no saved lengths (0): fall back to the clock.
-        let seconds = meeting.tracks?.map(\.seconds).filter { $0 > 0 }.max() ?? end.timeIntervalSince(meeting.startedAt)
+        let seconds = meeting.tracks?.map(\.seconds).filter { $0 > 0 }.max()
+            ?? end.timeIntervalSince(meeting.recordingStartedAt ?? meeting.startedAt)
         return max(0, Int((seconds / 60).rounded()))
     }
 

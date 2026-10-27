@@ -60,6 +60,7 @@ final class MeetingSession {
     init(recordingInto folder: URL, noteURL: URL, meeting: Meeting,
          onLive: @escaping @MainActor (_ lines: [LiveLine], _ error: String?) -> Void) async throws {
         self.meeting = meeting
+        self.meeting.recordingStartedAt = Date()
         self.target = nil
         self.onLive = onLive
         self.folder = folder
@@ -74,6 +75,7 @@ final class MeetingSession {
     }
 
     private func startRecorder() async throws {
+        try meeting.save(in: folder)  // with recordingStartedAt, before any audio, so a crash knows when it began
         if let warning = try await recorder.start(in: folder) {
             meeting.warnings.append(warning)
             try? meeting.save(in: folder)  // stop() saves it again
@@ -81,10 +83,11 @@ final class MeetingSession {
     }
 
     /// Lets go of the mic and the call audio; nothing is recorded or read off the screen until `resume`.
-    func pause() {
+    /// Throws if a track couldn't be let go of — it may still be capturing.
+    func pause() throws {
         guard !isPaused else { return }
-        recorder.pause()
         isPaused = true
+        try recorder.pause()
     }
 
     /// Carries on in the same files. Throws only if the mic won't restart; a call track that won't is a warning.

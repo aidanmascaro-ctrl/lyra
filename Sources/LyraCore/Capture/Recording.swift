@@ -31,10 +31,11 @@ public struct TrackResult: Codable, Sendable {
 }
 
 /// Records one audio source to a file. `start` throws if capture cannot begin; `stop` always returns a result.
-/// `pause` lets go of the source and writes nothing until `resume`, which carries on in the same file.
+/// `pause` lets go of the source and writes nothing until `resume`, which carries on in the same file; it throws
+/// if the source could not be let go of (it may still be capturing).
 public protocol TrackRecorder: AnyObject {
     func start(writingTo url: URL) throws
-    func pause()
+    func pause() throws
     func resume() throws
     nonisolated(nonsending) func stop() async -> TrackResult
 }
