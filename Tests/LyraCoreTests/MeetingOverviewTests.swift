@@ -34,4 +34,18 @@ final class MeetingOverviewTests: XCTestCase {
         XCTAssertEqual(MeetingOverview.lastFolder(in: root)?.lastPathComponent, newest.lastPathComponent)
         XCTAssertNil(MeetingOverview.lastFolder(in: root.appendingPathComponent("missing")))
     }
+
+    func testPeoplePillShowsThreeNamesThenACount() {
+        XCTAssertEqual(MeetingOverview.peoplePill(["Me (room mic)", "Marco", "Tomas", "Ines"]), "Me, Marco, Tomas +1")
+        XCTAssertEqual(MeetingOverview.peoplePill(["Me (room mic)", "Marco"]), "Me, Marco")
+        XCTAssertEqual(MeetingOverview.peoplePill(["Sam", "Alex", "Jo"]), "Sam, Alex, Jo")
+        XCTAssertEqual(MeetingOverview.peoplePill(["A", "B", "C", "D", "E"]), "A, B, C +2")
+        XCTAssertEqual(MeetingOverview.peoplePill([]), "")
+    }
+
+    func testOnlyMyOwnQualifierIsDropped() {
+        XCTAssertEqual(MeetingOverview.shortName("Me (room mic)"), "Me")
+        XCTAssertEqual(MeetingOverview.shortName("Me"), "Me")
+        XCTAssertEqual(MeetingOverview.shortName("Sam (client)"), "Sam (client)")
+    }
 }

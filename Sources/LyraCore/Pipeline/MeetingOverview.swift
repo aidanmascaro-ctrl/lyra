@@ -30,6 +30,21 @@ public enum MeetingOverview {
         }
     }
 
+    /// Names the people pill shows before the rest become "+N".
+    public static let peopleShown = 3
+
+    /// "Me, Marco, Tomas +1": the first few names, short, then how many more.
+    public static func peoplePill(_ names: [String]) -> String {
+        let shown = names.prefix(peopleShown).map(shortName).joined(separator: ", ")
+        let more = names.count - peopleShown
+        return more > 0 ? "\(shown) +\(more)" : shown
+    }
+
+    /// Aidan's own label without its microphone note ("Me (room mic)" → "Me"); everyone else as labelled.
+    public static func shortName(_ name: String) -> String {
+        name.hasPrefix("Me (") && name.hasSuffix(")") ? "Me" : name
+    }
+
     /// The processed meeting (has transcript.json and a readable meeting.json) that started most recently.
     public static func lastFolder(in root: URL) -> URL? {
         let folders = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []

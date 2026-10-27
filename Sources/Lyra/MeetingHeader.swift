@@ -35,16 +35,23 @@ struct MeetingHeader: View {
         } message: { Text("This meeting moves into a folder of that name in Meetings.") }
     }
 
+    /// Wraps to further lines rather than cutting anything off; every pill the same height, centred on its line.
     private var pills: some View {
-        HStack(spacing: 6) {
+        FlowLayout(spacing: 6, lineSpacing: 6) {
             if let date = model.loaded?.document.front.date ?? model.meeting?.startedAt {
-                Pill { Label(Self.when(date), systemImage: "calendar") }
+                Pill { Label(Self.when(date), systemImage: "calendar") }.headerPill()
             }
-            seriesChip
-            if !people.isEmpty { Pill { Label(people.joined(separator: ", "), systemImage: "person.2") }.lineLimit(1) }
-            if let front = model.loaded?.document.front, !(front.tags.isEmpty && front.links.isEmpty) {
-                Text((front.tags.map { "#\($0)" } + front.links.filter { !people.contains($0) }.map { "[[\($0)]]" }).joined(separator: " "))
-                    .font(.system(size: 12)).foregroundStyle(.tertiary).lineLimit(1)
+            seriesChip.headerPill()
+            if !people.isEmpty {
+                Pill { Label(MeetingOverview.peoplePill(people), systemImage: "person.2") }
+                    .headerPill()
+                    .help(people.joined(separator: ", "))
+            }
+            if let front = model.loaded?.document.front {
+                ForEach(front.tags, id: \.self) { tag in TagPill(text: "#\(tag)") }
+                ForEach(front.links.filter { !people.contains($0) }, id: \.self) { link in
+                    TagPill(text: link, systemImage: "link")
+                }
             }
         }
         .labelStyle(PillLabelStyle())
@@ -118,6 +125,30 @@ struct MeetingHeader: View {
         if Calendar.current.isDateInToday(date) { return "Today " + date.formatted(date: .omitted, time: .shortened) }
         return date.formatted(.dateTime.day().month(.abbreviated).hour().minute())
     }
+}
+
+/// One tag or link: a pill like the others, a step quieter.
+private struct TagPill: View {
+    let text: String
+    var systemImage: String?
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if let systemImage { Image(systemName: systemImage).imageScale(.small) }
+            Text(text)
+        }
+        .font(.system(size: 12))
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 4)  // as `Pill`, so every pill on the row is the same height
+        .background(Capsule().fill(Chrome.pill.opacity(0.55)))
+    }
+}
+
+private extension View {
+    /// One line: a pill moves to the next line of the row rather than wrapping its own text.
+    func headerPill() -> some View { lineLimit(1) }
 }
 
 private struct PillLabelStyle: LabelStyle {
