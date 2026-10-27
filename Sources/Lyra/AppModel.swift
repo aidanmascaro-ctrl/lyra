@@ -185,7 +185,7 @@ final class AppModel: ObservableObject {
             } catch {
                 state.failed()
                 detector.isRecording = false
-                lastError = "Couldn't start recording: \(error)"
+                lastError = ErrorBrief.sentence("Couldn't start recording", error)
             }
         }
     }
