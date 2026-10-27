@@ -29,6 +29,18 @@ struct LyraApp: App {
             .defaultSize(width: 820, height: 860)
             .defaultLaunchBehavior(.presented)
             .restorationBehavior(.disabled)
+            .commands { LyraCommands() }
+    }
+}
+
+/// Lyra's menu in the menu bar while its window is open: voice setup lives in the app, not the menu-bar icon.
+private struct LyraCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            Button("Teach Lyra my voice…") { openWindow(id: "enrol") }
+        }
     }
 }
 
