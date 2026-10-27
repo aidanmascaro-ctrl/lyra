@@ -1,16 +1,27 @@
 import AVFoundation
 import LyraCore
 
-/// Records the default input device via AVAudioEngine to a CAF in the input's native format.
+/// Records the default input device via AVAudioEngine to a CAF in the input's native format — or, when the default
+/// is a Bluetooth headset, the Mac's own mic (`MicChoice`, `DeviceMicSession`), so the headset stays out of call mode.
 /// Survives input changes (device switch, Bluetooth call mode): the engine is restarted and the
 /// new input is converted into the file's original format.
 public final class MicRecorder: TrackRecorder {
     var session: MicSession?
+    var deviceSession: DeviceMicSession?
 
     public init() {}
 
     public func start(writingTo url: URL) throws {
-        guard session == nil else { throw AudioError(description: "mic recorder already started") }
+        guard session == nil, deviceSession == nil else { throw AudioError(description: "mic recorder already started") }
+        if let device = AudioInputs.chosenCaptureDevice() {
+            let session = try DeviceMicSession(url: url, device: device)
+            do { try session.start() } catch {
+                _ = session.finish()
+                throw error
+            }
+            deviceSession = session
+            return
+        }
         let session = try MicSession(url: url)
         do { try session.start() } catch {
             _ = session.finish()
@@ -20,6 +31,10 @@ public final class MicRecorder: TrackRecorder {
     }
 
     nonisolated(nonsending) public func stop() async -> TrackResult {
+        if let deviceSession {
+            self.deviceSession = nil
+            return deviceSession.finish()
+        }
         guard let session else {
             return TrackResult(kind: .mic, url: URL(fileURLWithPath: "/dev/null"), seconds: 0, peakLevel: 0, error: "not recording")
         }
@@ -27,7 +42,10 @@ public final class MicRecorder: TrackRecorder {
         return session.finish()
     }
 
-    deinit { _ = session?.finish() }
+    deinit {
+        _ = session?.finish()
+        _ = deviceSession?.finish()
+    }
 }
 
 /// One mic recording. Engine reconfiguration happens under `lock`; tap blocks only touch the

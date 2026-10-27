@@ -153,9 +153,79 @@ final class NoteTextViewTests: XCTestCase {
         XCTAssertEqual(NoteMarkdown.render(view.blocks), "one\nx\ntwo")
     }
 
+    func testReturnBetweenTwoLinesGivesAFullHeightLineToTypeOn() {
+        view.load([paragraph("one"), paragraph("two")])
+        view.setSelectedRange(NSRange(location: 3, length: 0))
+        key { $0.insertNewline(nil) }
+        XCTAssertEqual(view.blocks, [paragraph("one"), paragraph(""), paragraph("two")])
+        XCTAssertEqual(view.selectedRange().location, 4)
+        XCTAssertEqual(lineHeightCap(at: 4), 0, "the line the cursor is on")
+    }
+
+    func testReturnJustAboveASmallGapKeepsThatGapSmall() {
+        view.load([paragraph("one"), paragraph(""), paragraph("two")])
+        view.setSelectedRange(NSRange(location: 3, length: 0))
+        key { $0.insertNewline(nil) }
+        XCTAssertEqual(view.blocks, [paragraph("one"), paragraph(""), paragraph(""), paragraph("two")])
+        XCTAssertEqual(lineHeightCap(at: 4), 0, "the new line the cursor is on")
+        XCTAssertEqual(lineHeightCap(at: 5), NoteStyle.blankLineHeight, "the gap that was already there")
+    }
+
+    func testTheBlankLineShrinksOnceTheCursorLeavesAndGrowsWhenItComesBack() {
+        view.load([paragraph("one"), paragraph(""), paragraph("two")])
+        view.setSelectedRange(NSRange(location: 4, length: 0))
+        XCTAssertEqual(lineHeightCap(at: 4), 0)
+        view.setSelectedRange(NSRange(location: 0, length: 0))
+        XCTAssertEqual(lineHeightCap(at: 4), NoteStyle.blankLineHeight)
+        view.setSelectedRange(NSRange(location: 4, length: 0))
+        XCTAssertEqual(lineHeightCap(at: 4), 0)
+    }
+
     func testBlankLinesStillRoundTrip() {
         let blocks = NoteMarkdown.parse("one\n\ntwo\n\n- three")
         view.load(blocks)
         XCTAssertEqual(NoteMarkdown.render(view.blocks), "one\n\ntwo\n\n- three")
+    }
+
+    func testTheCursorOnASmallParagraphGapIsFullHeight() {
+        let gap = NSRect(x: 40, y: 100, width: 1, height: NoteStyle.blankLineHeight)
+        let caret = NoteTextView.caretRect(gap, baseline: nil, font: NoteStyle.body)
+        XCTAssertGreaterThanOrEqual(caret.height, NoteStyle.body.ascender - NoteStyle.body.descender)
+        XCTAssertEqual(caret.midY, gap.midY, accuracy: 0.5)
+        XCTAssertEqual(caret.minX, gap.minX)
+    }
+
+    func testTheCursorCoversTheLettersNotTheSpacingBelowThem() {
+        let font = NoteStyle.body
+        let line = NSRect(x: 40, y: 100, width: 1, height: 36)
+        let baseline = 100 + font.ascender
+        let caret = NoteTextView.caretRect(line, baseline: baseline, font: font)
+        XCTAssertEqual(caret.minY, 100, accuracy: 0.5)
+        XCTAssertEqual(caret.maxY, baseline - font.descender, accuracy: 0.5)
+        XCTAssertLessThan(caret.height, line.height)
+        XCTAssertEqual(caret.minX, line.minX)
+    }
+
+    func testTheCursorIsAlwaysAsTallAsTheLettersEvenNearTheTopOfItsLine() {
+        let font = NoteStyle.body
+        let line = NSRect(x: 40, y: 100, width: 1, height: 36)
+        let caret = NoteTextView.caretRect(line, baseline: 103, font: font)
+        XCTAssertEqual(caret.height, font.ascender - font.descender, accuracy: 0.5)
+        XCTAssertEqual(caret.maxY, 103 - font.descender, accuracy: 0.5)
+    }
+
+    /// Just after a blank line changes height AppKit's rect can still be where the line used to be.
+    func testTheCursorFollowsTheLinesBaselineNotAnOutOfDateRect() {
+        let font = NoteStyle.body
+        let stale = NSRect(x: 40, y: 140, width: 1, height: NoteStyle.blankLineHeight)
+        let caret = NoteTextView.caretRect(stale, baseline: 118, font: font)
+        XCTAssertEqual(caret.maxY, 118 - font.descender, accuracy: 0.5)
+        XCTAssertEqual(caret.height, font.ascender - font.descender, accuracy: 0.5)
+        XCTAssertEqual(caret.minX, stale.minX)
+    }
+
+    func testANoteWithNoLayoutKeepsAppKitsRect() {
+        let line = NSRect(x: 40, y: 100, width: 1, height: 36)
+        XCTAssertEqual(NoteTextView.caretRect(line, baseline: nil, font: NoteStyle.body), line)
     }
 }

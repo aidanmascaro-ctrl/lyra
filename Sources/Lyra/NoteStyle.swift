@@ -39,18 +39,55 @@ enum NoteStyle {
     }
 
     /// A lone empty paragraph with text on both sides is drawn `blankLineHeight` tall. The blank line stays in the
-    /// text (and the file); only its height changes, and typing into it makes an ordinary line again.
+    /// text (and the file); only its height changes, and typing into it makes an ordinary line again. The editor
+    /// gives the one the cursor is on its full height back so there is room to type.
     private static func compactBlankLines(in text: NSMutableAttributedString) {
-        let lines = text.string.components(separatedBy: "\n")
-        guard lines.count >= 3 else { return }
+        for location in gapLocations(in: text.string) {
+            text.addAttribute(.paragraphStyle, value: gapStyle, range: NSRange(location: location, length: 1))
+        }
+    }
+
+    static var gapStyle: NSParagraphStyle {
+        let style = NSMutableParagraphStyle()
+        style.minimumLineHeight = blankLineHeight
+        style.maximumLineHeight = blankLineHeight
+        return style
+    }
+
+    /// Where each lone blank line between two lines of text starts (its newline). The empty line starting at
+    /// `typing` — the one the cursor is on — counts as text: it is about to be, and the gap beside it stays small.
+    static func gapLocations(in string: String, typing: Int? = nil) -> [Int] {
+        blankLines(in: string).filter { $0.isGap(typing: typing) }.map(\.location)
+    }
+
+    /// Where every empty line starts.
+    static func blankLineLocations(in string: String) -> [Int] {
+        blankLines(in: string).map(\.location)
+    }
+
+    private struct BlankLine {
+        let location: Int
+        let before: (location: Int, isEmpty: Bool)?
+        let after: (location: Int, isEmpty: Bool)?
+
+        func isGap(typing: Int?) -> Bool {
+            guard location != typing, let before, let after else { return false }
+            return (!before.isEmpty || before.location == typing) && (!after.isEmpty || after.location == typing)
+        }
+    }
+
+    private static func blankLines(in string: String) -> [BlankLine] {
+        let lines = string.components(separatedBy: "\n")
+        var starts: [Int] = []
         var location = 0
-        for i in lines.indices {
-            defer { location += (lines[i] as NSString).length + 1 }
-            guard i > 0, i < lines.count - 1, lines[i].isEmpty, !lines[i - 1].isEmpty, !lines[i + 1].isEmpty else { continue }
-            let style = NSMutableParagraphStyle()
-            style.minimumLineHeight = blankLineHeight
-            style.maximumLineHeight = blankLineHeight
-            text.addAttribute(.paragraphStyle, value: style, range: NSRange(location: location, length: 1))
+        for line in lines {
+            starts.append(location)
+            location += (line as NSString).length + 1
+        }
+        return lines.indices.filter { lines[$0].isEmpty }.map { i in
+            BlankLine(location: starts[i],
+                      before: i > 0 ? (starts[i - 1], lines[i - 1].isEmpty) : nil,
+                      after: i < lines.count - 1 ? (starts[i + 1], lines[i + 1].isEmpty) : nil)
         }
     }
 

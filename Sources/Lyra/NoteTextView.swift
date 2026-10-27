@@ -116,8 +116,31 @@ final class NoteTextView: NSTextView {
         }
         typedRange = nil
         refreshTyping()
+        refreshGaps()
         needsDisplay = true
         super.didChangeText()
+    }
+
+    /// Small paragraph gaps stay small except the one the cursor is on, which gets a full line to type on; that line
+    /// counts as text, so a gap right beside it stays small too.
+    private func refreshGaps() {
+        guard let storage = textStorage, storage.editedMask.isEmpty else { return }
+        let sel = selectedRange()
+        let caret = sel.length == 0 ? sel.location : nil
+        let gaps = Set(NoteStyle.gapLocations(in: storage.string, typing: caret))
+        var changed = false
+        for location in NoteStyle.blankLineLocations(in: storage.string) where location < storage.length {
+            let current = storage.attribute(.paragraphStyle, at: location, effectiveRange: nil) as? NSParagraphStyle
+            let isSmall = current?.maximumLineHeight == NoteStyle.blankLineHeight
+            let wantSmall = gaps.contains(location)
+            guard isSmall != wantSmall else { continue }
+            let style = wantSmall ? NoteStyle.gapStyle
+                : NoteStyle.display(storage.attributes(at: location, effectiveRange: nil))[.paragraphStyle] as Any
+            storage.addAttribute(.paragraphStyle, value: style, range: NSRange(location: location, length: 1))
+            changed = true
+        }
+        // The cursor was placed against the line's old height; measure it again against the new one.
+        if changed { updateInsertionPointStateAndRestartTimer(true) }
     }
 
     override func insertText(_ string: Any, replacementRange: NSRange) {
@@ -382,6 +405,62 @@ final class NoteTextView: NSTextView {
 
     // MARK: Drawing
 
+    /// The cursor covers the letters on its line, from `font`'s ascender to its descender at `baseline`, rather than
+    /// the whole line with the spacing under it. `rect` is where AppKit would draw it, which can be out of date just
+    /// after a blank line changes height, so it only gives the x — and, with no baseline, a cursor grown to a full
+    /// line of body text centred on it.
+    static func caretRect(_ rect: NSRect, baseline: CGFloat?, font: NSFont) -> NSRect {
+        if let baseline {
+            return NSRect(x: rect.minX, y: baseline - font.ascender, width: rect.width, height: font.ascender - font.descender)
+        }
+        let full = ceil(NoteStyle.body.ascender - NoteStyle.body.descender)
+        guard rect.height < full else { return rect }
+        return NSRect(x: rect.minX, y: rect.midY - full / 2, width: rect.width, height: full)
+    }
+
+    override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
+        let font = typingAttributes[.font] as? NSFont ?? NoteStyle.body
+        super.drawInsertionPoint(in: Self.caretRect(rect, baseline: caretBaseline(near: rect), font: font), color: color, turnedOn: flag)
+    }
+
+    /// The baseline of the line the cursor is on, in view coordinates, from the layout as it is now. Where a long
+    /// paragraph wraps, the cursor can sit at the end of one line or the start of the next; `rect` picks which.
+    private func caretBaseline(near rect: NSRect) -> CGFloat? {
+        guard let layout = layoutManager, let container = textContainer, let storage = textStorage else { return nil }
+        let location = selectedRange().location
+        let origin = textContainerOrigin
+        if location >= storage.length {
+            layout.ensureLayout(for: container)
+            let extra = layout.extraLineFragmentRect
+            if extra.height > 0 {
+                let font = typingAttributes[.font] as? NSFont ?? NoteStyle.body
+                return extra.minY + origin.y + font.ascender
+            }
+            guard storage.length > 0 else { return nil }
+        }
+        func baseline(ofCharacter character: Int) -> (baseline: CGFloat, line: NSRect) {
+            let glyph = layout.glyphIndexForCharacter(at: character)
+            let line = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).offsetBy(dx: origin.x, dy: origin.y)
+            return (line.minY + layout.location(forGlyphAt: glyph).y, line)
+        }
+        let here = baseline(ofCharacter: min(location, storage.length - 1))
+        let units = storage.string as NSString
+        guard location > 0, location < storage.length, units.character(at: location - 1) != 0x0A else { return here.baseline }
+        let before = baseline(ofCharacter: location - 1)
+        guard before.line.minY != here.line.minY else { return here.baseline }
+        return abs(before.line.midY - rect.midY) < abs(here.line.midY - rect.midY) ? before.baseline : here.baseline
+    }
+
+    /// The cursor blinks by redrawing the rect AppKit gave it, and the drawn cursor can reach past that rect, so a
+    /// cursor-thin redraw is grown by a line each way.
+    override func setNeedsDisplay(_ invalidRect: NSRect, avoidAdditionalLayout flag: Bool) {
+        let isCursor = invalidRect.width <= Self.cursorRedrawWidth
+        let line = ceil(NoteStyle.body.ascender - NoteStyle.body.descender)
+        super.setNeedsDisplay(isCursor ? invalidRect.insetBy(dx: 0, dy: -line) : invalidRect, avoidAdditionalLayout: flag)
+    }
+
+    private static let cursorRedrawWidth: CGFloat = 3
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         let blocks = self.blocks
@@ -465,6 +544,7 @@ final class NoteTextView: NSTextView {
 
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+        refreshGaps()
         if stillSelecting { selectionMenu.isHidden = true; return }
         if selectedRange().length == 0 { refreshTyping() }
         updateSelectionMenu()
