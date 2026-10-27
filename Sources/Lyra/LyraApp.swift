@@ -15,7 +15,7 @@ struct LyraApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent(model: delegate.model)
+            MenuContent(model: delegate.model, loginItem: delegate.loginItem)
         } label: {
             MenuLabel(model: delegate.model).modifier(MainWindowOpener(presence: delegate.presence))
         }
@@ -30,6 +30,7 @@ struct LyraApp: App {
             .defaultLaunchBehavior(.presented)
             .restorationBehavior(.disabled)
             .commands { LyraCommands() }
+        Settings { SettingsPage(loginItem: delegate.loginItem) }
     }
 }
 
@@ -47,6 +48,7 @@ private struct LyraCommands: Commands {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
+    let loginItem = LoginItem()
     lazy var presence = DockPresence(app: model)
 
     func applicationDidFinishLaunching(_ notification: Notification) {

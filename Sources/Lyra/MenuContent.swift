@@ -4,6 +4,7 @@ import SwiftUI
 
 struct MenuContent: View {
     @ObservedObject var model: AppModel
+    @ObservedObject var loginItem: LoginItem
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -35,6 +36,7 @@ struct MenuContent: View {
         }
         if let error = model.lastError { Text(ErrorBrief.menuLine(error)).lineLimit(1) }
         Divider()
+        Toggle("Open at Login", isOn: Binding(get: { loginItem.state.isOn }, set: loginItem.set))
         Button("Quit") { NSApplication.shared.terminate(nil) }
     }
 

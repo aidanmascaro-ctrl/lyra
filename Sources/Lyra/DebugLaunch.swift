@@ -37,6 +37,15 @@ enum DebugLaunch {
             if let slides = env["LYRA_DEBUG_LIVE_SLIDES"].flatMap({ Int($0) }) { model.debugShowLiveCall(folder: url, slides: slides) }
         }
         if env["LYRA_DEBUG_ALLOW"] == "1" { model.debugShowAllowPanel() }  // `LYRA_DEBUG_ALLOW=1`: the Allow panel
+        // `LYRA_DEBUG_SETTINGS=1`: the Settings window, as Lyra › Settings… opens it.
+        if env["LYRA_DEBUG_SETTINGS"] == "1" {
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1))
+                guard let menu = NSApp.mainMenu?.items.first?.submenu,
+                      let index = menu.items.firstIndex(where: { $0.keyEquivalent == "," }) else { return }
+                menu.performActionForItem(at: index)
+            }
+        }
         let widths = (env["LYRA_DEBUG_WIDTH"] ?? "").split(separator: ",").compactMap { Double($0) }
         let height = env["LYRA_DEBUG_HEIGHT"].flatMap(Double.init) ?? 860
         Task { @MainActor in

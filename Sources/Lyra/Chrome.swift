@@ -67,6 +67,7 @@ private struct WindowChrome: NSViewRepresentable {
             guard let window else { return }
             window.titlebarAppearsTransparent = true
             window.titleVisibility = .hidden
+            window.titlebarSeparatorStyle = .none
             window.styleMask.insert(.fullSizeContentView)
             window.backgroundColor = NoteStyle.background
             window.isMovableByWindowBackground = false
