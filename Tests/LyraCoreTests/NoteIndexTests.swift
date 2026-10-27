@@ -284,4 +284,40 @@ extension NoteIndexTests {
         try NoteIndex.writeAtomically(Data("again".utf8), to: missing)
         XCTAssertEqual(try read(missing), "again")
     }
+
+    private static let created2001 = Date(timeIntervalSinceReferenceDate: 0)
+
+    private func makeOldPrivateFile(_ name: String) throws -> URL {
+        let url = meetings.appendingPathComponent(name)
+        try Data("old".utf8).write(to: url)
+        try FileManager.default.setAttributes([.creationDate: Self.created2001, .posixPermissions: 0o600], ofItemAtPath: url.path)
+        return url
+    }
+
+    private func assertKeepsCreationDateAndPermissions(_ url: URL, file: StaticString = #filePath, line: UInt = #line) throws {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        XCTAssertEqual(attributes[.creationDate] as? Date, Self.created2001, file: file, line: line)
+        XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600, file: file, line: line)
+    }
+
+    /// Saving swaps a temp file in, which must not reset the note's created date or loosen its permissions.
+    func testSaveKeepsCreationDateAndPermissions() throws {
+        let doc = makeDocument(title: "Chat")
+        let url = try writeNote(doc, name: prefix + "Chat")
+        try FileManager.default.setAttributes([.creationDate: Self.created2001, .posixPermissions: 0o600], ofItemAtPath: url.path)
+        let loaded = try index.load(doc.front.lyraID, hint: nil)
+        var edited = loaded.document
+        edited.myNotes = "more words"
+        let saved = try index.save(edited, over: loaded)
+        XCTAssertTrue(try read(saved.url).contains("more words"))
+        try assertKeepsCreationDateAndPermissions(saved.url)
+    }
+
+    /// The same holds for the plain atomic write that link rewriting uses on Aidan's own notes.
+    func testWriteAtomicallyKeepsCreationDateAndPermissions() throws {
+        let url = try makeOldPrivateFile("Linked.md")
+        try NoteIndex.writeAtomically(Data("new".utf8), to: url)
+        XCTAssertEqual(try read(url), "new")
+        try assertKeepsCreationDateAndPermissions(url)
+    }
 }

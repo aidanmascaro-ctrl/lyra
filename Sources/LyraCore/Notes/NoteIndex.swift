@@ -260,11 +260,21 @@ public struct NoteIndex: Sendable {
         let temp = url.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).lyra-tmp")
         do {
             try data.write(to: temp)
+            copyKeptAttributes(from: url, to: temp)
             try swapIn(temp, at: url, mayCreate: mayCreate)
         } catch {
             try? FileManager.default.removeItem(at: temp)
             throw error
         }
+    }
+
+    /// The swap leaves the temp file's inode at the note's path, so give it the note's created date and permissions first
+    /// (Obsidian sorts by created date). Best effort: a failure here never costs the write.
+    private static func copyKeptAttributes(from url: URL, to temp: URL) {
+        let manager = FileManager.default
+        guard let existing = try? manager.attributesOfItem(atPath: url.path) else { return }
+        let kept = existing.filter { $0.key == .creationDate || $0.key == .posixPermissions }
+        try? manager.setAttributes(kept, ofItemAtPath: temp.path)
     }
 
     /// One atomic swap that fails if `url` is missing; afterwards `temp` holds the old contents and is removed.
