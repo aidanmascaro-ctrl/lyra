@@ -30,6 +30,8 @@ public final class MicRecorder: TrackRecorder {
         self.session = session
     }
 
+    public var level: Float { session?.level ?? deviceSession?.level ?? 0 }
+
     public func pause() {
         session?.pause()
         deviceSession?.pause()
@@ -86,6 +88,8 @@ final class MicSession: @unchecked Sendable {
             self?.restartAfterConfigurationChange()
         }
     }
+
+    var level: Float { writer.recentPeak }
 
     /// Stops the engine (the mic is let go) and writes nothing until `resume`.
     func pause() {

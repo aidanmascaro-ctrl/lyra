@@ -12,6 +12,7 @@ final class CAFWriter: Sendable {
     private let sampleRate: Double
     private let frames = Atomic<Int>(0)
     private let peakBits = Atomic<UInt32>(0)
+    private let recentPeakBits = Atomic<UInt32>(0)
     private let writeStatus = Atomic<Int32>(0)
     private let firstHostTime = Atomic<UInt64>(0)  // host clock of the first buffer; 0 until one arrives
 
@@ -43,6 +44,9 @@ final class CAFWriter: Sendable {
         self.sampleRate = format.mSampleRate
     }
 
+    /// The loudest sample of the latest buffer: how loud the source is now, for the recording bars.
+    var recentPeak: Float { Float(bitPattern: recentPeakBits.load(ordering: .relaxed)) }
+
     /// Seconds written so far.
     var seconds: Double { Double(frames.load(ordering: .relaxed)) / sampleRate }
 
@@ -61,6 +65,7 @@ final class CAFWriter: Sendable {
         }
         // Non-negative floats order the same as their bit patterns.
         peakBits.max(peak.bitPattern, ordering: .relaxed)
+        recentPeakBits.store(peak.bitPattern, ordering: .relaxed)
         let status = ExtAudioFileWriteAsync(file, frameCount, list)
         if status == noErr { frames.add(Int(frameCount), ordering: .relaxed) } else { writeStatus.store(status, ordering: .relaxed) }
         if hostTime != 0 { _ = firstHostTime.compareExchange(expected: 0, desired: hostTime, ordering: .relaxed) }

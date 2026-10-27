@@ -37,5 +37,7 @@ public protocol TrackRecorder: AnyObject {
     func start(writingTo url: URL) throws
     func pause() throws
     func resume() throws
+    /// How loud the source is now (peak of the latest audio, 0…1); 0 when nothing is captured.
+    var level: Float { get }
     nonisolated(nonsending) func stop() async -> TrackResult
 }

@@ -36,7 +36,7 @@ struct BottomBar: View {
                     if model.isLive && app.isPaused {
                         Text("Paused").font(.system(size: 12.5, weight: .medium)).foregroundStyle(.secondary)
                     } else if model.isLive {
-                        LevelDots()
+                        LevelDots { app.level }
                     } else {
                         Image(systemName: "waveform").font(.system(size: 13)).foregroundStyle(.secondary)
                     }
@@ -123,16 +123,35 @@ struct BottomBar: View {
 
 /// Granola's little green "•••": three dots breathing in turn while Lyra records.
 struct LevelDots: View {
+    /// The loudness of the sound being recorded now (peak, 0…1), read every frame.
+    let level: () -> Float
+
+    static let minHeight: CGFloat = 4
+    static let maxHeight: CGFloat = 13
+    /// Quieter than this many dB below full scale is silence; the bars use the range above it.
+    private static let floorDB: Float = -50
+
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 15)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
+        TimelineView(.animation(minimumInterval: 1 / 20)) { context in
+            let heights = Self.heights(peak: level(), time: context.date.timeIntervalSinceReferenceDate)
             HStack(spacing: 2.5) {
                 ForEach(0..<3) { i in
-                    Capsule().fill(Chrome.live)
-                        .frame(width: 3.5, height: 5 + 6 * abs(sin(t * 3.2 + Double(i) * 0.9)))
+                    Capsule().fill(Chrome.live).frame(width: 3.5, height: heights[i])
                 }
             }
-            .frame(width: 18, height: 12)
+            .frame(width: 18, height: Self.maxHeight)
+            .animation(.easeOut(duration: 0.08), value: heights)
+        }
+    }
+
+    /// Three bar heights for a peak level: loudness on a dB scale (so speech fills the range), each bar swaying a
+    /// little out of step so a steady sound still looks alive. Silence is three still, low bars.
+    static func heights(peak: Float, time: Double) -> [CGFloat] {
+        let db = 20 * log10(max(peak, 1e-6))
+        let loudness = CGFloat(min(max((db - floorDB) / -floorDB, 0), 1))
+        return (0..<3).map { i in
+            let sway = 0.6 + 0.4 * abs(sin(time * 7 + Double(i) * 1.4))
+            return minHeight + (maxHeight - minHeight) * loudness * sway
         }
     }
 }

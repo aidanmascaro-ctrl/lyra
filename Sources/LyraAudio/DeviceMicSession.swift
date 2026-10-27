@@ -44,6 +44,8 @@ final class DeviceMicSession: NSObject, AVCaptureAudioDataOutputSampleBufferDele
         guard session.isRunning else { throw AudioError(description: "the microphone could not be started") }
     }
 
+    var level: Float { writer.recentPeak }
+
     /// Stops capture (the mic is let go); nothing is written until `resume`.
     func pause() { session.stopRunning() }
 

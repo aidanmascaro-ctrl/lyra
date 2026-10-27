@@ -168,6 +168,7 @@ final class TwoTrackRecorderTests: XCTestCase {
         var url: URL?
         var events: [String] = []
         var resumeFails = false
+        var level: Float { 0 }
         init(_ kind: TrackKind, fails: Bool) { self.kind = kind; self.fails = fails }
         func pause() throws { events.append("pause") }
         func resume() throws {

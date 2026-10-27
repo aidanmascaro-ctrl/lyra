@@ -120,6 +120,8 @@ final class AppModel: ObservableObject {
     var isRecording: Bool { session != nil }
     var starting: Bool { if case .starting = state.phase { true } else { false } }
     var isPaused: Bool { if case .paused = state.phase { true } else { false } }
+    /// How loud the recording is now, for the bars; read every frame, so not published.
+    var level: Float { session?.level ?? 0 }
 
     /// Recorded time so far: paused time doesn't count.
     var elapsed: String {

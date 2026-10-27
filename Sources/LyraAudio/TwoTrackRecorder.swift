@@ -54,6 +54,9 @@ public final class TwoTrackRecorder {
         return warning
     }
 
+    /// The louder of the two tracks now: Aidan or the call.
+    public var level: Float { recorders.map(\.level).max() ?? 0 }
+
     /// Both tracks stop capturing together, so they stay lined up once resumed. Every track is asked even if one
     /// fails; the first failure is thrown, since that track may still be capturing.
     public func pause() throws {

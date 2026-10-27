@@ -50,3 +50,23 @@ final class TitleBarStripTests: XCTestCase {
         XCTAssertNil(step.saved)
     }
 }
+
+/// The recording bars follow the sound: flat and low in silence, taller as it gets louder, never past their box.
+final class LevelDotsTests: XCTestCase {
+    func testSilenceIsFlat() {
+        let heights = LevelDots.heights(peak: 0, time: 1.7)
+        XCTAssertEqual(Set(heights), [LevelDots.minHeight])
+    }
+
+    func testLouderIsTaller() {
+        let quiet = LevelDots.heights(peak: 0.01, time: 1.7).reduce(0, +)
+        let loud = LevelDots.heights(peak: 0.5, time: 1.7).reduce(0, +)
+        XCTAssertGreaterThan(loud, quiet)
+    }
+
+    func testNeverTallerThanTheBox() {
+        for t in stride(from: 0.0, to: 3, by: 0.1) {
+            XCTAssertTrue(LevelDots.heights(peak: 1, time: t).allSatisfy { $0 <= LevelDots.maxHeight })
+        }
+    }
+}

@@ -95,6 +95,9 @@ final class MeetingSession {
         }
     }
 
+    /// How loud the meeting is now; nothing while paused.
+    var level: Float { isPaused ? 0 : recorder.level }
+
     /// Lets go of the mic and the call audio; nothing is recorded or read off the screen until `resume`.
     /// Throws if a track couldn't be let go of — it may still be capturing.
     func pause() throws {

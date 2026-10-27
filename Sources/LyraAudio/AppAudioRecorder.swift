@@ -54,6 +54,8 @@ public final class AppAudioRecorder: TrackRecorder {
         }
     }
 
+    public var level: Float { writer?.recentPeak ?? 0 }
+
     public func pause() throws {
         guard let procID, !paused else { return }
         try check(AudioDeviceStop(deviceID, procID), "pause aggregate device")
