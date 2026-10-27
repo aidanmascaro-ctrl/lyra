@@ -2,7 +2,7 @@ import LyraCore
 import SwiftUI
 
 /// Granola's transcript panel, slid up above the bottom bar: the conversation as chat bubbles — Aidan's mic on
-/// the right, everyone else on the left under their name — with Pause / Resume at the foot. The written-up
+/// the right, everyone else on the left under their name. Its controls are the bottom bar's, just below. The written-up
 /// transcript first (every earlier part), then, while recording, the rough live draft as it is spoken.
 struct TranscriptPanel: View {
     @ObservedObject var model: MeetingModel
@@ -41,8 +41,6 @@ struct TranscriptPanel: View {
                 .onChange(of: app.liveLines.last?.text) { proxy.scrollTo(Self.bottom, anchor: .bottom) }
                 .onChange(of: model.lines.count) { proxy.scrollTo(Self.bottom, anchor: .bottom) }
             }
-            Divider().opacity(0.5)
-            footer
         }
         .frame(height: Self.height)
         .background(RoundedRectangle(cornerRadius: 18).fill(Chrome.capsule))
@@ -116,46 +114,24 @@ struct TranscriptPanel: View {
     private func colour(for name: String) -> Color {
         Self.names[abs(name.unicodeScalars.reduce(0) { $0 &* 31 &+ Int($1.value) }) % Self.names.count]
     }
-
-    private var footer: some View {
-        HStack(spacing: 12) {
-            if model.isLive && !app.isPaused { LevelDots() } else {
-                Image(systemName: "waveform").font(.system(size: 14)).foregroundStyle(.secondary)
-            }
-            RecordControl(model: model, app: app, style: .text)
-            Spacer()
-            if model.isLive {
-                Button { app.stopRecording() } label: {
-                    Label("End", systemImage: "stop.fill").font(.system(size: 12.5, weight: .medium)).foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("End recording and write it up")
-            }
-        }
-        .padding(.horizontal, 16).frame(height: 46)
-    }
 }
 
-/// Record, Resume (after End or a pause), Pause, or why it can't yet: the one control the bottom bar and the
-/// transcript panel share.
+/// Record, Resume (after End or a pause), Pause, or why it can't yet: the bottom bar's record control.
 struct RecordControl: View {
-    enum Style { case capsule, text }
     @ObservedObject var model: MeetingModel
     @ObservedObject var app: AppModel
-    let style: Style
 
     var body: some View {
         Button(action: act) {
             HStack(spacing: 7) {
                 if waiting {
                     ProgressView().controlSize(.small)
-                } else if style == .capsule && !model.isLive {
+                } else if !model.isLive {
                     Circle().fill(model.canRecord ? Chrome.record : Color.secondary).frame(width: 9, height: 9)
                 }
                 Text(title)
             }
             .font(.system(size: 13.5, weight: .medium))
-            .foregroundStyle(style == .text && enabled && !waiting ? AnyShapeStyle(Chrome.live) : AnyShapeStyle(.primary))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

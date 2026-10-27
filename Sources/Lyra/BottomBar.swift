@@ -48,7 +48,7 @@ struct BottomBar: View {
             .buttonStyle(.plain)
             .help(drawerOpen ? "Hide the transcript" : "Show the transcript")
             Divider().frame(height: 18)
-            RecordControl(model: model, app: app, style: .capsule)
+            RecordControl(model: model, app: app)
                 .padding(.leading, 12).padding(.trailing, model.isLive ? 6 : 16).frame(height: 38)
             if model.isLive {
                 Button { app.stopRecording() } label: {
