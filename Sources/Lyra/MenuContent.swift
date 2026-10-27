@@ -19,14 +19,8 @@ struct MenuContent: View {
                 Button("Pause recording") { model.pauseRecording() }
             }
             Button("End recording") { model.stopRecording() }
-        } else {
-            Button("Start recording (in person)") { model.startInPerson() }.disabled(model.starting)
         }
         if model.processingCount > 0 { Text("Processing…") }
-        Button("Teach Lyra my voice…") {
-            openWindow(id: "enrol")
-            NSApp.activate()
-        }
         if !model.ignoredList.isEmpty {
             Menu("Ignored apps") {
                 ForEach(model.ignoredList, id: \.key) { app in

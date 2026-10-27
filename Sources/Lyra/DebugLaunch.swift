@@ -24,6 +24,9 @@ enum DebugLaunch {
     /// `LYRA_DEBUG_TAGS=1`: the note's tags start unfolded.
     static var tagsOpen: Bool { env["LYRA_DEBUG_TAGS"] == "1" }
 
+    /// `LYRA_DEBUG_PEOPLE=1`: the people pill starts laid out, one pill per name.
+    static var peopleOpen: Bool { env["LYRA_DEBUG_PEOPLE"] == "1" }
+
     /// `LYRA_DEBUG_OPEN`: a meeting folder to show. `LYRA_DEBUG_WIDTH` / `LYRA_DEBUG_HEIGHT`: the window's size;
     /// the width may be a comma-separated list, applied half a second apart, to try a series of resizes.
     static func apply(to model: AppModel) {

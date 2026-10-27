@@ -34,18 +34,26 @@ public actor CalendarService {
     static let maxPages = 5
 
     private let store: CalendarStore
+    /// Lyra's own app details, by provider raw value.
+    private let builtIn: [String: OAuthClient]
     private let send: Send
     private let clock: @Sendable () -> Date
 
-    public init(store: CalendarStore,
+    public init(store: CalendarStore, builtIn: [String: OAuthClient] = [:],
                 send: @escaping Send = { try await URLSession.shared.data(for: $0) },
                 clock: @escaping @Sendable () -> Date = Date.init) {
         self.store = store
+        self.builtIn = builtIn
         self.send = send
         self.clock = clock
     }
 
     public func settings() throws -> CalendarSettings { try store.load() }
+
+    /// The app details for a new sign-in: ones chosen with "Change app details…" win over Lyra's built-in ones.
+    public func client(for provider: CalendarProvider) throws -> OAuthClient? {
+        try store.load().client(for: provider) ?? builtIn[provider.rawValue]
+    }
 
     public func removeAccount(_ id: String) throws { try store.save(try store.load().removing(accountID: id)) }
 

@@ -10,6 +10,12 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN/Lyra" "$APP/Contents/MacOS/Lyra"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+# Lyra's own Google / Microsoft app details, so connecting a calendar is only a sign-in. Kept out of git.
+if [[ -f Resources/CalendarApps.json ]]; then
+    cp Resources/CalendarApps.json "$APP/Contents/Resources/CalendarApps.json"
+else
+    echo "WARNING: Resources/CalendarApps.json not found; connecting a calendar will ask for app details." >&2
+fi
 
 # The app icon is drawn at build time (no image files in the repo).
 ICON_TMP="$(mktemp -d)"

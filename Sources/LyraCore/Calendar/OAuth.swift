@@ -71,6 +71,15 @@ public struct OAuthClient: Codable, Equatable, Sendable {
     }
 }
 
+/// The app details Lyra ships with, so connecting is only signing in. Read from `CalendarApps.json` in the app's
+/// resources (kept out of git; `scripts/build-app.sh` copies it in):
+/// `{"google": {"clientID", "clientSecret"}, "microsoft": {"clientID"}}`.
+public enum BuiltInApps {
+    public static func parse(_ data: Data) throws -> [String: OAuthClient] {
+        try JSONDecoder().decode([String: OAuthClient].self, from: data)
+    }
+}
+
 public struct OAuthTokens: Codable, Equatable, Sendable {
     public let accessToken: String
     public let refreshToken: String

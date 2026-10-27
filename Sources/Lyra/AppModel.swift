@@ -200,8 +200,6 @@ final class AppModel: ObservableObject {
 
     // MARK: recording
 
-    func startInPerson() { startRecording(target: nil, title: "In-person meeting") }
-
     /// New note: a plain note with nothing recording. Its folder is reserved like a recording's, so Record can
     /// record into it later. Nil (with the reason in `lastError`) if the note couldn't be made.
     func newNote() -> URL? {
