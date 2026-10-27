@@ -286,7 +286,7 @@ final class AppModel: ObservableObject {
         do {
             try await after.run(folder: folder) { blocks in await self.showExpansion(blocks, for: id) }
         } catch {
-            await report("Claude couldn't finish the notes for \(folder.lastPathComponent): \(error.localizedDescription)")
+            await report(ErrorBrief.sentence("Couldn't finish the notes for \(folder.lastPathComponent)", error))
         }
         await showExpansion(nil, for: id)
         await bumpRevision()
@@ -307,7 +307,7 @@ final class AppModel: ObservableObject {
     }
 
     private func report(_ message: String) {
-        lastError = [lastError, message].compactMap { $0 }.joined(separator: "\n")
+        lastError = message  // the latest problem only
     }
 
     /// Any folder with `.caf` files but no `transcript.json` was cut short by a crash or quit.

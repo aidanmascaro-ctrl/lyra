@@ -4,9 +4,21 @@ public enum ClaudeError: Error, LocalizedError, Equatable {
     case notInstalled
     case failed(String)
     case timedOut
+    /// The CLI's login has expired or is missing.
+    case signedOut
+
+    public static let signInMessage = "Claude needs you to sign in again. Open Terminal, run claude, then type /login."
+    private static let signedOutMarkers = ["failed to authenticate", "oauth", "not logged in", "/login"]
+
+    /// `.signedOut` when the CLI's own words say the login is gone, otherwise `.failed(detail)`.
+    public static func classify(_ detail: String) -> ClaudeError {
+        let lower = detail.lowercased()
+        return signedOutMarkers.contains { lower.contains($0) } ? .signedOut : .failed(detail)
+    }
 
     public var errorDescription: String? {
         switch self {
+        case .signedOut: Self.signInMessage
         case .notInstalled: "Claude Code isn't installed on this Mac."
         case .failed(let detail): "Claude couldn't answer: \(detail)"
         case .timedOut: "Claude took too long to answer."
@@ -179,7 +191,7 @@ public struct ClaudeCLI: ClaudeRunning {
             let errText = String(decoding: await stderrReader.value, as: UTF8.self)
 
             if let resultError {
-                continuation.finish(throwing: ClaudeError.failed(resultError))
+                continuation.finish(throwing: ClaudeError.classify(resultError))
             } else if let resultText {
                 // Insurance in case the CLI sends no partial deltas.
                 if !yieldedDelta && !resultText.isEmpty { continuation.yield(resultText) }
@@ -189,7 +201,7 @@ public struct ClaudeCLI: ClaudeRunning {
                 let tail = String(errText.trimmingCharacters(in: .whitespacesAndNewlines).suffix(ClaudeCLI.stderrTailLength))
                 let detail = tail.isEmpty ? (status == 0 ? "" : "exit code \(status)") : tail
                 let message = "Claude stopped before finishing its answer."
-                continuation.finish(throwing: ClaudeError.failed(detail.isEmpty ? message : "\(message) \(detail)"))
+                continuation.finish(throwing: ClaudeError.classify(detail.isEmpty ? message : "\(message) \(detail)"))
             }
         }
     }

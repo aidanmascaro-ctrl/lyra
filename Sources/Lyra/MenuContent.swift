@@ -1,4 +1,5 @@
 import AppKit
+import LyraCore
 import SwiftUI
 
 struct MenuContent: View {
@@ -28,7 +29,7 @@ struct MenuContent: View {
                 }
             }
         }
-        if let error = model.lastError { Text(error).lineLimit(3) }
+        if let error = model.lastError { Text(ErrorBrief.menuLine(error)).lineLimit(1) }
         Divider()
         Button("Quit") { NSApplication.shared.terminate(nil) }
     }
