@@ -126,8 +126,7 @@ public struct AfterMeeting: Sendable {
     /// the Expanded section goes back to what it was, so no half-written grey is left behind.
     private func expand(_ note: LoadedNote, lines: [TranscriptLine], folder: URL,
                         onExpansion: @Sendable ([NoteBlock]) async -> Void) async throws -> [NoteBlock] {
-        let ctx = MeetingContext(title: note.document.front.title, myNotes: NoteMarkdown.parse(note.document.myNotes),
-                                 transcript: lines, earlier: earlierMeetings(than: note))
+        let ctx = Self.context(for: note, lines: lines, index: index)
         let original = note.document.expanded
         var current = note
         var latest: [NoteBlock] = []
@@ -178,8 +177,18 @@ public struct AfterMeeting: Sendable {
         return greyUntouched && whiteFromMyNotes
     }
 
+    /// What Claude is given about a meeting: its title, My notes, transcript and earlier meetings in its series.
+    public static func context(for note: LoadedNote, meetingFolder: URL, index: NoteIndex) throws -> MeetingContext {
+        context(for: note, lines: try transcript(in: meetingFolder), index: index)
+    }
+
+    private static func context(for note: LoadedNote, lines: [TranscriptLine], index: NoteIndex) -> MeetingContext {
+        MeetingContext(title: note.document.front.title, myNotes: NoteMarkdown.parse(note.document.myNotes),
+                       transcript: lines, earlier: earlierMeetings(than: note, index: index))
+    }
+
     /// Earlier meetings in this note's confirmed series (none while the series is only a suggestion), as context.
-    private func earlierMeetings(than note: LoadedNote) -> [EarlierMeeting] {
+    private static func earlierMeetings(than note: LoadedNote, index: NoteIndex) -> [EarlierMeeting] {
         let notes = index.allNotes()
         let summaries = SeriesLibrary.summaries(notes: notes, meetingsByID: [:], notesRoot: index.notesRoot)
         let id = note.document.front.lyraID
@@ -193,10 +202,37 @@ public struct AfterMeeting: Sendable {
             }
     }
 
+    // MARK: Re-expand
+
+    /// Aidan's Re-expand: Claude's untouched grey is written afresh, edited grey and white text stay, and My-notes
+    /// points added since are folded in. Streams to `onExpansion`; the note is written once, at the end, and only if
+    /// Expanded hasn't changed meanwhile (else `changedOnDisk`), so a failure leaves it exactly as it was.
+    public func reExpand(folder: URL, onExpansion: @Sendable ([NoteBlock]) async -> Void = { _ in }) async throws {
+        let meeting = try Meeting.load(from: folder)
+        let note = try index.load(meeting.id, hint: meeting.notePath.map { URL(fileURLWithPath: $0) })
+        let ctx = try Self.context(for: note, meetingFolder: folder, index: index)
+        let original = note.document.expanded
+        var latest: [NoteBlock] = []
+        let stream = expander.reExpand(myNotes: ctx.myNotes, expanded: NoteMarkdown.parse(original),
+                                       lyraWrote: meeting.expandedHashes ?? [], ctx: ctx)
+        for try await blocks in stream {
+            latest = blocks
+            await onExpansion(blocks)
+        }
+        try NoteEdits.rememberGrey(latest, meetingFolder: folder)
+        let text = NoteMarkdown.render(latest)
+        var changedMeanwhile = false
+        _ = try index.update(note) { doc in
+            changedMeanwhile = doc.expanded != original
+            if !changedMeanwhile { doc.expanded = text }
+        }
+        if changedMeanwhile { throw NoteIndexError.changedOnDisk(note.url) }
+    }
+
     // MARK: Files
 
     /// Re-reads meeting.json and applies only `change`, so fields written meanwhile (a rename's hash) survive.
-    static func updateMeeting(in folder: URL, _ change: (inout Meeting) -> Void) throws {
+    public static func updateMeeting(in folder: URL, _ change: (inout Meeting) -> Void) throws {
         var meeting = try Meeting.load(from: folder)
         change(&meeting)
         try meeting.save(in: folder)
@@ -231,7 +267,7 @@ extension NoteIndex {
 
     /// Applies `change` to the note as it is on disk and saves it. If the file changes in between (Aidan typing in
     /// Obsidian or in Lyra), reloads and applies `change` again, so only the parts `change` touches are Lyra's.
-    func update(_ loaded: LoadedNote, _ change: (inout NoteDocument) -> Void) throws -> LoadedNote {
+    public func update(_ loaded: LoadedNote, _ change: (inout NoteDocument) -> Void) throws -> LoadedNote {
         var current = loaded
         for attempt in 1...Self.saveAttempts {
             var document = current.document

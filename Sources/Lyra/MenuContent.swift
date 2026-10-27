@@ -6,18 +6,20 @@ struct MenuContent: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
+        Button("Open Lyra") { show("home") }
+        if let live = model.liveMeeting {
+            Button("New note — \(live.appName)") {
+                model.shownMeeting = live.folder
+                show("meeting")
+            }
+        }
+        Divider()
         if model.isRecording {
             Button("Stop recording") { model.stopRecording() }
         } else {
             Button("Start recording (in person)") { model.startInPerson() }.disabled(model.starting)
         }
         if model.processingCount > 0 { Text("Processing…") }
-        if let meeting = model.lastMeeting {
-            Button("Open last meeting") {
-                model.shownMeeting = meeting
-                show("meeting")
-            }
-        }
         Button("Teach Lyra my voice…") { show("enrol") }
         if !model.ignoredList.isEmpty {
             Menu("Ignored apps") {

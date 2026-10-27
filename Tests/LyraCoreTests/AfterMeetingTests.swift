@@ -342,4 +342,47 @@ final class AfterMeetingTests: XCTestCase {
         // setUp's folder: notePath set, processed, nothing recorded yet.
         XCTAssertEqual(AfterMeeting.pendingFolders(in: root).map(\.lastPathComponent), ["2027-01-15 1000 — Zoom Meeting", "a-pending"])
     }
+    // MARK: Re-expand
+
+    private func writeExpanded(_ text: String, hashes: [String]) throws {
+        let loaded = try index.load(meeting.id, hint: nil)
+        var doc = loaded.document
+        doc.expanded = text
+        _ = try index.save(doc, over: loaded)
+        try AfterMeeting.updateMeeting(in: folder) { $0.expandedHashes = hashes; $0.afterMeetingDone = true; $0.insightsDone = true }
+    }
+
+    func testReExpandRewritesOnlyGreyAndFoldsInNewNotes() async throws {
+        try typeMyNotes("- pricing\n- budget")
+        let old = NoteMarkdown.parse("- pricing\n  - <span class=\"lyra\">old detail</span>")
+        try writeExpanded(NoteMarkdown.render(old), hashes: ExpandedMerge.hashes(of: old))
+        let claude = ScriptedClaude(insights: .success(insightsJSON), expansion: ["@0\n- new detail\n"])
+        let seen = Seen()
+        try await after(claude).reExpand(folder: folder) { await seen.add($0) }
+
+        let expanded = NoteMarkdown.parse(try index.load(meeting.id, hint: nil).document.expanded)
+        XCTAssertEqual(expanded.map(\.plainText), ["pricing", "new detail", "budget"])
+        XCTAssertEqual(expanded.map(\.byClaude), [false, true, false])
+        XCTAssertTrue(try Meeting.load(from: folder).expandedHashes?.contains(ExpandedMerge.hashes(of: [expanded[1]])[0]) == true)
+        XCTAssertEqual(try index.load(meeting.id, hint: nil).document.myNotes, "- pricing\n- budget")
+        let streamed = await seen.blocks
+        XCTAssertEqual(streamed.last, expanded)
+    }
+
+    func testReExpandFailureLeavesExpandedAsItWas() async throws {
+        try typeMyNotes("- pricing")
+        try writeExpanded("- pricing", hashes: [])
+        let before = try String(contentsOf: index.find(meeting.id, hint: nil)!, encoding: .utf8)
+        let claude = ScriptedClaude(insights: .success(insightsJSON), expansion: ["@0\n- half"], expansionError: ClaudeError.timedOut)
+        do { try await after(claude).reExpand(folder: folder); XCTFail("expected throw") } catch {}
+        XCTAssertEqual(try String(contentsOf: index.find(meeting.id, hint: nil)!, encoding: .utf8), before)
+    }
+
+    func testContextHasMyNotesAndTranscript() throws {
+        try typeMyNotes("- pricing")
+        let ctx = try AfterMeeting.context(for: try index.load(meeting.id, hint: nil), meetingFolder: folder, index: index)
+        XCTAssertEqual(ctx.myNotes.map(\.plainText), ["pricing"])
+        XCTAssertEqual(ctx.transcript.map(\.speakerLabel), ["Marco"])
+        XCTAssertEqual(ctx.title, "Zoom Meeting")
+    }
 }

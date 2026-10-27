@@ -2,124 +2,53 @@ import AppKit
 import LyraCore
 import SwiftUI
 
-/// One meeting: its speakers (click one to rename it, which also teaches Lyra that voice) and its transcript.
-@MainActor
-final class MeetingModel: ObservableObject {
-    let folder: URL
-    private let notes: NoteIndex
-    private let service: RenameService
-    /// Where the note is now (found by `lyra_id`, so a move in Obsidian is followed); refreshed on reload.
-    @Published private(set) var note: URL?
-    @Published private(set) var meeting: Meeting?
-    @Published private(set) var lines: [TranscriptLine] = []
-    @Published private(set) var loadError: String?
-    @Published private(set) var renaming = false
-    @Published private(set) var message: String?
-    @Published var askToReplace = false
-    /// Set when a rename error also needs the replace question: asked once the error is dismissed.
-    private var confirmAfterMessage = false
-
-    init(folder: URL, notes: NoteIndex, people: PeopleStore) {
-        self.folder = folder
-        self.notes = notes
-        service = RenameService(people: people)
-        reload()
-    }
-
-    var speakers: [SpeakerSummary] { MeetingOverview.speakers(in: lines) }
-
-    func reload() {
-        do {
-            meeting = try Meeting.load(from: folder)
-            note = try RenameService.noteURL(inMeetingFolder: folder, index: notes)
-            lines = try JSONDecoder().decode([TranscriptLine].self, from: Data(contentsOf: folder.appendingPathComponent("transcript.json")))
-            loadError = nil
-        } catch { loadError = "Couldn't read this meeting: \(error.localizedDescription)" }
-    }
-
-    func rename(_ label: String, to name: String) {
-        renaming = true
-        let (service, folder, notes) = (service, folder, notes)
-        Task {
-            let result = await Task.detached { () -> Result<RenameOutcome, Error> in
-                do { return .success(try service.rename(speakerLabel: label, to: name, inMeetingFolder: folder, index: notes)) }
-                catch { return .failure(error) }
-            }.value
-            renaming = false
-            switch result {
-            case .success(let outcome): handle(outcome)
-            case .failure(RenameError.notLearned(let outcome, let underlying)):
-                message = RenameError.notLearned(outcome: outcome, underlying: underlying).localizedDescription
-                confirmAfterMessage = outcome == .needsConfirmation
-            case .failure(let error): message = error.localizedDescription
-            }
-            reload()
-        }
-    }
-
-    private func handle(_ outcome: RenameOutcome) {
-        if outcome == .needsConfirmation { askToReplace = true }
-    }
-
-    func dismissMessage() {
-        message = nil
-        guard confirmAfterMessage else { return }
-        confirmAfterMessage = false
-        Task { askToReplace = true }  // next turn: the error alert has to finish closing first
-    }
-
-    /// "Replace" in the edited-note alert.
-    func replaceNote() {
-        let (service, folder, notes) = (service, folder, notes)
-        Task {
-            let error = await Task.detached { () -> Error? in
-                do { try service.rewriteNote(inMeetingFolder: folder, index: notes); return nil } catch { return error }
-            }.value
-            if let error { message = error.localizedDescription }
-            reload()
-        }
-    }
-}
-
+/// One meeting, Granola-style: serif title, a quiet row of pills, three tabs (My notes / Expanded / Transcript)
+/// and a floating bar at the bottom for the live transcript and for asking Claude.
 struct MeetingWindow: View {
     @ObservedObject var app: AppModel
 
     var body: some View {
-        if let folder = app.shownMeeting {
-            MeetingContent(model: MeetingModel(folder: folder, notes: app.notes, people: app.people), people: app.people)
-                .id(folder)
-        } else {
-            Text("No meetings yet.").padding(40)
+        Group {
+            if let folder = app.shownMeeting {
+                MeetingContent(model: MeetingModel(folder: folder, app: app), app: app).id(folder)
+            } else {
+                Text("No meeting open.").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
+        .frame(minWidth: 560, minHeight: 480)
+        .lyraWindow()
     }
 }
 
 private struct MeetingContent: View {
     @StateObject var model: MeetingModel
-    let people: PeopleStore
-    @State private var editing: String?
-    @State private var newName = ""
+    @ObservedObject var app: AppModel
+    @State private var drawerOpen = false
 
-    init(model: @autoclosure @escaping () -> MeetingModel, people: PeopleStore) {
+    init(model: @autoclosure @escaping () -> MeetingModel, app: AppModel) {
         _model = StateObject(wrappedValue: model())
-        self.people = people
+        self.app = app
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            header
-            if let error = model.loadError { Text(error).foregroundStyle(.red) }
-            HStack(alignment: .top, spacing: 16) {
-                speakerList.frame(width: 240)
-                transcript
+        VStack(spacing: 0) {
+            MeetingHeader(model: model).noteColumn().padding(.top, Chrome.topInset)
+            banners.noteColumn()
+            page.frame(maxWidth: .infinity, maxHeight: .infinity)
+            if drawerOpen && model.isLive {
+                LiveDrawer(app: app).noteColumn().transition(.move(edge: .bottom).combined(with: .opacity))
             }
+            BottomBar(model: model, drawerOpen: $drawerOpen).padding(.horizontal, 24).padding(.vertical, 14)
         }
-        .padding(20)
-        .frame(minWidth: 720, minHeight: 480)
-        .alert("Couldn't finish renaming", isPresented: Binding(get: { model.message != nil },
-                                                                set: { if !$0 { model.dismissMessage() } })) {
+        .animation(.easeOut(duration: 0.2), value: drawerOpen)
+        .onChange(of: model.streaming == nil) { model.reload() }
+        .onChange(of: app.revision) { model.reload() }
+        .onChange(of: model.isLive) { if !model.isLive { drawerOpen = false } }
+        .onDisappear { model.close() }
+        .alert("Couldn't finish renaming", isPresented: Binding(get: { model.renameMessage != nil },
+                                                                set: { if !$0 { model.dismissRenameMessage() } })) {
             Button("OK") {}
-        } message: { Text(model.message ?? "") }
+        } message: { Text(model.renameMessage ?? "") }
         .alert("This note's transcript was edited in Obsidian. Replace it with the renamed transcript?",
                isPresented: $model.askToReplace) {
             Button("Replace") { model.replaceNote() }
@@ -127,89 +56,79 @@ private struct MeetingContent: View {
         }
     }
 
-    private var header: some View {
-        HStack {
-            VStack(alignment: .leading) {
-                Text(model.meeting?.title ?? model.folder.lastPathComponent).font(.title2.bold())
-                if let date = model.meeting?.startedAt {
-                    Text(date.formatted(date: .complete, time: .shortened)).foregroundStyle(.secondary)
+    @ViewBuilder private var page: some View {
+        switch model.tab {
+        case .myNotes:
+            NoteEditor(blocks: model.myBlocks, onChange: { model.edited($0, in: .myNotes) })
+                .overlay(alignment: .topLeading) { placeholder(model.myBlocks, "Write notes…") }
+        case .expanded:
+            NoteEditor(blocks: model.streaming ?? model.expandedBlocks, onChange: { model.edited($0, in: .expanded) },
+                       selectionActions: true,
+                       onSelectionAction: { model.selectionAction($0, text: $1, block: $2) })
+                // Claude is writing it: nothing to type into until it's done.
+                .allowsHitTesting(model.streaming == nil)
+                .overlay(alignment: .topLeading) { placeholder(model.streaming ?? model.expandedBlocks, expandedPlaceholder) }
+        case .transcript:
+            TranscriptTab(model: model, people: app.people)
+        }
+    }
+
+    private var expandedPlaceholder: String {
+        model.lines.isEmpty ? "Claude expands your notes from the transcript after the meeting." : "Nothing expanded yet."
+    }
+
+    @ViewBuilder private func placeholder(_ blocks: [NoteBlock], _ text: String) -> some View {
+        if blocks.isEmpty || blocks == [NoteBlock(kind: .paragraph, runs: [])] {
+            Text(text).font(.system(size: 15)).foregroundStyle(.tertiary)
+                .noteColumn().padding(.top, 28).allowsHitTesting(false)
+        }
+    }
+
+    @ViewBuilder private var banners: some View {
+        VStack(spacing: 6) {
+            if let error = model.loadError { Banner(text: error) }
+            if model.conflict != nil {
+                Banner(text: "This note changed in Obsidian.") {
+                    Button("Reload") { model.takeDisk() }
+                    Button("Keep mine") { model.keepMine() }
                 }
             }
-            Spacer()
-            Button("Open note in Obsidian") { if let note = model.note { NSWorkspace.shared.open(note) } }
-                .disabled(model.note.map { !FileManager.default.fileExists(atPath: $0.path) } ?? true)
-        }
-    }
-
-    private var speakerList: some View {
-        List(model.speakers, id: \.label) { s in
-            VStack(alignment: .leading, spacing: 4) {
-                Button { editing = s.label; newName = s.label.hasPrefix("Speaker ") ? "" : s.label } label: {
-                    HStack {
-                        Text(s.label).bold()
-                        if let badge = Self.badge(s.source) { Text(badge).font(.caption).foregroundStyle(.secondary) }
-                        Spacer()
-                        Text(Self.duration(s.seconds)).monospacedDigit().foregroundStyle(.secondary)
-                    }
-                    .contentShape(Rectangle())
+            if let notice = model.notice {
+                Banner(text: notice) { Button("OK") { model.notice = nil } }
+            }
+            if model.tab == .expanded {
+                if model.streaming != nil {
+                    Banner(text: "Claude is writing the expanded notes…", spinning: true)
+                } else if let failure = model.expandFailure {
+                    Banner(text: "Couldn't expand — \(failure)") { Button("Retry") { model.retryExpansion() } }
+                } else if model.newNotesCount > 0 {
+                    let n = model.newNotesCount
+                    Banner(text: "\(n) new note\(n == 1 ? "" : "s") since") { Button("Re-expand") { model.reExpand() } }
                 }
-                .buttonStyle(.plain)
-                .disabled(model.renaming)
-                if editing == s.label { renameField(for: s.label) }
             }
         }
+        .padding(.bottom, 4)
     }
+}
 
-    private func renameField(for label: String) -> some View {
-        let typed = newName.trimmingCharacters(in: .whitespaces).lowercased()
-        let suggestions = people.all().map(\.name)
-            .filter { typed.isEmpty || $0.lowercased().hasPrefix(typed) }
-            .filter { $0.lowercased() != typed }
-            .sorted()
-            .prefix(5)
-        return VStack(alignment: .leading, spacing: 4) {
-            TextField("Name", text: $newName).onSubmit { commit(label) }
-            ForEach(Array(suggestions), id: \.self) { name in
-                Button(name) { newName = name }.buttonStyle(.link)
-            }
-            HStack {
-                Button("Cancel") { editing = nil }
-                Button("Rename") { commit(label) }
-                    .disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
+/// A quiet one-line message under the tabs, with its actions on the right.
+struct Banner<Actions: View>: View {
+    let text: String
+    var spinning = false
+    @ViewBuilder var actions: () -> Actions
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if spinning { ProgressView().controlSize(.small) }
+            Text(text).font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            actions().buttonStyle(.plain).font(.system(size: 12.5, weight: .medium)).foregroundStyle(.primary)
         }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Chrome.pill))
     }
+}
 
-    private func commit(_ label: String) {
-        let name = newName.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty else { return }
-        editing = nil
-        model.rename(label, to: name)
-    }
-
-    private var transcript: some View {
-        List(model.lines.indices, id: \.self) { i in
-            let line = model.lines[i]
-            HStack(alignment: .firstTextBaseline) {
-                Text(Self.stamp(line.start)).monospacedDigit().foregroundStyle(.secondary)
-                Text(line.speakerLabel).bold()
-                Text(line.text).textSelection(.enabled)
-            }
-        }
-    }
-
-    static func badge(_ source: NameSource?) -> String? {
-        switch source {
-        case .knownVoice: "known voice"
-        case .setByAidan: "named by you"
-        case nil: nil
-        }
-    }
-
-    static func duration(_ s: Double) -> String { "\(Int(s.rounded())) s" }
-
-    static func stamp(_ t: Double) -> String {
-        let s = Int(t)
-        return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String(format: "%02d:%02d", s / 60, s % 60)
-    }
+extension Banner where Actions == EmptyView {
+    init(text: String, spinning: Bool = false) { self.init(text: text, spinning: spinning) { EmptyView() } }
 }

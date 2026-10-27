@@ -5,6 +5,14 @@ import SwiftUI
 struct LyraApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
 
+    init() {
+        // Aidan's Mac shows scroll bars always; Lyra's pages keep Granola's thin overlay scroller that shows only
+        // while scrolling. Set for Lyra alone, in the volatile argument domain: nothing is saved.
+        var arguments = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
+        arguments["AppleShowScrollBars"] = "WhenScrolling"
+        UserDefaults.standard.setVolatileDomain(arguments, forName: UserDefaults.argumentDomain)
+    }
+
     var body: some Scene {
         MenuBarExtra {
             MenuContent(model: delegate.model)
@@ -15,7 +23,14 @@ struct LyraApp: App {
             .windowResizability(.contentSize)
             .defaultLaunchBehavior(.suppressed)
             .restorationBehavior(.disabled)
+        Window("Lyra", id: "home") { HomeWindow(app: delegate.model) }
+            .windowStyle(.hiddenTitleBar)
+            .defaultSize(width: 760, height: 760)
+            .defaultLaunchBehavior(.suppressed)
+            .restorationBehavior(.disabled)
         Window("Meeting", id: "meeting") { MeetingWindow(app: delegate.model) }
+            .windowStyle(.hiddenTitleBar)
+            .defaultSize(width: 820, height: 860)
             .defaultLaunchBehavior(.suppressed)
             .restorationBehavior(.disabled)
     }
