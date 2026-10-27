@@ -129,4 +129,35 @@ final class NoteDocumentTests: XCTestCase {
         let doc = NoteDocument(front: f, warnings: [], myNotes: "", expanded: "", transcript: "")
         XCTAssertEqual(try NoteDocument.parse(doc.render(timeZone: zone)), doc)
     }
+
+    func testBlockStyleListsFromObsidianPropertiesAreRead() throws {
+        let note = """
+        ---
+        lyra_id: 11111111-2222-3333-4444-555555555555
+        date: 2027-01-15T16:00:00+08:00
+        tags:
+          - meeting
+          - ai-consulting
+        links:
+          - "[[Northwind]]"
+        ---
+        # Props
+
+        """
+        let doc = try NoteDocument.parse(note)
+        XCTAssertEqual(doc.front.tags, ["ai-consulting"])
+        XCTAssertEqual(doc.front.links, ["Northwind"])
+        let out = doc.render(timeZone: zone)
+        XCTAssertTrue(out.contains("tags: [meeting, ai-consulting]"))
+        XCTAssertTrue(out.contains("links: [\"[[Northwind]]\"]"))
+        XCTAssertFalse(out.contains("  - "))
+        XCTAssertEqual(try NoteDocument.parse(out), doc)
+    }
+
+    func testTypedCommentOpenerInMyNotesRoundTripsUnchanged() throws {
+        let doc = NoteDocument(front: front(), warnings: [], myNotes: "<!-- hi", expanded: "<!-- there", transcript: "t")
+        let out = doc.render(timeZone: zone)
+        XCTAssertFalse(out.contains("<!-- hi"))
+        XCTAssertEqual(try NoteDocument.parse(out), doc)
+    }
 }

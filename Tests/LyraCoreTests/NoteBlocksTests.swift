@@ -74,4 +74,9 @@ final class NoteBlocksTests: XCTestCase {
         XCTAssertEqual(NoteMarkdown.parse(""), [])
         XCTAssertEqual(NoteMarkdown.render([]), "")
     }
+
+    func testNumberedBlockAtDeepestIndentRoundTrips() {
+        let md = "      1. x\n      2. y"
+        XCTAssertEqual(NoteMarkdown.render(NoteMarkdown.parse(md)), md)
+    }
 }

@@ -150,13 +150,26 @@ public struct NoteDocument: Equatable, Sendable {
 
         var fields: [String: String] = [:]
         var extra: [String] = []
+        var blockKey: String?   // a known list key whose `  - item` lines follow
+        var blockItems: [String: [String]] = [:]
         for line in frontLines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if let key = blockKey, line.hasPrefix(" "), trimmed.hasPrefix("- ") {
+                blockItems[key, default: []].append(String(trimmed.dropFirst(2)).trimmingCharacters(in: .whitespaces))
+                continue
+            }
+            blockKey = nil
             if let colon = line.firstIndex(of: ":"), knownKeys.contains(String(line[..<colon])), !line.hasPrefix(" ") {
-                fields[String(line[..<colon])] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+                let key = String(line[..<colon])
+                let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+                fields[key] = value
+                if value.isEmpty, key == "tags" || key == "links" { blockKey = key }
             } else if !line.isEmpty {
                 extra.append(line)
             }
         }
+        // Obsidian's Properties editor writes lists as `key:` plus `  - item` lines.
+        for (key, items) in blockItems { fields[key] = "[" + items.joined(separator: ", ") + "]" }
 
         let located = locateSections(in: body)
         let headText = located.first.map { String(body[..<$0.outer.lowerBound]) } ?? body
@@ -173,9 +186,10 @@ public struct NoteDocument: Equatable, Sendable {
             if hit.outer.lowerBound > cursor { pieces.append(.literal(String(body[cursor..<hit.outer.lowerBound]))) }
             pieces.append(.section(hit.section))
             let sectionBody = trimOne(String(body[hit.body]))
+            let typed = sectionBody.replacingOccurrences(of: "&lt;!--", with: "<!--")
             switch hit.section {
-            case .myNotes: doc.myNotes = sectionBody
-            case .expanded: doc.expanded = sectionBody
+            case .myNotes: doc.myNotes = typed
+            case .expanded: doc.expanded = typed
             case .transcript: doc.transcript = sectionBody
             }
             cursor = hit.outer.upperBound
@@ -250,12 +264,17 @@ public struct NoteDocument: Equatable, Sendable {
 
     /// Adds any section the file lacks: Transcript last, Expanded just before it, My notes first.
     private static func ensureAllSections(_ pieces: [Piece]) -> [Piece] {
+        guard !pieces.isEmpty else { return defaultPieces }
         var out = pieces
         func has(_ s: Section) -> Bool { out.contains(.section(s)) }
         if !has(.transcript) { out += [gap, .section(.transcript), .literal("\n")] }
         if !has(.expanded), let i = out.firstIndex(of: .section(.transcript)) { out.insert(contentsOf: [.section(.expanded), gap], at: i) }
         if !has(.myNotes) { out.insert(contentsOf: [.section(.myNotes), gap], at: 0) }
-        return out
+        // Adjacent literals are one piece, so a parsed document equals the one that was rendered.
+        return out.reduce(into: [Piece]()) { merged, piece in
+            if case .literal(let b) = piece, case .literal(let a)? = merged.last { merged[merged.count - 1] = .literal(a + b) }
+            else { merged.append(piece) }
+        }
     }
 
     /// Render writes `marker\nbody\nmarker`, so one newline each side is not part of the body.

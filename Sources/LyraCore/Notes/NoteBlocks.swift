@@ -47,7 +47,7 @@ public enum NoteMarkdown {
         return blocks.map { block in
             let level = min(max(block.indent, 0), maxIndent)
             let resetFrom = block.kind == .numbered ? level + 1 : level
-            for i in resetFrom...maxIndent { counters[i] = 0 }
+            for i in resetFrom..<counters.count { counters[i] = 0 }
             if block.kind == .paragraph || block.kind == .heading1 || block.kind == .heading2 {
                 counters = [Int](repeating: 0, count: maxIndent + 1)
             }
