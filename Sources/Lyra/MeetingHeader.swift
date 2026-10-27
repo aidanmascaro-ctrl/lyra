@@ -8,6 +8,7 @@ struct MeetingHeader: View {
     @FocusState private var titleFocused: Bool
     @State private var newSeries: String?
     @State private var confirmTrash = false
+    @State private var showTags = Self.tagsOpenAtLaunch
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -48,13 +49,24 @@ struct MeetingHeader: View {
                     .help(people.joined(separator: ", "))
             }
             if let front = model.loaded?.document.front {
-                ForEach(front.tags, id: \.self) { tag in TagPill(text: "#\(tag)") }
+                if !front.tags.isEmpty { tagsToggle(count: front.tags.count) }
+                if showTags { ForEach(front.tags, id: \.self) { tag in TagPill(text: "#\(tag)") } }
                 ForEach(front.links.filter { !people.contains($0) }, id: \.self) { link in
                     TagPill(text: link, systemImage: "link")
                 }
             }
         }
         .labelStyle(PillLabelStyle())
+    }
+
+    /// Tags stay folded behind one quiet pill until it's clicked; clicking again folds them away.
+    private func tagsToggle(count: Int) -> some View {
+        Button { withAnimation(.easeOut(duration: 0.15)) { showTags.toggle() } } label: {
+            TagPill(text: showTags ? "Hide tags" : (count == 1 ? "1 tag" : "\(count) tags"), systemImage: "number")
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(showTags ? "Hide tags" : "Show tags")
     }
 
     @ViewBuilder private var seriesChip: some View {
@@ -120,6 +132,12 @@ struct MeetingHeader: View {
         }
         .buttonStyle(.plain)
     }
+
+    #if DEBUG
+    private static var tagsOpenAtLaunch: Bool { DebugLaunch.tagsOpen }
+    #else
+    private static let tagsOpenAtLaunch = false
+    #endif
 
     static func when(_ date: Date) -> String {
         if Calendar.current.isDateInToday(date) { return "Today " + date.formatted(date: .omitted, time: .shortened) }
