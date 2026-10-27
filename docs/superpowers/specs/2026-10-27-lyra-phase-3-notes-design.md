@@ -63,8 +63,6 @@ either place show up in the other.
 - Pulling Obsidian **client notes** into expansion — later.
 - Importing old Granola notes.
 - Slide screenshots, active-speaker tile reading — Phase 4 as planned.
-- **Live transcript while the meeting runs** — not in Phase 3 (transcription stays
-  post-meeting). *Claude's call; the original design had a live transcript beside the notes.*
 - Sharing, cloud sync, mobile, multi-user.
 
 ## 4. Anti-goals (a failure even if it works)
@@ -99,6 +97,16 @@ either place show up in the other.
   it's the only tab with content; Expanded and Transcript fill in after processing.
 - Transcript tab keeps Phase 2's click-a-speaker-to-rename.
 - Notes are saved continuously as he types (crash-safe), not only on close.
+- **Live transcript drawer** (decided with Aidan, Granola-style): during the meeting, a small
+  control at the bottom of the window toggles a drawer that slides up showing the transcript
+  as it's spoken, and hides away again. Hidden by default so the page stays a blank canvas.
+  - Live text is a rough draft: on-device streaming speech-to-text, labelled by track only —
+    **Me** (mic) and **Them** (meeting audio). *Claude's call:* proper speaker names need the
+    whole-recording pass, so names arrive after the meeting.
+  - When processing finishes, the Transcript tab holds the full, named transcript; the live
+    draft is thrown away, not saved.
+  - Live transcription must never put the recording at risk: if it falls behind or fails, the
+    drawer says so and the recording carries on.
 
 ### 5.3 Expanded notes
 - When the transcript is ready, Claude writes the expanded notes, **streamed in top to bottom**.
