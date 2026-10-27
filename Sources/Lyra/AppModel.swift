@@ -66,6 +66,8 @@ final class AppModel: ObservableObject {
     func launch() {
         lastMeeting = MeetingOverview.lastFolder(in: paths.recordingsRoot)
         recoverUnprocessed()
+        // Processed, but Lyra quit before titles and expansion were done: finish them (after any recovery above).
+        for folder in AfterMeeting.pendingFolders(in: paths.recordingsRoot) { runAfterMeeting(folder: folder) }
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
         ) { [weak self] _ in

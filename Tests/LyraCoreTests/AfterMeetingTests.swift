@@ -6,6 +6,8 @@ private final class ScriptedClaude: ClaudeRunning, @unchecked Sendable {
     var insights: Result<String, Error>
     var expansion: [String]
     var expansionError: Error?
+    /// Runs when the insights call is made: something else writing the meeting's files meanwhile.
+    var duringInsights: (@Sendable () -> Void)?
     private let lock = NSLock()
     private var calls: [(system: String, prompt: String)] = []
 
@@ -13,11 +15,13 @@ private final class ScriptedClaude: ClaudeRunning, @unchecked Sendable {
         self.insights = insights; self.expansion = expansion; self.expansionError = expansionError
     }
 
+    var insightsCalls: Int { lock.withLock { calls.filter { $0.system == Prompts.insightsSystem }.count } }
     var expansionPrompts: [String] { lock.withLock { calls.filter { $0.system != Prompts.insightsSystem }.map(\.prompt) } }
 
     func stream(system: String, prompt: String, model: String) -> AsyncThrowingStream<String, Error> {
         lock.withLock { calls.append((system, prompt)) }
         let isInsights = system == Prompts.insightsSystem
+        if isInsights { duringInsights?() }
         let (insights, expansion, failure) = (self.insights, self.expansion, self.expansionError)
         return AsyncThrowingStream { continuation in
             if isInsights {
@@ -212,5 +216,130 @@ final class AfterMeetingTests: XCTestCase {
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyy-MM-dd HHmm"
         return f.string(from: date)
+    }
+
+    // MARK: Fix round 1
+
+    /// A rename from the meeting window lands while Claude is filing the meeting: its hash and names survive.
+    func testRenameDuringRunSurvives() async throws {
+        let claude = ScriptedClaude(insights: .success(insightsJSON), expansion: expansionLines)
+        let folder = self.folder!
+        claude.duringInsights = {
+            var renamed = try! Meeting.load(from: folder)
+            renamed.transcriptSectionHash = "hash-after-rename"
+            try! renamed.save(in: folder)
+            let lines = [TranscriptLine(speakerLabel: "Elena", track: .meeting, start: 0, end: 2, text: "Two hundred a unit works for us.")]
+            try! JSONEncoder().encode(lines).write(to: folder.appendingPathComponent("transcript.json"))
+        }
+        try await after(claude).run(folder: folder)
+        let saved = try Meeting.load(from: folder)
+        XCTAssertEqual(saved.transcriptSectionHash, "hash-after-rename")
+        XCTAssertEqual(saved.afterMeetingDone, true)
+        XCTAssertTrue(claude.expansionPrompts.first?.contains("Elena") == true)
+    }
+
+    func testFileFailureRecordsExpandError() async throws {
+        try Data("not json".utf8).write(to: folder.appendingPathComponent("transcript.json"))
+        let claude = ScriptedClaude(insights: .success(insightsJSON), expansion: expansionLines)
+        do {
+            try await after(claude).run(folder: folder)
+            XCTFail("expected throw")
+        } catch {}
+        let error = try XCTUnwrap(Meeting.load(from: folder).expandError)
+        XCTAssertTrue(error.hasPrefix("Lyra couldn't read or save this meeting's files."), error)
+        XCTAssertNil(try Meeting.load(from: folder).afterMeetingDone)
+    }
+
+    func testUnfinishedMarkerIsSavedWhileStreaming() async throws {
+        let folder = self.folder!
+        let marks = Seen()
+        try await after(ScriptedClaude(insights: .success(insightsJSON), expansion: expansionLines)).run(folder: folder) { _ in
+            if (try? Meeting.load(from: folder).expandError) == AfterMeeting.unfinishedMessage { await marks.add([]) }
+        }
+        let streamed = await marks.blocks
+        XCTAssertFalse(streamed.isEmpty)
+        XCTAssertNil(try Meeting.load(from: folder).expandError)
+    }
+
+    /// Lyra quit mid-stream: Expanded holds part of its own grey (plus Aidan's point carried over). Retry replaces it.
+    private func leaveUnfinishedStream(expanded: [NoteBlock], recorded: [NoteBlock]) throws {
+        try typeMyNotes("- pricing")
+        let loaded = try index.load(meeting.id, hint: reserved)
+        var doc = loaded.document
+        doc.expanded = NoteMarkdown.render(expanded)
+        _ = try index.save(doc, over: loaded)
+        try AfterMeeting.updateMeeting(in: folder) {
+            $0.insightsDone = true
+            $0.expandError = AfterMeeting.unfinishedMessage
+            $0.expandedHashes = ExpandedMerge.hashes(of: recorded)
+        }
+    }
+
+    private let mine = NoteBlock(kind: .bullet, runs: [.init(text: "pricing")])
+    private let partial = NoteBlock(kind: .bullet, indent: 1, runs: [.init(text: "They agreed")], byClaude: true)
+
+    func testRetryReplacesUntouchedUnfinishedStream() async throws {
+        try leaveUnfinishedStream(expanded: [mine, partial], recorded: [partial])
+        let claude = ScriptedClaude(insights: .success(insightsJSON), expansion: expansionLines)
+        try await after(claude).run(folder: folder)
+        let expanded = NoteMarkdown.parse(try index.load(meeting.id, hint: nil).document.expanded)
+        XCTAssertEqual(expanded.map(\.plainText), ["pricing", "They agreed $200 per unit", "Action items", "Aidan sends the quote"])
+        XCTAssertEqual(claude.insightsCalls, 0)  // already done
+        XCTAssertEqual(try Meeting.load(from: folder).afterMeetingDone, true)
+    }
+
+    func testRetryLeavesEditedGrey() async throws {
+        var edited = partial
+        edited.runs = [.init(text: "They agreed, said Aidan")]  // grey but not what Lyra wrote
+        try leaveUnfinishedStream(expanded: [mine, edited], recorded: [partial])
+        let claude = ScriptedClaude(insights: .success(insightsJSON), expansion: expansionLines)
+        try await after(claude).run(folder: folder)
+        XCTAssertEqual(NoteMarkdown.parse(try index.load(meeting.id, hint: nil).document.expanded), [mine, edited])
+        XCTAssertTrue(claude.expansionPrompts.isEmpty)
+    }
+
+    func testRetryLeavesWhiteTextAidanAdded() async throws {
+        let added = NoteBlock(kind: .bullet, runs: [.init(text: "my own extra point")])
+        try leaveUnfinishedStream(expanded: [mine, partial, added], recorded: [partial])
+        let claude = ScriptedClaude(insights: .success(insightsJSON), expansion: expansionLines)
+        try await after(claude).run(folder: folder)
+        XCTAssertEqual(NoteMarkdown.parse(try index.load(meeting.id, hint: nil).document.expanded), [mine, partial, added])
+        XCTAssertTrue(claude.expansionPrompts.isEmpty)
+    }
+
+    func testInsightsRunOnlyOnceEvenWithEmptySummary() async throws {
+        let empty = #"{"title": "Northwind pricing review", "tags": [], "clients": [], "series": null, "summary": ""}"#
+        try await after(ScriptedClaude(insights: .success(empty), expansion: expansionLines)).run(folder: folder)
+        let loaded = try index.load(meeting.id, hint: nil)
+        var doc = loaded.document
+        doc.front.title = "Aidan's title"
+        _ = try index.save(doc, over: loaded)
+        try AfterMeeting.updateMeeting(in: folder) { $0.expandError = "Claude couldn't answer: offline" }
+
+        let again = ScriptedClaude(insights: .success(insightsJSON), expansion: expansionLines)
+        try await after(again).run(folder: folder)
+        XCTAssertEqual(again.insightsCalls, 0)
+        XCTAssertEqual(try index.load(meeting.id, hint: nil).document.front.title, "Aidan's title")
+    }
+
+    func testPendingFoldersFindsOnlyUnfinishedPhase3Meetings() throws {
+        let root = folder.deletingLastPathComponent()
+        func make(_ name: String, transcript: Bool = true, _ change: (inout Meeting) -> Void) throws {
+            let f = root.appendingPathComponent(name)
+            try FileManager.default.createDirectory(at: f, withIntermediateDirectories: true)
+            var m = Meeting(title: name, appName: "zoom.us", startedAt: Date())
+            m.notePath = "/notes/\(name).md"
+            change(&m)
+            try m.save(in: f)
+            if transcript { try Data("[]".utf8).write(to: f.appendingPathComponent("transcript.json")) }
+        }
+        try make("a-pending") { _ in }
+        try make("b-done") { $0.afterMeetingDone = true }
+        try make("c-phase2") { $0.notePath = nil }
+        try make("d-unprocessed", transcript: false) { _ in }
+        try make("e-failed") { $0.expandError = "Claude couldn't answer: offline" }
+        try make("f-unfinished") { $0.expandError = AfterMeeting.unfinishedMessage }
+        // setUp's folder: notePath set, processed, nothing recorded yet.
+        XCTAssertEqual(AfterMeeting.pendingFolders(in: root).map(\.lastPathComponent), ["2027-01-15 1000 — Zoom Meeting", "a-pending"])
     }
 }

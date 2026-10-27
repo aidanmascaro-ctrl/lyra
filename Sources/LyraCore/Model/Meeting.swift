@@ -25,6 +25,10 @@ public struct Meeting: Codable, Sendable {
     public var insightsError: String? = nil
     /// Why expanding the notes failed, for the UI's Retry; nil once it succeeds.
     public var expandError: String? = nil
+    /// True once Claude's title/tags call has succeeded, so a re-run never replaces a title Aidan edited.
+    public var insightsDone: Bool? = nil
+    /// True once the after-meeting step (title, tags, expansion) has finished; the launch sweep skips these.
+    public var afterMeetingDone: Bool? = nil
 
     public init(id: UUID = UUID(), title: String, appName: String, bundleID: String? = nil,
                 startedAt: Date, endedAt: Date? = nil, warnings: [String] = []) {
