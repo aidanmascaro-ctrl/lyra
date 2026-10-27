@@ -382,6 +382,23 @@ final class NoteTextView: NSTextView {
 
     // MARK: Drawing
 
+    /// A small paragraph gap is only `blankLineHeight` tall, which would cut the cursor to a sliver; grow any cursor
+    /// shorter than a line of body text to full height, centred on the gap.
+    static func caretRect(_ rect: NSRect) -> NSRect {
+        let full = ceil(NoteStyle.body.ascender - NoteStyle.body.descender)
+        guard rect.height < full else { return rect }
+        return NSRect(x: rect.minX, y: rect.midY - full / 2, width: rect.width, height: full)
+    }
+
+    override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
+        super.drawInsertionPoint(in: Self.caretRect(rect), color: color, turnedOn: flag)
+    }
+
+    /// The cursor blinks by redrawing its own rect, so the taller cursor needs the taller area redrawn too.
+    override func setNeedsDisplay(_ invalidRect: NSRect, avoidAdditionalLayout flag: Bool) {
+        super.setNeedsDisplay(Self.caretRect(invalidRect), avoidAdditionalLayout: flag)
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         let blocks = self.blocks

@@ -158,4 +158,17 @@ final class NoteTextViewTests: XCTestCase {
         view.load(blocks)
         XCTAssertEqual(NoteMarkdown.render(view.blocks), "one\n\ntwo\n\n- three")
     }
+
+    func testTheCursorOnASmallParagraphGapIsFullHeight() {
+        let gap = NSRect(x: 40, y: 100, width: 1, height: NoteStyle.blankLineHeight)
+        let caret = NoteTextView.caretRect(gap)
+        XCTAssertGreaterThanOrEqual(caret.height, NoteStyle.body.ascender - NoteStyle.body.descender)
+        XCTAssertEqual(caret.midY, gap.midY, accuracy: 0.5)
+        XCTAssertEqual(caret.minX, gap.minX)
+    }
+
+    func testTheCursorOnAnOrdinaryLineIsUnchanged() {
+        let line = NSRect(x: 40, y: 100, width: 1, height: 22)
+        XCTAssertEqual(NoteTextView.caretRect(line), line)
+    }
 }
