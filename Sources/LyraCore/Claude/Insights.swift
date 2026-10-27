@@ -48,7 +48,7 @@ public enum InsightsError: Error, LocalizedError, Equatable {
 public enum InsightsService {
     private static let titleLengths = 3...80
     private static let maxTags = 6
-    private static let maxSummaryChars = 140
+    static let maxSummaryChars = 120
 
     public static func run(_ input: InsightsInput, claude: ClaudeRunning) async throws -> MeetingInsights {
         let reply = try await claude.complete(system: Prompts.insightsSystem, prompt: Prompts.insightsUser(input: input))
@@ -130,14 +130,62 @@ public enum InsightsService {
         return existing.first { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == trimmed.lowercased() } ?? trimmed
     }
 
-    private static func summary(_ raw: String) -> String {
+    /// Words a trimmed summary must not end on: they promise more that was cut off.
+    private static let danglingWords: Set<String> = [
+        "a", "an", "and", "as", "at", "but", "by", "for", "from", "in", "including", "like", "of", "on", "or",
+        "plus", "such", "than", "that", "the", "to", "via", "which", "while", "with", "&",
+    ]
+    private static let sentenceEnds: Set<Character> = [".", "!", "?"]
+    private static let clauseBreaks: Set<Character> = [";", "—", ",", ":"]
+    /// A sentence or clause cut shorter than this would throw away too much; fall back to a word cut.
+    private static let minimumCutChars = 40
+
+    /// Over-long summaries end at a sentence, else a clause, else a word, and never on a dangling connective.
+    static func summary(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count > maxSummaryChars else { return trimmed }
-        let cut = trimmed.prefix(maxSummaryChars)
-        let endsOnWord = trimmed[trimmed.index(trimmed.startIndex, offsetBy: maxSummaryChars)].isWhitespace
-        guard !endsOnWord, let space = cut.lastIndex(where: \.isWhitespace) else {
+        let words = wordCut(trimmed)
+        if let end = lastIndex(in: words, after: sentenceEnds) {
+            return String(words[...end])
+        }
+        if let brk = lastIndex(in: words, after: clauseBreaks) {
+            return withoutDanglingEnd(String(words[..<brk]))
+        }
+        return withoutDanglingEnd(words)
+    }
+
+    /// The longest prefix within the limit that doesn't split a word.
+    private static func wordCut(_ text: String) -> String {
+        let cut = text.prefix(maxSummaryChars)
+        let next = text[text.index(text.startIndex, offsetBy: maxSummaryChars)]
+        guard !next.isWhitespace, let space = cut.lastIndex(where: \.isWhitespace) else {
             return String(cut).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return String(cut[..<space]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The last mark from `marks` that ends a word, at least `minimumCutChars` in.
+    private static func lastIndex(in text: String, after marks: Set<Character>) -> String.Index? {
+        var index = text.endIndex
+        while index > text.startIndex {
+            index = text.index(before: index)
+            guard text.distance(from: text.startIndex, to: index) >= minimumCutChars else { return nil }
+            let following = text.index(after: index)
+            let endsWord = following == text.endIndex || text[following].isWhitespace
+            if marks.contains(text[index]), endsWord { return index }
+        }
+        return nil
+    }
+
+    private static func withoutDanglingEnd(_ text: String) -> String {
+        var words = text.split(whereSeparator: \.isWhitespace).map(String.init)
+        func lastIsDangling() -> Bool {
+            guard let last = words.last, words.count > 1 else { return false }
+            let bare = last.trimmingCharacters(in: CharacterSet(charactersIn: ",;:—-")).lowercased()
+            return bare.isEmpty || danglingWords.contains(bare)
+        }
+        while lastIsDangling() { words.removeLast() }
+        let joined = words.joined(separator: " ")
+        return joined.trimmingCharacters(in: CharacterSet(charactersIn: ",;:—- "))
     }
 }

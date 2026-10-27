@@ -184,7 +184,7 @@ public enum Prompts {
         - series: if the meeting is one of a recurring set, the series name. Use an existing series \
         name exactly when the meeting plainly belongs to it (a title like "<series> | Workshop 2" belongs \
         to the series "<series>"); otherwise a short new name, or null when it is a one-off.
-        - summary: one plain sentence of 140 characters or fewer saying what the meeting was about, \
+        - summary: one plain, complete sentence of 120 characters or fewer saying what the meeting was about, \
         for a series page.
         </task>
 
