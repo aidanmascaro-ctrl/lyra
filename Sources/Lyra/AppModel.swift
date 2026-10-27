@@ -21,6 +21,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var ignoredList: [IgnoredApp] = []
     /// Claude's Expanded section as it streams in, by meeting id; gone once it is saved in the note.
     @Published private(set) var liveExpansion: [UUID: [NoteBlock]] = [:]
+    /// The rough live transcript of the meeting being recorded (kept after it stops, until the next one starts).
+    @Published private(set) var liveLines: [LiveLine] = []
+    /// Set when live transcription gives up mid-meeting; the recording carries on regardless.
+    @Published private(set) var liveError: String?
 
     let paths = MeetingPaths(recordingsRoot: MeetingPaths.defaultRecordingsRoot, notesDir: MeetingPaths.defaultNotesDir)
     /// Notes are found by `lyra_id` anywhere under Meetings/; links are rewritten across the whole vault.
@@ -151,11 +155,16 @@ final class AppModel: ObservableObject {
         guard state.begin(target: target) else { return }
         detector.isRecording = true
         lastError = nil
+        liveLines = []
+        liveError = nil
         let meeting = Meeting(title: title, appName: target?.appName ?? "In person",
                               bundleID: target.map(\.bundleID), startedAt: Date())
         Task {
             do {
-                let started = try await MeetingSession(meeting: meeting, target: target, paths: paths)
+                let started = try await MeetingSession(meeting: meeting, target: target, paths: paths) { [weak self = self] lines, error in
+                    self?.liveLines = lines
+                    self?.liveError = error
+                }
                 session = started
                 recordingSince = meeting.startedAt
                 // The call ended (or Stop was clicked) while we were still starting.

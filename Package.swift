@@ -12,6 +12,7 @@ let package = Package(
         .target(name: "LyraAudio", dependencies: ["LyraCore"]),
         .target(name: "LyraSpeech", dependencies: [
             "LyraCore",
+            "LyraAudio",
             .product(name: "FluidAudio", package: "FluidAudio"),
         ]),
         .executableTarget(name: "Lyra", dependencies: ["LyraCore", "LyraAudio", "LyraSpeech"]),
