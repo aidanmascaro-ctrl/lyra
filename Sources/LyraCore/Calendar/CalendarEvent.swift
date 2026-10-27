@@ -1,6 +1,6 @@
 import Foundation
 
-/// One event from Aidan's calendar, reduced to what the home page and Join need.
+/// One event from one of Aidan's calendars, reduced to what the home page and Join need.
 public struct CalendarEvent: Equatable, Identifiable, Sendable {
     public let id: String
     public let title: String
@@ -30,13 +30,22 @@ public struct CalendarEvent: Equatable, Identifiable, Sendable {
     public var isMeeting: Bool { !isAllDay && !declined && (otherAttendees > 0 || joinURL != nil) }
 
     public func isUnderWay(at now: Date) -> Bool { start <= now && now < end }
+
+    /// The same event under an id unique across accounts (two calendars can use the same event id).
+    public func inAccount(_ accountID: String) -> CalendarEvent {
+        CalendarEvent(id: accountID + "|" + id, title: title, start: start, end: end, isAllDay: isAllDay,
+                      otherAttendees: otherAttendees, declined: declined, joinURL: joinURL)
+    }
 }
 
-/// A plain-English problem talking to Google, shown as one line on the home page.
-public enum GoogleCalendarError: LocalizedError, Equatable {
+/// A plain-English problem with a calendar, shown as one line on the home page.
+public enum CalendarError: LocalizedError, Equatable {
     case notAClientFile
     case webClient
+    case notAnApplicationID
+    case badClient
     case signInRefused(String)
+    case needsAdmin
     case signedOut
     case apiDisabled
     case badResponse(Int)
@@ -45,10 +54,13 @@ public enum GoogleCalendarError: LocalizedError, Equatable {
         switch self {
         case .notAClientFile: "That file isn't a Google sign-in file. Pick the JSON downloaded from Clients in Google Cloud Console."
         case .webClient: "That sign-in file is for a Web app. In Google Cloud Console create a Desktop app client and download its JSON."
-        case .signInRefused(let reason): "Google sign-in didn't finish (\(reason))."
-        case .signedOut: "Google signed Lyra out. Reconnect Google Calendar."
+        case .notAnApplicationID: "That doesn't look like an Application (client) ID. Copy the ID that looks like 1a2b3c4d-… from App registrations."
+        case .badClient: "The provider didn't accept Lyra's app details. Use “Change app details…” in the Coming up menu."
+        case .signInRefused(let reason): "Sign-in didn't finish (\(reason))."
+        case .needsAdmin: "This work account needs its IT admin to allow Lyra to read calendars."
+        case .signedOut: "Lyra was signed out. Reconnect to see these meetings again."
         case .apiDisabled: "The Google Calendar API is off for the Lyra project. Turn it on in Google Cloud Console."
-        case .badResponse(let status): "Google Calendar answered with an error (\(status))."
+        case .badResponse(let status): "The calendar answered with an error (\(status))."
         }
     }
 }

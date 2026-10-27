@@ -27,6 +27,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var liveLines: [LiveLine] = []
     /// Set when live transcription gives up mid-meeting; the recording carries on regardless.
     @Published private(set) var liveError: String?
+    /// Join was pressed on a meeting about to start: for a short while, the next meeting app to take the mic records
+    /// without asking. Shown on home with a way to call it off.
+    @Published var pendingJoin: PendingJoin?
 
     let paths = MeetingPaths(recordingsRoot: AppModel.recordingsRoot, notesDir: AppModel.notesRoot)
     /// Notes are found by `lyra_id` anywhere under Meetings/; links are rewritten across the whole vault.
@@ -65,8 +68,6 @@ final class AppModel: ObservableObject {
     private let panel = AllowPanel()
     private var session: MeetingSession?
     private var prompted: MicUser?
-    /// Join was pressed on an upcoming meeting: the next meeting app to take the mic records without asking.
-    var pendingJoin: PendingJoin?
     private var poller: Task<Void, Never>?
 
     init() {
@@ -111,6 +112,7 @@ final class AppModel: ObservableObject {
 
     private func tick() {
         now = Date()
+        if let join = pendingJoin, !join.isOpen(at: now) { pendingJoin = nil }
         for event in detector.update(users: micUsage.currentMicUsers(), now: now) {
             switch event {
             case .meetingStarted(let user):

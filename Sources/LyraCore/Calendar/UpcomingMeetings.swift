@@ -9,6 +9,23 @@ public enum UpcomingMeetings {
         public let events: [CalendarEvent]
     }
 
+    /// Every account's events as one list. A meeting in two calendars (same title and start) shows once, keeping
+    /// the copy with a call link.
+    public static func merged(_ lists: [[CalendarEvent]]) -> [CalendarEvent] {
+        var seen: [String: Int] = [:]
+        var result: [CalendarEvent] = []
+        for event in lists.joined() {
+            let key = event.title.lowercased() + "|" + String(event.start.timeIntervalSince1970)
+            if let index = seen[key] {
+                if result[index].joinURL == nil, event.joinURL != nil { result[index] = event }
+            } else {
+                seen[key] = result.count
+                result.append(event)
+            }
+        }
+        return result
+    }
+
     /// A meeting already under way counts as today's.
     public static func days(_ events: [CalendarEvent], now: Date, calendar: Calendar = .current) -> [Day] {
         let horizon = calendar.date(byAdding: .day, value: daysAhead, to: now) ?? now
@@ -38,17 +55,31 @@ public enum UpcomingMeetings {
     }
 }
 
-/// Join was pressed in Lyra: until the meeting ends, the next meeting app to take the mic starts recording without
-/// the Allow panel — the one case where recording starts on its own. Used once.
+/// Join was pressed in Lyra on a meeting about to start or under way: for the next 15 minutes (never past the
+/// meeting's end), the next meeting app to take the mic starts recording without the Allow panel — the one case
+/// where recording starts on its own. Used once.
 public struct PendingJoin: Equatable, Sendable {
+    /// How long a Join stays armed, and how early before the start Join arms at all.
+    public static let window: TimeInterval = 15 * 60
+
     public let title: String
+    public let armedAt: Date
     public let until: Date
 
-    public init(title: String, until: Date) {
-        self.title = title
-        self.until = until
+    /// Nil when the meeting is further off than the window, has ended, or has no call link.
+    public init?(event: CalendarEvent, now: Date) {
+        guard Self.canArm(event, now: now) else { return nil }
+        title = event.title.isEmpty ? "Meeting" : event.title
+        armedAt = now
+        until = min(event.end, now.addingTimeInterval(Self.window))
     }
 
+    public static func canArm(_ event: CalendarEvent, now: Date) -> Bool {
+        event.joinURL != nil && now < event.end && event.start.timeIntervalSince(now) <= window
+    }
+
+    public func isOpen(at now: Date) -> Bool { armedAt <= now && now < until }
+
     /// The title to record under if the join still stands at `now`.
-    public func claim(now: Date) -> String? { now < until ? title : nil }
+    public func claim(now: Date) -> String? { isOpen(at: now) ? title : nil }
 }

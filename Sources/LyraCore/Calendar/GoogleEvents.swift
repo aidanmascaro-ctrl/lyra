@@ -2,6 +2,22 @@ import Foundation
 
 /// Reads the Google Calendar API's `events.list` answer into `CalendarEvent`s. Cancelled events are dropped.
 public enum GoogleEvents {
+    /// The primary calendar between two times, recurring meetings expanded. Includes ones already under way.
+    public static func request(from start: Date, to end: Date, token: String) -> URLRequest {
+        let stamp = ISO8601DateFormatter()
+        var parts = URLComponents(string: "https://www.googleapis.com/calendar/v3/calendars/primary/events")!
+        parts.queryItems = [
+            .init(name: "timeMin", value: stamp.string(from: start)),
+            .init(name: "timeMax", value: stamp.string(from: end)),
+            .init(name: "singleEvents", value: "true"),
+            .init(name: "orderBy", value: "startTime"),
+            .init(name: "maxResults", value: "250"),
+        ]
+        var request = URLRequest(url: parts.url!)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        return request
+    }
+
     public static func parse(_ data: Data, timeZone: TimeZone = .current) throws -> [CalendarEvent] {
         let list = try JSONDecoder().decode(EventList.self, from: data)
         return list.items.compactMap { event(from: $0, timeZone: timeZone) }

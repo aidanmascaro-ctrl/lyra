@@ -2,23 +2,24 @@ import AppKit
 import LyraCore
 import SwiftUI
 
-/// "Coming up" on the home page: the week's real meetings from Google Calendar, by day. A meeting with a call link
-/// has Join, which opens the call; Lyra then records once the meeting app takes the mic.
+/// "Coming up" on the home page: the week's real meetings from Google and Microsoft calendars, by day. Join on a
+/// meeting about to start opens the call, and Lyra records once the meeting app takes the mic.
 struct UpcomingSection: View {
     @ObservedObject var app: AppModel
     @ObservedObject private var calendar = CalendarModel.shared
+    @State private var microsoftID = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("COMING UP").font(.system(size: 11, weight: .semibold)).tracking(0.8).foregroundStyle(.tertiary)
-            if calendar.signingIn {
-                Banner(text: "Finish signing in to Google in your browser…", spinning: true) { Button("Cancel") { calendar.cancelSignIn() } }
-            } else if let problem = calendar.problem {
-                Banner(text: problem) { Button(calendar.connected ? "Try again" : "Reconnect") { retry() } }
-            }
-            if !calendar.connected && !calendar.signingIn {
-                connectRow
-            } else if calendar.days.isEmpty && calendar.problem == nil && !calendar.signingIn {
+            header
+            banners
+            if calendar.ready && !calendar.connected && calendar.signingIn == nil {
+                VStack(spacing: 0) {
+                    connectRow(.google, "Connect Google Calendar")
+                    connectRow(.microsoft, "Connect Microsoft calendar", detail: "Outlook or Microsoft 365")
+                }
+                .padding(.horizontal, -8)
+            } else if calendar.ready && calendar.connected && calendar.days.isEmpty && calendar.problems.isEmpty {
                 Text("No meetings in the next week.").font(.system(size: 14)).foregroundStyle(.tertiary)
             }
             ForEach(calendar.days, id: \.date) { day in
@@ -28,26 +29,79 @@ struct UpcomingSection: View {
                         .padding(.horizontal, 8).padding(.top, 4).padding(.bottom, 2)
                     ForEach(day.events) { row($0) }
                 }
+                .padding(.horizontal, -8)
             }
-            .padding(.horizontal, -8)
         }
         .onAppear { calendar.refresh() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in calendar.refresh() }
         .task {
-            // Drops finished meetings each minute; asks Google again every five.
+            // Drops finished meetings and brings Join forward each minute; asks the calendars again every five.
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(60))
                 calendar.refresh(maxAge: 300)
             }
         }
+        .alert("Microsoft app ID", isPresented: $calendar.askingForMicrosoftID) {
+            TextField("Application (client) ID", text: $microsoftID)
+            Button("Connect") { calendar.useMicrosoftID(microsoftID) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Paste the Application (client) ID from App registrations in Microsoft Entra. It looks like 1a2b3c4d-….")
+        }
     }
 
-    private var connectRow: some View {
-        Button { calendar.connect() } label: {
+    private var header: some View {
+        HStack {
+            Text("COMING UP").font(.system(size: 11, weight: .semibold)).tracking(0.8).foregroundStyle(.tertiary)
+            Spacer()
+            if calendar.connected { accountsMenu }
+        }
+    }
+
+    private var accountsMenu: some View {
+        Menu {
+            Section("Calendars") {
+                ForEach(calendar.accounts) { account in
+                    Menu(account.label) { Button("Remove from Lyra") { calendar.remove(account) } }
+                }
+            }
+            Divider()
+            Button("Add Google account…") { calendar.connect(.google) }
+            Button("Add Microsoft account…") { calendar.connect(.microsoft) }
+            Divider()
+            Button("Change Google sign-in file…") { calendar.changeAppDetails(.google) }
+            Button("Change Microsoft app ID…") { calendar.changeAppDetails(.microsoft) }
+        } label: {
+            Image(systemName: "ellipsis").font(.system(size: 12)).foregroundStyle(.tertiary)
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .disabled(calendar.signingIn != nil)
+        .help("Calendars")
+    }
+
+    @ViewBuilder private var banners: some View {
+        if let join = app.pendingJoin {
+            Banner(text: "Lyra will record “\(join.title)” as soon as the call has you in.") { Button("Don't record") { app.pendingJoin = nil } }
+        }
+        if let provider = calendar.signingIn {
+            Banner(text: "Finish signing in to \(provider.name) in your browser…", spinning: true) { Button("Cancel") { calendar.cancelSignIn() } }
+        }
+        if let notice = calendar.notice { Banner(text: notice) { Button("OK") { calendar.notice = nil } } }
+        ForEach(calendar.accounts.filter { calendar.problems[$0.id] != nil }) { account in
+            let problem = calendar.problems[account.id]!
+            Banner(text: "\(account.label): \(problem.message)") {
+                if problem.needsSignIn { Button("Reconnect") { calendar.connect(account.provider) } }
+                else { Button("Try again") { calendar.refresh(maxAge: 0) } }
+            }
+        }
+    }
+
+    private func connectRow(_ provider: CalendarProvider, _ title: String, detail: String? = nil) -> some View {
+        Button { calendar.connect(provider) } label: {
             HStack(spacing: 8) {
                 Image(systemName: "calendar")
-                Text("Connect Google Calendar")
-                Text("to see the week's meetings here").foregroundStyle(.tertiary)
+                Text(title)
+                if let detail { Text(detail).foregroundStyle(.tertiary) }
                 Spacer()
             }
             .font(.system(size: 14)).foregroundStyle(.secondary)
@@ -55,11 +109,12 @@ struct UpcomingSection: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(RowButtonStyle())
-        .padding(.horizontal, -8)
     }
 
     private func row(_ event: CalendarEvent) -> some View {
-        let underWay = event.isUnderWay(at: Date())
+        let now = Date()
+        let underWay = event.isUnderWay(at: now)
+        let joinable = PendingJoin.canArm(event, now: now)
         return Button { calendar.join(event, app: app) } label: {
             HStack(spacing: 8) {
                 HStack(spacing: 5) {
@@ -73,7 +128,8 @@ struct UpcomingSection: View {
                     Text("· \(event.otherAttendees + 1) people").foregroundStyle(.secondary).lineLimit(1).fixedSize()
                 }
                 Spacer(minLength: 12)
-                if event.joinURL != nil { joinPill(prominent: underWay) }
+                if joinable { joinPill(prominent: underWay) }
+                else if event.joinURL != nil { Image(systemName: "video").font(.system(size: 11)).foregroundStyle(.tertiary) }
             }
             .font(.system(size: 14))
             .padding(.horizontal, 8).padding(.vertical, 7)
@@ -81,7 +137,9 @@ struct UpcomingSection: View {
         }
         .buttonStyle(RowButtonStyle())
         .disabled(event.joinURL == nil)
-        .help(event.joinURL == nil ? "No call link in this event" : "Join the call — Lyra starts recording once you're let in")
+        .help(event.joinURL == nil ? "No call link in this event"
+              : joinable ? "Join the call — Lyra starts recording once you're let in"
+              : "Open the call link. Join appears 15 minutes before the start, and records once you're in.")
     }
 
     private func joinPill(prominent: Bool) -> some View {
@@ -94,6 +152,4 @@ struct UpcomingSection: View {
         .padding(.horizontal, 10).padding(.vertical, 3)
         .background(Capsule().fill(prominent ? Chrome.live.opacity(0.28) : Chrome.pill))
     }
-
-    private func retry() { calendar.connected ? calendar.refresh(maxAge: 0) : calendar.connect() }
 }
