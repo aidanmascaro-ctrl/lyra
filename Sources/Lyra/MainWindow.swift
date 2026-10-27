@@ -7,10 +7,13 @@ struct MainWindow: View {
     static let id = "main"
     @ObservedObject var app: AppModel
 
-    /// Home ⇄ meeting: the page going away fades out while the new one fades in and eases the last few points
-    /// sideways into place — in from the right when opening a meeting, from the left when going back home.
+    /// Home ⇄ meeting: the page going away fades out quickly, then the new one fades in and eases the last few
+    /// points sideways into place (from the right opening a meeting, from the left going home). The two never show
+    /// at once, so their titles don't cross-fade over each other.
     private static let pageAnimation = Animation.easeInOut(duration: 0.28)
-    private static let pageShift: CGFloat = 24
+    private static let fadeOut = Animation.easeIn(duration: 0.12)
+    private static let fadeIn = Animation.easeOut(duration: 0.24).delay(0.12)
+    private static let pageShift: CGFloat = 16
 
     var body: some View {
         ZStack {
@@ -32,7 +35,8 @@ struct MainWindow: View {
     }
 
     private func page(from shift: CGFloat) -> AnyTransition {
-        .asymmetric(insertion: .opacity.combined(with: .offset(x: shift)), removal: .opacity)
+        .asymmetric(insertion: AnyTransition.opacity.combined(with: .offset(x: shift)).animation(Self.fadeIn),
+                    removal: AnyTransition.opacity.animation(Self.fadeOut))
     }
 }
 
