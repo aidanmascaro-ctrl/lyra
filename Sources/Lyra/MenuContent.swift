@@ -19,6 +19,13 @@ struct MenuContent: View {
             }
         }
         Button("Teach Lyra my voice…") { show("enrol") }
+        if !model.ignoredList.isEmpty {
+            Menu("Ignored apps") {
+                ForEach(model.ignoredList, id: \.key) { app in
+                    Button(app.name) { model.stopIgnoring(app) }
+                }
+            }
+        }
         if let error = model.lastError { Text(error).lineLimit(3) }
         Divider()
         Button("Quit") { NSApplication.shared.terminate(nil) }

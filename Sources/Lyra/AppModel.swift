@@ -17,6 +17,8 @@ final class AppModel: ObservableObject {
     @Published var shownMeeting: URL?
     @Published private(set) var lastError: String?
     @Published private(set) var now = Date()
+    /// Apps the user chose to never be prompted about; mirrors the saved list so the menu refreshes.
+    @Published private(set) var ignoredList: [IgnoredApp] = []
 
     let paths = MeetingPaths(recordingsRoot: MeetingPaths.defaultRecordingsRoot, notesDir: MeetingPaths.defaultNotesDir)
     /// The one people store: processing, enrolment and renames all share it, so a new voice is used by the next meeting.
@@ -31,12 +33,25 @@ final class AppModel: ObservableObject {
             people: { people.all() })
     }()
     private let micUsage = CoreAudioMicUsage()
-    private let detector = MeetingDetector(ownPID: ProcessInfo.processInfo.processIdentifier,
-                                           ignoredBundleIDs: [Bundle.main.bundleIdentifier ?? "au.aidos.lyra"])
+    private let ignoredApps = IgnoredApps(defaults: .standard)
+    private let detector: MeetingDetector
     private let panel = AllowPanel()
     private var session: MeetingSession?
     private var prompted: MicUser?
     private var poller: Task<Void, Never>?
+
+    init() {
+        let ignoredApps = ignoredApps
+        let ownBundleID = Bundle.main.bundleIdentifier ?? "au.aidos.lyra"
+        detector = MeetingDetector(ownPID: ProcessInfo.processInfo.processIdentifier,
+                                   ignore: { $0.bundleID == ownBundleID || ignoredApps.contains($0) })
+        ignoredList = ignoredApps.all()
+    }
+
+    func stopIgnoring(_ app: IgnoredApp) {
+        ignoredApps.remove(app)
+        ignoredList = ignoredApps.all()
+    }
 
     func launch() {
         lastMeeting = MeetingOverview.lastFolder(in: paths.recordingsRoot)
@@ -79,7 +94,14 @@ final class AppModel: ObservableObject {
                                Self.askForWindowTitlesOnce()
                            },
                            // Also the 60 s timeout. Frees the detector so other apps can still prompt.
-                           onIgnore: { [weak self] in self?.prompted = nil; self?.detector.dismiss() })
+                           onIgnore: { [weak self] in self?.prompted = nil; self?.detector.dismiss() },
+                           onAlwaysIgnore: { [weak self] in
+                               guard let self else { return }
+                               ignoredApps.add(IgnoredApp(user: user))
+                               ignoredList = ignoredApps.all()
+                               prompted = nil
+                               detector.dismiss()
+                           })
             case .meetingEnded(let user):
                 if prompted == user { panel.close(); prompted = nil }
                 if state.meetingEnded(user) { stopSession() }
