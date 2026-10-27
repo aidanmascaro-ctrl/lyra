@@ -56,7 +56,7 @@ public struct MeetingProcessor: Sendable {
         let (echoFree, allClusters) = TranscriptMerger.dropVoiceEcho(
             lines: TranscriptMerger.merge(meeting: lines[.meeting] ?? [], mic: lines[.mic] ?? []),
             clusters: (clusters[.meeting] ?? []) + (clusters[.mic] ?? []), people: known, policy: policy)
-        let merged = SpeakerNamer.name(lines: echoFree, clusters: allClusters, people: known, policy: policy)
+        let named = SpeakerNamer.name(lines: echoFree, clusters: allClusters, people: known, policy: policy)
 
         // Convert first (keeping the CAFs) so a failure can be warned about in the note itself.
         var converted: [URL] = []
@@ -73,14 +73,21 @@ public struct MeetingProcessor: Sendable {
             }
         }
 
+        // Only clusters with a line left after the echo filter: an echo-only mic cluster is the remote voice leaking in.
+        // Taken before naming: a join keeps only its first line's raw id, but both clusters still spoke.
+        let kept = Set(echoFree.compactMap(\.speakerID))
+        var speakers = allClusters.filter { kept.contains($0.id) }
+        // Recording resumed after End: this part goes on after the ones filed under parts/.
+        var merged = named
+        if let part = meeting.earlierParts, part > 0 {
+            let earlier = try RecordingParts.earlier(in: folder, part: part)
+            (merged, speakers) = RecordingParts.join(earlier: earlier.lines, earlierClusters: earlier.clusters, new: named,
+                                                     newClusters: speakers, offset: meeting.recordedBefore ?? 0, part: part + 1)
+        }
         let noteAt = try writeTranscript(merged, meeting: &meeting, folder: folder, reserved: noteURL)
         meeting.notePath = noteAt.path
         try meeting.save(in: folder)
         // Before transcript.json: a crash between the two leaves no done marker, so the folder is reprocessed.
-        // Only clusters with a line left after the echo filter: an echo-only mic cluster is the remote voice leaking in.
-        // Taken before naming: a join keeps only its first line's raw id, but both clusters still spoke.
-        let kept = Set(echoFree.compactMap(\.speakerID))
-        let speakers = allClusters.filter { kept.contains($0.id) }
         try PeopleStore.writeOwnerOnly(Self.encoder.encode(speakers), to: folder.appendingPathComponent("speakers.json"))
         try Self.encoder.encode(merged).write(to: folder.appendingPathComponent("transcript.json"), options: .atomic)
         // Only now is the meeting safe without its CAFs; a crash before this point reprocesses the folder.

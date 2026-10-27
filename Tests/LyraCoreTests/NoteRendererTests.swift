@@ -79,5 +79,8 @@ final class NoteRendererTests: XCTestCase {
         XCTAssertEqual(NoteRenderer.durationMinutes(of: meeting), 60, "recovered after a crash: no lengths saved")
         meeting.recordingStartedAt = start.addingTimeInterval(1_800)
         XCTAssertEqual(NoteRenderer.durationMinutes(of: meeting), 30, "a New note recorded later: from Record, not from making the note")
+        meeting.recordedBefore = 600
+        meeting.tracks = [TrackResult(kind: .mic, url: folder, seconds: 300, peakLevel: 0.5, error: nil)]
+        XCTAssertEqual(NoteRenderer.durationMinutes(of: meeting), 15, "earlier parts count too")
     }
 }

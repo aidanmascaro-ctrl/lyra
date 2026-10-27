@@ -21,8 +21,13 @@ public struct Meeting: Codable, Sendable {
     public var screenText: [String]? = nil
     /// Where the note was last seen; a hint only, the lyra_id in the note is the identity.
     public var notePath: String? = nil
-    /// When recording began in a note made earlier by New note; nil when recording made the note.
+    /// When the latest recording began in a note that existed before it (New note, or recording again after End);
+    /// nil when recording made the note.
     public var recordingStartedAt: Date? = nil
+    /// Finished parts filed under `parts/1…N` when recording was resumed after End; nil for one part.
+    public var earlierParts: Int? = nil
+    /// Seconds recorded in those earlier parts: where the latest part starts on the note's timeline.
+    public var recordedBefore: Double? = nil
     /// Why the after-meeting title/tags call failed, for the UI; nil once it succeeds.
     public var insightsError: String? = nil
     /// Why expanding the notes failed, for the UI's Retry; nil once it succeeds.

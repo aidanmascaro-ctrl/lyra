@@ -166,6 +166,28 @@ final class MeetingProcessorTests: XCTestCase {
         XCTAssertEqual(speakers.map(\.id), ["meeting:A"])
     }
 
+    /// Recording again after End: the new part's transcript goes on after the filed one, in the note too.
+    func testResumedPartJoinsTheEarlierTranscript() async throws {
+        let earlierLines = [TranscriptLine(speakerLabel: "Speaker 1", speakerID: "mic:A", track: .mic, start: 3, end: 5, text: "first part")]
+        let part = folder.appendingPathComponent("parts/1")
+        try FileManager.default.createDirectory(at: part, withIntermediateDirectories: true)
+        try JSONEncoder().encode(earlierLines).write(to: part.appendingPathComponent("transcript.json"))
+        try JSONEncoder().encode([SpeakerCluster(id: "mic:A", track: .mic, centroid: [1, 0], speechSeconds: 2)])
+            .write(to: part.appendingPathComponent("speakers.json"))
+        var resumed = meeting
+        resumed.earlierParts = 1
+        resumed.recordedBefore = 600
+        _ = try await processor().process(meeting: resumed, tracks: [track(.mic)], folder: folder, noteURL: note)
+        let lines = try JSONDecoder().decode([TranscriptLine].self, from: Data(contentsOf: folder.appendingPathComponent("transcript.json")))
+        XCTAssertEqual(lines.map(\.text), ["first part", "hi back"])
+        XCTAssertEqual(lines.map(\.speakerLabel), ["Speaker 1", "Speaker 2"])
+        XCTAssertEqual(lines[1].start, 601)
+        let speakers = try JSONDecoder().decode([SpeakerCluster].self, from: Data(contentsOf: folder.appendingPathComponent("speakers.json")))
+        XCTAssertEqual(speakers.map(\.id), ["mic:A", "part2/mic:A"])
+        let text = try String(contentsOf: note, encoding: .utf8)
+        XCTAssertTrue(text.contains("first part") && text.contains("hi back"))
+    }
+
     func testMicOnlyMeeting() async throws {
         _ = try await processor().process(meeting: meeting, tracks: [track(.mic)], folder: folder, noteURL: note)
         let text = try String(contentsOf: note, encoding: .utf8)
