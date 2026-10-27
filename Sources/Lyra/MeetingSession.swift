@@ -55,20 +55,28 @@ final class MeetingSession {
         transcribeLive()
     }
 
-    /// Records into a note that already exists — one New note made, never recorded — keeping its folder, note and
-    /// meeting.json. If recording can't start, the note is left exactly as it was.
+    /// Records into a note that already exists — one New note made, or one ended and written up — keeping its
+    /// folder, note and meeting.json. A written-up part is filed under parts/ first, and joined back on when this
+    /// part is written up. If recording can't start, the note is left exactly as it was.
     init(recordingInto folder: URL, noteURL: URL, meeting: Meeting,
          onLive: @escaping @MainActor (_ lines: [LiveLine], _ error: String?) -> Void) async throws {
+        var meeting = meeting
+        var previous: Meeting?
+        if FileManager.default.fileExists(atPath: folder.appendingPathComponent("transcript.json").path) {
+            previous = try RecordingParts.archive(folder: folder)
+            meeting = try Meeting.load(from: folder)
+        }
+        meeting.recordingStartedAt = Date()
         self.meeting = meeting
-        self.meeting.recordingStartedAt = Date()
         self.target = nil
         self.onLive = onLive
         self.folder = folder
         self.noteURL = noteURL
         recorder = TwoTrackRecorder(target: nil)
         do { try await startRecorder() } catch {
-            // A half-opened file would make crash recovery treat this plain note as a recording.
+            // A half-opened file would make crash recovery treat this note as a recording.
             for kind in [TrackKind.mic, .meeting] { try? FileManager.default.removeItem(at: folder.appendingPathComponent("\(kind.rawValue).caf")) }
+            if let previous { try? RecordingParts.restore(folder: folder, previous: previous) }
             throw error
         }
         transcribeLive()

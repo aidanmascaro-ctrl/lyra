@@ -20,32 +20,41 @@ struct BottomBar: View {
                 Banner(text: error) { Button("OK") { model.claudeError = nil } }.frame(maxWidth: 560)
             }
             HStack(spacing: 10) {
-                if model.isLive { liveCapsule } else if model.canRecord || model.isStartingRecording { recordCapsule }
+                if model.isLive { liveCapsule } else { recordCapsule }
                 askCapsule
             }
             .frame(maxWidth: 560)
         }
     }
 
+    /// Always there when this note isn't recording: Record (never recorded) or Resume (ended before). While the last
+    /// part is written up, or another note records, it waits, greyed, and says why.
     private var recordCapsule: some View {
-        Button { app.record(in: model.folder) } label: {
+        let busy = model.isStartingRecording || model.isWritingUp
+        return Button { app.record(in: model.folder) } label: {
             HStack(spacing: 7) {
-                if model.isStartingRecording {
+                if busy {
                     ProgressView().controlSize(.small)
-                    Text("Starting…")
+                    Text(model.isStartingRecording ? "Starting…" : "Writing up…")
                 } else {
-                    Circle().fill(Chrome.record).frame(width: 9, height: 9)
-                    Text("Record")
+                    Circle().fill(model.canRecord ? Chrome.record : Color.secondary).frame(width: 9, height: 9)
+                    Text(model.wasRecorded ? "Resume" : "Record")
                 }
             }
             .font(.system(size: 13.5, weight: .medium))
             .padding(.horizontal, 16).frame(height: 38).contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .disabled(model.isStartingRecording)
-        .help("Start recording this note")
+        .disabled(!model.canRecord)
+        .help(recordHelp)
         .capsuleSurface()
         .fixedSize()
+    }
+
+    private var recordHelp: String {
+        if model.canRecord { return model.wasRecorded ? "Record more into this note" : "Start recording this note" }
+        if app.isRecording || app.starting { return "Another note is recording — end it first" }
+        return "Resume is ready once Lyra has written up the last recording"
     }
 
     private var liveCapsule: some View {

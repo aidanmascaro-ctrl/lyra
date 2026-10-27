@@ -85,7 +85,7 @@ private struct MeetingContent: View {
     }
 
     private var expandedPlaceholder: String {
-        if model.canRecord { return "Press Record and Claude expands your notes from the transcript afterwards." }
+        if model.canRecord && !model.wasRecorded { return "Press Record and Claude expands your notes from the transcript afterwards." }
         return model.lines.isEmpty ? "Claude expands your notes from the transcript after the meeting." : "Nothing expanded yet."
     }
 

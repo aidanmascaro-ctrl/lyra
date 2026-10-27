@@ -194,14 +194,15 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// True for a note that has never been recorded (New note) while nothing else records: Record can start here.
+    /// True when Record can start in this note: nothing else records, and the note isn't waiting to be written
+    /// up (an unprocessed .caf) or being written up. Never recorded (New note) or ended and written up both qualify.
     func canRecord(in folder: URL) -> Bool {
-        guard session == nil, state.phase == .idle else { return false }
+        guard session == nil, state.phase == .idle, !isBusy(folder: folder, id: nil) else { return false }
         let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
-        return names.contains("meeting.json") && !names.contains("transcript.json") && !names.contains { $0.hasSuffix(".caf") }
+        return names.contains("meeting.json") && !names.contains { $0.hasSuffix(".caf") }
     }
 
-    /// Record in a New note: records into that note rather than a new one.
+    /// Record (or Resume, after End) in a note: records into that note rather than a new one.
     func record(in folder: URL) {
         guard canRecord(in: folder) else { return }
         do {

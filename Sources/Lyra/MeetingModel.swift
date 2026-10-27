@@ -57,7 +57,7 @@ final class MeetingModel: ObservableObject {
         reload()
         // Live, or a New note not yet recorded: ready to type. Nothing written yet (a Phase 2 meeting): the
         // transcript is all there is.
-        if app.liveMeeting?.folder == folder || app.canRecord(in: folder) { tab = .myNotes }
+        if app.liveMeeting?.folder == folder || (!wasRecorded && lines.isEmpty) { tab = .myNotes }
         else if expandedBlocks.isEmpty && myBlocks.isEmpty { tab = .transcript }
         #if DEBUG
         if let debugTab = DebugLaunch.tab { tab = debugTab }
@@ -69,8 +69,12 @@ final class MeetingModel: ObservableObject {
     /// Sections changed elsewhere while they had typing Lyra hadn't saved; each waits for Reload or Keep mine.
     var conflicts: [NoteSection: NoteSync.Conflict] { sync?.conflicts ?? [:] }
     var isLive: Bool { app.liveMeeting?.folder == folder }
-    /// A New note never recorded, while nothing else records: the bottom bar offers Record.
+    /// Nothing recording or being written up here, and nothing else recording: the bottom bar offers Record.
     var canRecord: Bool { app.canRecord(in: folder) }
+    /// Recorded before (and ended): Record carries on in this note, so it reads Resume.
+    var wasRecorded: Bool { meeting?.endedAt != nil || meeting?.earlierParts != nil }
+    /// The recording just ended is being written up (transcript, then Claude); Resume waits for it.
+    var isWritingUp: Bool { !isLive && app.isBusy(folder: folder, id: meeting?.id) }
     var isStartingRecording: Bool { app.startingFolder == folder }
     var streaming: [NoteBlock]? { meeting.flatMap { app.liveExpansion[$0.id] } }
     var speakers: [SpeakerSummary] { MeetingOverview.speakers(in: lines) }
@@ -96,9 +100,15 @@ final class MeetingModel: ObservableObject {
             let meeting = try Meeting.load(from: folder)
             self.meeting = meeting
             let transcript = folder.appendingPathComponent("transcript.json")
-            // No transcript yet while recording: that's not an error.
-            lines = FileManager.default.fileExists(atPath: transcript.path)
-                ? try JSONDecoder().decode([TranscriptLine].self, from: Data(contentsOf: transcript)) : []
+            // No transcript yet while recording: that's not an error. Recording again after End, the earlier
+            // parts' transcript is filed under parts/ until the new part is written up.
+            if FileManager.default.fileExists(atPath: transcript.path) {
+                lines = try JSONDecoder().decode([TranscriptLine].self, from: Data(contentsOf: transcript))
+            } else if let part = meeting.earlierParts, part > 0 {
+                lines = try RecordingParts.earlier(in: folder, part: part).lines
+            } else {
+                lines = []
+            }
             loadError = nil
         } catch {
             loadError = "Couldn't read this meeting: \(error.localizedDescription)"
