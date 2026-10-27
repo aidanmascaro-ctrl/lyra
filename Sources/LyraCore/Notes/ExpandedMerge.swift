@@ -88,7 +88,7 @@ public enum ExpandedMerge {
 
     /// A heading owns everything up to the next heading of the same or higher level; any other block
     /// owns the deeper-indented blocks after it (never a heading).
-    private static func unitRange(startingAt start: Int, in blocks: [NoteBlock]) -> Range<Int> {
+    public static func unitRange(startingAt start: Int, in blocks: [NoteBlock]) -> Range<Int> {
         let head = blocks[start]
         var end = start + 1
         while end < blocks.count {
