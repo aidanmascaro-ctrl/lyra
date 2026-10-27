@@ -11,17 +11,23 @@ public struct FluidDiarizer: SpeakerDiarizing {
         self.config = config
     }
 
-    public func diarize(samples: [Float]) async throws -> [SpeakerTurn] {
+    public func diarize(samples: [Float]) async throws -> Diarization {
         // ponytail: fresh manager per call (it isn't Sendable); costs a cached model load per track.
         // Keep one alive behind a lock if per-track load time ever matters.
         let manager = OfflineDiarizerManager(config: config)
         try await manager.prepareModels()
+        let result: DiarizationResult
         do {
-            return try await manager.process(audio: samples).segments.map {
-                SpeakerTurn(speaker: $0.speakerId, start: Double($0.startTimeSeconds), end: Double($0.endTimeSeconds))
-            }
+            result = try await manager.process(audio: samples)
         } catch OfflineDiarizationError.noSpeechDetected {
-            return []  // silence (e.g. no Audio Capture permission) is an empty result, not a failure
+            return Diarization(turns: [], centroids: [:])  // silence (e.g. no Audio Capture permission) is empty, not a failure
         }
+        let turns = result.segments.map {
+            SpeakerTurn(speaker: $0.speakerId, start: Double($0.startTimeSeconds), end: Double($0.endTimeSeconds))
+        }
+        // speakerDatabase is FluidAudio's plain (un-normalised) per-speaker mean, keyed by segment.speakerId.
+        let centroids = Diarization.normalisedCentroids(
+            database: result.speakerDatabase, segments: result.segments.map { ($0.speakerId, $0.embedding) })
+        return Diarization(turns: turns, centroids: centroids)
     }
 }

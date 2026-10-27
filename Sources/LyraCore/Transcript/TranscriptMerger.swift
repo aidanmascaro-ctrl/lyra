@@ -4,7 +4,7 @@ public enum TranscriptMerger {
     /// Echo reaches the mic at the same moment the call plays it, so only near-simultaneous lines can be echo.
     static let echoPad = 0.5
 
-    /// Merges both tracks, drops mic lines that are an echo of the call, and relabels speakers.
+    /// Merges both tracks, drops mic lines that are an echo of the call, and relabels speakers (the raw id stays in `speakerID`).
     /// A mic line (3+ words) is echo when ≥ 60% of its word pairs appear in call lines overlapping it in time.
     /// Word pairs, not single words: a reply reuses the question's stopwords, but not its phrasing.
     public static func merge(meeting: [TranscriptLine], mic: [TranscriptLine]) -> [TranscriptLine] {
@@ -27,11 +27,34 @@ public enum TranscriptMerger {
         var numbers: [String: Int] = [:]
         return sorted.map { line in
             var out = line
+            out.speakerID = line.speakerID ?? line.speakerLabel  // keep the raw id through the relabel
             let n = numbers[line.speakerLabel] ?? numbers.count + 1
             numbers[line.speakerLabel] = n
             out.speakerLabel = "Speaker \(n)"
             return out
         }
+    }
+
+    /// A mic cluster this close (cosine) to any call cluster is the call leaking into the mic.
+    /// Measured 2026-10-27 (docs/notes/phase2-findings.md): a speaker leak scored 0.852 against the call's
+    /// voice; different voices scored at most 0.243; the same voice across meetings 0.858-0.866.
+    public static let voiceEchoSimilarity = 0.75
+
+    /// Second echo pass, by voice instead of words: catches leaked call audio the text filter missed because
+    /// the mic heard it differently. Drops the leaking mic cluster and all its lines. Only a mic cluster that
+    /// `VoiceMatcher` names as the owner is kept (Aidan's own voice is never echo); any other known person on
+    /// the mic who sounds like the call is the call leaking, so it goes. Centroids are unit-normalised here.
+    public static func dropVoiceEcho(lines: [TranscriptLine], clusters: [SpeakerCluster], people: [Person], policy: MatchPolicy)
+        -> (lines: [TranscriptLine], clusters: [SpeakerCluster]) {
+        let call = clusters.filter { $0.track == .meeting }.compactMap { VoiceMatcher.unit($0.centroid) }
+        let echo = Set(clusters.filter { c in
+            guard c.track == .mic, let v = VoiceMatcher.unit(c.centroid),
+                  call.contains(where: { $0.count == v.count && zip($0, v).reduce(0.0) { $0 + Double($1.0 * $1.1) } >= voiceEchoSimilarity })
+            else { return false }
+            let match = VoiceMatcher.match(c.centroid, people: people, policy: policy)
+            return !(people.first { $0.id == match?.personID }?.isOwner ?? false)
+        }.map(\.id))
+        return (lines.filter { !echo.contains($0.speakerID ?? "") }, clusters.filter { !echo.contains($0.id) })
     }
 
     private static func words(_ text: String) -> [String] {

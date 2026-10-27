@@ -1,31 +1,42 @@
 import Foundation
 
 /// Turns a finished recording folder into a transcript, a note and compressed audio.
-/// Order matters for crash safety: convert → note → transcript.json (the "done" marker) → delete CAFs.
+/// Order matters for crash safety: convert → note → speakers.json → transcript.json (the "done" marker) → delete CAFs.
 public struct MeetingProcessor: Sendable {
     public static let silentPeak: Float = 0.005
-    public static let silentWarning = "Meeting audio was silent — transcript is from your microphone only. If this keeps happening, check System Settings → Privacy & Security → Screen & System Audio Recording for Lyra."
+
+    /// Neutral on purpose: a solo call is silent too, so this must not claim a permission problem.
+    public static func noSoundWarning(appName: String) -> String {
+        "No sound came from \(appName) during this meeting, so the transcript is from your microphone only. If other people spoke, check System Settings → Privacy & Security → Screen & System Audio Recording for Lyra."
+    }
 
     private let trackTranscriber: TrackTranscriber
     private let loader: @Sendable (URL) throws -> [Float]
     private let convert: @Sendable (URL, URL) async throws -> Void
     private let timeZone: TimeZone
+    private let people: @Sendable () -> [Person]
+    private let policy: MatchPolicy
 
     /// `convert(caf, m4a)` must throw unless `m4a` ends up playable with a non-zero duration.
+    /// `people` is read once per meeting; naming only reads it, it never writes to the people store.
     public init(trackTranscriber: TrackTranscriber, loader: @escaping @Sendable (URL) throws -> [Float],
-                convert: @escaping @Sendable (URL, URL) async throws -> Void, timeZone: TimeZone = .current) {
+                convert: @escaping @Sendable (URL, URL) async throws -> Void, timeZone: TimeZone = .current,
+                people: @escaping @Sendable () -> [Person] = { [] }, policy: MatchPolicy = .init()) {
         self.trackTranscriber = trackTranscriber
         self.loader = loader
         self.convert = convert
         self.timeZone = timeZone
+        self.people = people
+        self.policy = policy
     }
 
     public func process(meeting: Meeting, tracks: [TrackResult], folder: URL, noteURL: URL) async throws -> URL {
         var meeting = meeting
         if let m = tracks.first(where: { $0.kind == .meeting }), m.peakLevel < Self.silentPeak || m.error != nil {
-            meeting.warn(Self.silentWarning)
+            meeting.warn(Self.noSoundWarning(appName: meeting.appName))
         }
         var lines: [TrackKind: [TranscriptLine]] = [:]
+        var clusters: [TrackKind: [SpeakerCluster]] = [:]
         for track in tracks {
             let samples: [Float]
             do { samples = try loader(track.url) } catch {
@@ -34,9 +45,17 @@ public struct MeetingProcessor: Sendable {
                 continue
             }
             // Engine failures (e.g. models not downloaded) throw, so the folder is retried next launch.
-            lines[track.kind] = try await trackTranscriber.run(samples: samples, track: track.kind)
+            // Shift onto the shared timeline: the tracks start recording at different moments.
+            let offset = track.startOffset ?? 0
+            let result = try await trackTranscriber.run(samples: samples, track: track.kind)
+            lines[track.kind] = result.lines.map { var l = $0; l.start += offset; l.end += offset; return l }
+            clusters[track.kind] = result.clusters
         }
-        let merged = TranscriptMerger.merge(meeting: lines[.meeting] ?? [], mic: lines[.mic] ?? [])
+        let known = people()
+        let (echoFree, allClusters) = TranscriptMerger.dropVoiceEcho(
+            lines: TranscriptMerger.merge(meeting: lines[.meeting] ?? [], mic: lines[.mic] ?? []),
+            clusters: (clusters[.meeting] ?? []) + (clusters[.mic] ?? []), people: known, policy: policy)
+        let merged = SpeakerNamer.name(lines: echoFree, clusters: allClusters, people: known, policy: policy)
 
         // Convert first (keeping the CAFs) so a failure can be warned about in the note itself.
         var converted: [URL] = []
@@ -59,10 +78,18 @@ public struct MeetingProcessor: Sendable {
             guard existing.contains("lyra_id: \(meeting.id.uuidString)") else {
                 throw CocoaError(.fileWriteFileExists, userInfo: [NSFilePathErrorKey: noteURL.path])
             }
+            meeting.transcriptSectionHash = NoteSections.transcriptBody(of: existing).map(NoteSections.hash)
         } else {
             try Self.createExclusively(Data(note.utf8), at: noteURL)
+            meeting.transcriptSectionHash = NoteSections.hash(NoteRenderer.transcriptBody(lines: merged))
         }
         try meeting.save(in: folder)
+        // Before transcript.json: a crash between the two leaves no done marker, so the folder is reprocessed.
+        // Only clusters with a line left after the echo filter: an echo-only mic cluster is the remote voice leaking in.
+        // Taken before naming: a join keeps only its first line's raw id, but both clusters still spoke.
+        let kept = Set(echoFree.compactMap(\.speakerID))
+        let speakers = allClusters.filter { kept.contains($0.id) }
+        try PeopleStore.writeOwnerOnly(Self.encoder.encode(speakers), to: folder.appendingPathComponent("speakers.json"))
         try Self.encoder.encode(merged).write(to: folder.appendingPathComponent("transcript.json"), options: .atomic)
         // Only now is the meeting safe without its CAFs; a crash before this point reprocesses the folder.
         for caf in converted { try? FileManager.default.removeItem(at: caf) }
@@ -89,7 +116,9 @@ public struct MeetingProcessor: Sendable {
             guard let kind = TrackKind(rawValue: url.deletingPathExtension().lastPathComponent) else { return nil }
             let saved = meeting.tracks?.first { $0.kind == kind }
             // No saved level means Lyra died mid-recording; don't claim silence we never measured.
-            return TrackResult(kind: kind, url: url, seconds: saved?.seconds ?? 0, peakLevel: saved?.peakLevel ?? 1, error: saved?.error)
+            var track = TrackResult(kind: kind, url: url, seconds: saved?.seconds ?? 0, peakLevel: saved?.peakLevel ?? 1, error: saved?.error)
+            track.startOffset = saved?.startOffset
+            return track
         }.sorted { $0.kind.rawValue < $1.kind.rawValue }
         guard !tracks.isEmpty else {
             throw CocoaError(.fileReadNoSuchFile, userInfo: [NSLocalizedDescriptionKey: "no meeting.caf or mic.caf in \(folder.lastPathComponent)"])

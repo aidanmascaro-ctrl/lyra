@@ -14,23 +14,32 @@ public struct TrackTranscriber: Sendable {
     }
 
     /// `sampleRate` is kept for callers; word times come back from the transcriber in seconds.
-    public func run(samples: [Float], track: TrackKind, sampleRate: Double = 16_000) async throws -> [TranscriptLine] {
+    /// Clusters are returned only for raw ids that have a centroid and own at least one line.
+    public func run(samples: [Float], track: TrackKind, sampleRate: Double = 16_000) async throws
+        -> (lines: [TranscriptLine], clusters: [SpeakerCluster]) {
         let words = try await transcriber.transcribe(samples: samples)
-        guard !words.isEmpty else { return [] }  // a silent track: nothing to attribute, so don't diarize
-        let turns = try await diarizer.diarize(samples: samples)
+        guard !words.isEmpty else { return ([], []) }  // a silent track: nothing to attribute, so don't diarize
+        let diarization = try await diarizer.diarize(samples: samples)
+        let turns = diarization.turns
 
         var lines: [TranscriptLine] = []
+        var clusters: [SpeakerCluster] = []
         for word in words {
-            let label = "\(track.rawValue):\(Self.speaker(of: word, in: turns) ?? "0")"
+            let raw = Self.speaker(of: word, in: turns) ?? "0"
+            let label = "\(track.rawValue):\(raw)"
             if let last = lines.last, last.speakerLabel == label, word.start - last.end <= Self.maxPause {
                 lines[lines.count - 1] = TranscriptLine(
-                    speakerLabel: label, track: track, start: last.start, end: word.end,
+                    speakerLabel: label, speakerID: label, track: track, start: last.start, end: word.end,
                     text: last.text + " " + word.text)
             } else {
-                lines.append(TranscriptLine(speakerLabel: label, track: track, start: word.start, end: word.end, text: word.text))
+                lines.append(TranscriptLine(speakerLabel: label, speakerID: label, track: track, start: word.start, end: word.end, text: word.text))
+            }
+            if let centroid = diarization.centroids[raw], !clusters.contains(where: { $0.id == label }) {
+                let seconds = turns.filter { $0.speaker == raw }.reduce(0) { $0 + $1.end - $1.start }
+                clusters.append(SpeakerCluster(id: label, track: track, centroid: centroid, speechSeconds: seconds))
             }
         }
-        return lines
+        return (lines, clusters)
     }
 
     /// The turn overlapping the word most; if none overlaps, the nearest turn in time.

@@ -11,6 +11,13 @@ struct LyraApp: App {
         } label: {
             MenuLabel(model: delegate.model)
         }
+        Window("Teach Lyra my voice", id: "enrol") { EnrolmentWindow(app: delegate.model) }
+            .windowResizability(.contentSize)
+            .defaultLaunchBehavior(.suppressed)
+            .restorationBehavior(.disabled)
+        Window("Meeting", id: "meeting") { MeetingWindow(app: delegate.model) }
+            .defaultLaunchBehavior(.suppressed)
+            .restorationBehavior(.disabled)
     }
 }
 

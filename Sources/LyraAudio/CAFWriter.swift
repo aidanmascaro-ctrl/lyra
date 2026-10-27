@@ -13,6 +13,7 @@ final class CAFWriter: Sendable {
     private let frames = Atomic<Int>(0)
     private let peakBits = Atomic<UInt32>(0)
     private let writeStatus = Atomic<Int32>(0)
+    private let firstHostTime = Atomic<UInt64>(0)  // host clock of the first buffer; 0 until one arrives
 
     init(url: URL, format: AudioStreamBasicDescription) throws {
         guard format.mFormatID == kAudioFormatLinearPCM, format.mFormatFlags & kAudioFormatFlagIsFloat != 0,
@@ -46,7 +47,9 @@ final class CAFWriter: Sendable {
     var seconds: Double { Double(frames.load(ordering: .relaxed)) / sampleRate }
 
     /// Frame count comes from the first buffer's byte size (4 bytes per sample per channel).
-    func write(_ list: UnsafePointer<AudioBufferList>) {
+    /// `hostTime` is when the buffer's first frame was captured; the first non-zero one is kept
+    /// so the tracks can be lined up. Padding silence passes 0.
+    func write(_ list: UnsafePointer<AudioBufferList>, hostTime: UInt64) {
         let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: list))
         guard let first = buffers.first, first.mNumberChannels > 0 else { return }
         let frameCount = first.mDataByteSize / (4 * first.mNumberChannels)
@@ -60,6 +63,7 @@ final class CAFWriter: Sendable {
         peakBits.max(peak.bitPattern, ordering: .relaxed)
         let status = ExtAudioFileWriteAsync(file, frameCount, list)
         if status == noErr { frames.add(Int(frameCount), ordering: .relaxed) } else { writeStatus.store(status, ordering: .relaxed) }
+        if hostTime != 0 { _ = firstHostTime.compareExchange(expected: 0, desired: hostTime, ordering: .relaxed) }
     }
 
     /// Closes the file. Call once, after the source has stopped delivering buffers.
@@ -69,8 +73,11 @@ final class CAFWriter: Sendable {
         let errors = [extraError,
                       writeStatus == noErr ? nil : "write failed (OSStatus \(writeStatus))",
                       closeStatus == noErr ? nil : "close failed (OSStatus \(closeStatus))"].compactMap { $0 }
-        return TrackResult(kind: kind, url: url, seconds: seconds,
-                           peakLevel: Float(bitPattern: peakBits.load(ordering: .relaxed)),
-                           error: errors.isEmpty ? nil : errors.joined(separator: "; "))
+        var result = TrackResult(kind: kind, url: url, seconds: seconds,
+                                 peakLevel: Float(bitPattern: peakBits.load(ordering: .relaxed)),
+                                 error: errors.isEmpty ? nil : errors.joined(separator: "; "))
+        let first = firstHostTime.load(ordering: .relaxed)
+        if first != 0 { result.firstFrameTime = Double(AudioConvertHostTimeToNanos(first)) / 1e9 }
+        return result
     }
 }

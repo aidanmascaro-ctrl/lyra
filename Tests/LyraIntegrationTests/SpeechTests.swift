@@ -1,7 +1,17 @@
 import AVFoundation
+import LyraAudio
 import LyraCore
-import LyraSpeech
+@testable import LyraSpeech
 import XCTest
+
+/// A file that stops delivering frames after its first read, without throwing: a short read mid-file.
+private final class StallingFile: AVAudioFile, @unchecked Sendable {
+    private var reads = 0
+    override func read(into buffer: AVAudioPCMBuffer, frameCount frames: AVAudioFrameCount) throws {
+        reads += 1
+        if reads == 1 { try super.read(into: buffer, frameCount: frames) } else { buffer.frameLength = 0 }
+    }
+}
 
 final class SpeechTests: XCTestCase {
     func testThreeVoiceFixture() async throws {
@@ -13,7 +23,7 @@ final class SpeechTests: XCTestCase {
 
         let started = Date()
         let lines = try await TrackTranscriber(diarizer: FluidDiarizer(), transcriber: FluidTranscriber())
-            .run(samples: samples, track: .meeting)
+            .run(samples: samples, track: .meeting).lines
         print("speech: \(Date().timeIntervalSince(started)) s")
         for line in lines {
             print(String(format: "speech: [%@] %.2f-%.2f %@", line.speakerLabel, line.start, line.end, line.text))
@@ -30,8 +40,32 @@ final class SpeechTests: XCTestCase {
     /// An all-zeros track (what a missing Audio Capture permission records) is no speakers, not an error.
     func testDiarizerOnSilenceIsEmpty() async throws {
         try requireIntegration()
-        let turns = try await FluidDiarizer().diarize(samples: [Float](repeating: 0, count: 160_000))
-        XCTAssertTrue(turns.isEmpty)
+        let result = try await FluidDiarizer().diarize(samples: [Float](repeating: 0, count: 160_000))
+        XCTAssertTrue(result.turns.isEmpty)
+        XCTAssertTrue(result.centroids.isEmpty)
+    }
+
+    /// Every speaker in the fixture gets a unit-length fingerprint of the engine's dimension.
+    func testFixtureClustersHaveCentroids() async throws {
+        try requireIntegration()
+        let url = try XCTUnwrap(Bundle.module.url(
+            forResource: "speaker-test-3-voices", withExtension: "wav", subdirectory: "Fixtures"))
+        let samples = try AudioLoader.load16kMono(url: url)
+        let raw = try await FluidDiarizer().diarize(samples: samples)
+        XCTAssertEqual(Set(raw.centroids.keys), Set(raw.turns.map(\.speaker)))
+
+        let clusters = try await TrackTranscriber(diarizer: FluidDiarizer(), transcriber: FluidTranscriber())
+            .run(samples: samples, track: .meeting).clusters
+        let dims = Set(clusters.map(\.centroid.count))
+        print("speech: clusters = \(clusters.count), centroid dimension = \(dims.sorted())")
+        XCTAssertGreaterThanOrEqual(clusters.count, 2)
+        XCTAssertEqual(dims.count, 1)
+        XCTAssertGreaterThan(dims.first ?? 0, 0)
+        for cluster in clusters {
+            XCTAssertTrue(cluster.id.hasPrefix("meeting:"), cluster.id)
+            XCTAssertEqual(cluster.centroid.reduce(0) { $0 + $1 * $1 }.squareRoot(), 1, accuracy: 1e-3, cluster.id)
+            XCTAssertGreaterThan(cluster.speechSeconds, 0)
+        }
     }
 
     func testLoadsStereo48kCAF() throws {
@@ -50,6 +84,54 @@ final class SpeechTests: XCTestCase {
         let samples = try AudioLoader.load16kMono(url: caf)
         XCTAssertEqual(Double(samples.count) / 16_000, 43, accuracy: 1)
         XCTAssertGreaterThan(samples.map(abs).max() ?? 0, 0.1)
+    }
+
+    /// Compressed formats overestimate `length`; the read past the real end must count as end-of-file.
+    /// Encoded with Lyra's own converter, as every processed meeting is.
+    func testLoadsAACThroughEnd() async throws {
+        try requireIntegration()
+        let wav = try XCTUnwrap(Bundle.module.url(
+            forResource: "speaker-test-3-voices", withExtension: "wav", subdirectory: "Fixtures"))
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("lyra-aac-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let m4a = dir.appendingPathComponent("meeting.m4a")
+        try await M4AConverter.convert(wav, to: m4a)
+
+        let samples = try AudioLoader.load16kMono(url: m4a)
+        XCTAssertEqual(Double(samples.count) / 16_000, 43, accuracy: 1)
+    }
+
+    /// A CAF cut off halfway (a crash-damaged master) must throw, not load as a shorter meeting.
+    func testTruncatedCAFThrows() throws {
+        try requireIntegration()
+        let wav = try XCTUnwrap(Bundle.module.url(
+            forResource: "speaker-test-3-voices", withExtension: "wav", subdirectory: "Fixtures"))
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("lyra-cut-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let caf = dir.appendingPathComponent("meeting.caf")
+        let convert = Process()
+        convert.executableURL = URL(fileURLWithPath: "/usr/bin/afconvert")
+        convert.arguments = ["-f", "caff", "-d", "LEF32@48000", "-c", "2", wav.path, caf.path]
+        try convert.run()
+        convert.waitUntilExit()
+        let data = try Data(contentsOf: caf)
+        try data.prefix(data.count / 2).write(to: caf)
+
+        // Opens fine (length = the header's full 43 s) and throws on a read halfway: the read-time guard.
+        let file = try AVAudioFile(forReading: caf)
+        XCTAssertEqual(Double(file.length) / 48_000, 43, accuracy: 1)
+        XCTAssertThrowsError(try AudioLoader.load16kMono(url: caf))
+    }
+
+    /// A read that returns no frames long before `length` must throw too, not end the loop quietly.
+    func testZeroFrameReadMidFileThrows() throws {
+        try requireIntegration()
+        let wav = try XCTUnwrap(Bundle.module.url(
+            forResource: "speaker-test-3-voices", withExtension: "wav", subdirectory: "Fixtures"))
+        let file = try StallingFile(forReading: wav)
+        XCTAssertThrowsError(try AudioLoader.load16kMono(file: file))
     }
 
     /// A call where only the right channel carries sound must not load as silence.

@@ -8,7 +8,7 @@ public enum NoteRenderer {
         iso.formatOptions = [.withInternetDateTime, .withColonSeparatorInTimeZone]
         let minutes = meeting.endedAt.map { max(0, Int((($0.timeIntervalSince(meeting.startedAt)) / 60).rounded())) } ?? 0
         let warnings = meeting.warnings.map { "> [!warning] \($0)\n" }.joined(separator: "\n")
-        let transcript = lines.map { "**\($0.speakerLabel)** [\(stamp($0.start))] \($0.text.replacingOccurrences(of: "<!--", with: "&lt;!--"))" }.joined(separator: "\n\n")
+        let transcript = transcriptBody(lines: lines)
         return """
         ---
         lyra_id: \(meeting.id.uuidString)
@@ -30,6 +30,26 @@ public enum NoteRenderer {
         <!-- lyra:transcript:end -->
 
         """
+    }
+
+    /// What goes between the lyra transcript markers. Rename re-renders the section with this, so both paths share one format.
+    public static func transcriptBody(lines: [TranscriptLine]) -> String {
+        lines.map { line in
+            let badge = line.nameSource == .knownVoice ? " _(known voice)_" : ""
+            return "**\(escapeName(line.speakerLabel))**\(badge) [\(stamp(line.start))] \(line.text.replacingOccurrences(of: "<!--", with: "&lt;!--"))"
+        }.joined(separator: "\n\n")
+    }
+
+    /// Backslash-escapes what would break the bold or start a link/tag; a newline would end the line, so it becomes a space.
+    private static func escapeName(_ name: String) -> String {
+        var out = ""
+        // `<!--` first, as in transcript text, so a name can't spoof the lyra markers.
+        for ch in name.replacingOccurrences(of: "<!--", with: "&lt;!--") {
+            if ch.isNewline { out.append(" "); continue }
+            if "\\*_`[]<".contains(ch) { out.append("\\") }
+            out.append(ch)
+        }
+        return out
     }
 
     private static func stamp(_ t: Double) -> String {

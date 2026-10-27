@@ -84,7 +84,7 @@ final class MicSession: @unchecked Sendable {
         }
         while missing > 0 {
             silence.frameLength = AVAudioFrameCount(min(missing, Int(silence.frameCapacity)))
-            writer.write(silence.audioBufferList)
+            writer.write(silence.audioBufferList, hostTime: 0)
             missing -= Int(silence.frameLength)
         }
     }
@@ -103,11 +103,11 @@ final class MicSession: @unchecked Sendable {
         guard format.sampleRate > 0, format.channelCount > 0 else { throw AudioError(description: "no microphone input available") }
         if format == fileFormat {
             let writer = writer
-            input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, _ in writer.write(buffer.audioBufferList) }
+            input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, when in writer.write(buffer.audioBufferList, hostTime: when.hostTime) }
         } else {
             let bridge = try FormatBridge(from: format, to: fileFormat, writer: writer)
             self.bridge = bridge
-            input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, _ in bridge.write(buffer) }
+            input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, when in bridge.write(buffer, hostTime: when.hostTime) }
         }
         engine.prepare()
         try engine.start()
@@ -142,9 +142,9 @@ final class FormatBridge: @unchecked Sendable {
         self.writer = writer
     }
 
-    func write(_ buffer: AVAudioPCMBuffer) {
+    func write(_ buffer: AVAudioPCMBuffer, hostTime: UInt64) {
         var supplied = false
-        convert { inputStatus in
+        convert(hostTime: hostTime) { inputStatus in
             if supplied { inputStatus.pointee = .noDataNow; return nil }
             supplied = true
             inputStatus.pointee = .haveData
@@ -154,19 +154,19 @@ final class FormatBridge: @unchecked Sendable {
 
     /// Writes the samples the converter still holds. Call once, after the tap is removed.
     func flush() {
-        convert { inputStatus in
+        convert(hostTime: 0) { inputStatus in
             inputStatus.pointee = .endOfStream
             return nil
         }
     }
 
-    private func convert(_ input: (UnsafeMutablePointer<AVAudioConverterInputStatus>) -> AVAudioBuffer?) {
+    private func convert(hostTime: UInt64, _ input: (UnsafeMutablePointer<AVAudioConverterInputStatus>) -> AVAudioBuffer?) {
         withoutActuallyEscaping(input) { input in
             var status: AVAudioConverterOutputStatus
             repeat { // loops while the converter has more output than one buffer holds
                 output.frameLength = 0
                 status = converter.convert(to: output, error: nil) { _, inputStatus in input(inputStatus) }
-                if output.frameLength > 0 { writer.write(output.audioBufferList) }
+                if output.frameLength > 0 { writer.write(output.audioBufferList, hostTime: hostTime) }
             } while status == .haveData
         }
     }
