@@ -21,6 +21,10 @@ public struct Meeting: Codable, Sendable {
     public var screenText: [String]? = nil
     /// Where the note was last seen; a hint only, the lyra_id in the note is the identity.
     public var notePath: String? = nil
+    /// Why the after-meeting title/tags call failed, for the UI; nil once it succeeds.
+    public var insightsError: String? = nil
+    /// Why expanding the notes failed, for the UI's Retry; nil once it succeeds.
+    public var expandError: String? = nil
 
     public init(id: UUID = UUID(), title: String, appName: String, bundleID: String? = nil,
                 startedAt: Date, endedAt: Date? = nil, warnings: [String] = []) {

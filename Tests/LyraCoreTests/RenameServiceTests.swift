@@ -256,4 +256,17 @@ final class RenameServiceTests: XCTestCase {
         }
         XCTAssertEqual(try lines(folder).map(\.speakerLabel), ["Speaker 1", "Marco", "Speaker 1", "Marco"])
     }
+
+    /// Aidan moved the note into a series folder in Obsidian: the rename finds it by lyra_id and updates it there.
+    func testRenameFindsMovedNoteThroughIndex() throws {
+        let (folder, note) = try makeMeeting()
+        let moved = dir.appendingPathComponent("Series/Moved.md")
+        try FileManager.default.createDirectory(at: moved.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: note, to: moved)
+        let index = NoteIndex(notesRoot: dir, vaultRoot: dir)
+        XCTAssertEqual(try RenameService(people: store).rename(speakerLabel: "Speaker 2", to: "Marco", inMeetingFolder: folder, index: index), .done)
+        XCTAssertTrue(try String(contentsOf: moved, encoding: .utf8).contains("**Marco**"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: note.path))
+        XCTAssertEqual(try Meeting.load(from: folder).notePath.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath() }, moved.resolvingSymlinksInPath())
+    }
 }

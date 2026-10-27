@@ -19,8 +19,12 @@ final class AppModel: ObservableObject {
     @Published private(set) var now = Date()
     /// Apps the user chose to never be prompted about; mirrors the saved list so the menu refreshes.
     @Published private(set) var ignoredList: [IgnoredApp] = []
+    /// Claude's Expanded section as it streams in, by meeting id; gone once it is saved in the note.
+    @Published private(set) var liveExpansion: [UUID: [NoteBlock]] = [:]
 
     let paths = MeetingPaths(recordingsRoot: MeetingPaths.defaultRecordingsRoot, notesDir: MeetingPaths.defaultNotesDir)
+    /// Notes are found by `lyra_id` anywhere under Meetings/; links are rewritten across the whole vault.
+    let notes = NoteIndex(notesRoot: MeetingPaths.defaultNotesDir, vaultRoot: MeetingPaths.defaultNotesDir.deletingLastPathComponent())
     /// The one people store: processing, enrolment and renames all share it, so a new voice is used by the next meeting.
     /// An unreadable store loads as nobody (naming finds no one) and refuses writes with a plain-English error.
     let people = PeopleStore(fileURL: PeopleStore.defaultURL)
@@ -32,6 +36,12 @@ final class AppModel: ObservableObject {
             convert: M4AConverter.convert,
             people: { people.all() })
     }()
+    private lazy var afterMeeting: AfterMeeting = { [notes] in
+        let claude = ClaudeCLI()
+        return AfterMeeting(index: notes, claude: claude, expander: Expander(claude: claude), vaultRoot: notes.vaultRoot)
+    }()
+    /// The tail of the background queue: processing and after-meeting work run one at a time, in order.
+    private var pipeline: Task<Void, Never>?
     private let micUsage = CoreAudioMicUsage()
     private let ignoredApps = IgnoredApps(defaults: .standard)
     private let detector: MeetingDetector
@@ -185,17 +195,50 @@ final class AppModel: ObservableObject {
 
     private typealias Job = (meeting: Meeting, tracks: [TrackResult], folder: URL, note: URL)
 
-    /// Processes jobs one at a time, off the main actor; each result hops back here.
+    /// Processes jobs one at a time, off the main actor, then files and expands each one; results hop back here.
     private func run(_ jobs: [Job]) {
         guard !jobs.isEmpty else { return }
         processingCount += jobs.count
         let processor = processor
-        Task.detached {
-            for job in jobs {
+        for job in jobs {
+            enqueue {
                 let result = await Result { try await processor.process(meeting: job.meeting, tracks: job.tracks, folder: job.folder, noteURL: job.note) }
                 await self.finished(result, folder: job.folder)
+                if case .success = result { await self.expand(folder: job.folder, id: job.meeting.id) }
             }
         }
+    }
+
+    /// Runs the after-meeting step again for an already processed meeting (the meeting window's Retry).
+    func runAfterMeeting(folder: URL) {
+        enqueue {
+            do { await self.expand(folder: folder, id: try Meeting.load(from: folder).id) } catch {
+                await self.report("Couldn't read \(folder.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func enqueue(_ work: @escaping @Sendable () async -> Void) {
+        let previous = pipeline
+        pipeline = Task.detached {
+            await previous?.value
+            await work()
+        }
+    }
+
+    /// Title, tags, rename and Claude's expansion. A failure is saved in meeting.json for the meeting window.
+    private nonisolated func expand(folder: URL, id: UUID) async {
+        let after = await afterMeeting
+        do {
+            try await after.run(folder: folder) { blocks in await self.showExpansion(blocks, for: id) }
+        } catch {
+            await report("Claude couldn't finish the notes for \(folder.lastPathComponent): \(error.localizedDescription)")
+        }
+        await showExpansion(nil, for: id)
+    }
+
+    private func showExpansion(_ blocks: [NoteBlock]?, for id: UUID) {
+        liveExpansion[id] = blocks
     }
 
     private func finished(_ result: Result<URL, Error>, folder: URL) {

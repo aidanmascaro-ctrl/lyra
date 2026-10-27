@@ -1,6 +1,7 @@
 import Foundation
 
 /// Turns a finished recording folder into a transcript, a note and compressed audio.
+/// The note itself is made when recording starts (`createSkeletonNote`); processing fills in its transcript.
 /// Order matters for crash safety: convert → note → speakers.json → transcript.json (the "done" marker) → delete CAFs.
 public struct MeetingProcessor: Sendable {
     public static let silentPeak: Float = 0.005
@@ -72,17 +73,8 @@ public struct MeetingProcessor: Sendable {
             }
         }
 
-        let note = NoteRenderer.render(meeting: meeting, lines: merged, recordingsFolder: folder, timeZone: timeZone)
-        if let existing = try? String(contentsOf: noteURL, encoding: .utf8) {
-            // Our own note from a run cut short after writing it: finish the job, leave the note untouched.
-            guard existing.contains("lyra_id: \(meeting.id.uuidString)") else {
-                throw CocoaError(.fileWriteFileExists, userInfo: [NSFilePathErrorKey: noteURL.path])
-            }
-            meeting.transcriptSectionHash = NoteSections.transcriptBody(of: existing).map(NoteSections.hash)
-        } else {
-            try Self.createExclusively(Data(note.utf8), at: noteURL)
-            meeting.transcriptSectionHash = NoteSections.hash(NoteRenderer.transcriptBody(lines: merged))
-        }
+        let noteAt = try writeTranscript(merged, meeting: &meeting, folder: folder, reserved: noteURL)
+        meeting.notePath = noteAt.path
         try meeting.save(in: folder)
         // Before transcript.json: a crash between the two leaves no done marker, so the folder is reprocessed.
         // Only clusters with a line left after the echo filter: an echo-only mic cluster is the remote voice leaking in.
@@ -93,7 +85,48 @@ public struct MeetingProcessor: Sendable {
         try Self.encoder.encode(merged).write(to: folder.appendingPathComponent("transcript.json"), options: .atomic)
         // Only now is the meeting safe without its CAFs; a crash before this point reprocesses the folder.
         for caf in converted { try? FileManager.default.removeItem(at: caf) }
-        return noteURL
+        return noteAt
+    }
+
+    /// The note made when recording starts, so Aidan can type in it during the meeting: header, empty sections.
+    /// Never replaces a file already at `noteURL`.
+    public static func createSkeletonNote(for meeting: Meeting, recordingsFolder: URL, at noteURL: URL) throws {
+        let note = NoteRenderer.render(meeting: meeting, lines: [], recordingsFolder: recordingsFolder)
+        try createExclusively(Data(note.utf8), at: noteURL)
+    }
+
+    /// Puts the transcript into the meeting's note, wherever Aidan has moved it under the notes root (the folder
+    /// `reserved` is in), keeping My notes and Expanded exactly as on disk. Creates the note at `reserved` when
+    /// there is none (Lyra died before the skeleton was written). Records the section hash rename relies on.
+    private func writeTranscript(_ lines: [TranscriptLine], meeting: inout Meeting, folder: URL, reserved: URL) throws -> URL {
+        let index = NoteIndex(notesRoot: reserved.deletingLastPathComponent(), vaultRoot: reserved.deletingLastPathComponent())
+        let body = NoteRenderer.transcriptBody(lines: lines)
+        guard let found = index.find(meeting.id, hint: meeting.notePath.map { URL(fileURLWithPath: $0) } ?? reserved) else {
+            let note = NoteRenderer.render(meeting: meeting, lines: lines, recordingsFolder: folder, timeZone: timeZone)
+            try Self.createExclusively(Data(note.utf8), at: reserved)
+            meeting.transcriptSectionHash = NoteSections.hash(body)
+            return reserved
+        }
+        let loaded: LoadedNote
+        do { loaded = try index.load(meeting.id, hint: found) } catch is NoteDocumentError {
+            // Our note, but its header was broken by hand: finish the job and leave the note untouched.
+            let existing = try String(contentsOf: found, encoding: .utf8)
+            meeting.transcriptSectionHash = NoteSections.transcriptBody(of: existing).map(NoteSections.hash)
+            return found
+        }
+        guard loaded.document.transcript.isEmpty else {
+            // Written by a run a crash cut short (and maybe edited since): leave it as it is.
+            meeting.transcriptSectionHash = NoteSections.hash(loaded.document.transcript)
+            return loaded.url
+        }
+        let (minutes, warnings) = (NoteRenderer.durationMinutes(of: meeting), meeting.warnings)
+        let saved = try index.update(loaded) { doc in
+            doc.transcript = body
+            doc.front.durationMin = minutes
+            doc.warnings += warnings.filter { !doc.warnings.contains($0) }
+        }
+        meeting.transcriptSectionHash = NoteSections.hash(body)
+        return saved.url
     }
 
     /// Folders under `root` holding a `.caf` but no `transcript.json`: recordings a crash left unprocessed.

@@ -83,6 +83,27 @@ public struct RenameService: Sendable {
         return outcome
     }
 
+    /// As `rename(…note:)`, with the note found by its `lyra_id` (hint: `meeting.notePath`), wherever Aidan moved it.
+    @discardableResult
+    public func rename(speakerLabel: String, to name: String, inMeetingFolder folder: URL, index: NoteIndex,
+                       overwriteEditedNote: Bool = false) throws -> RenameOutcome {
+        try rename(speakerLabel: speakerLabel, to: name, inMeetingFolder: folder,
+                   note: Self.noteURL(inMeetingFolder: folder, index: index), overwriteEditedNote: overwriteEditedNote)
+    }
+
+    public func rewriteNote(inMeetingFolder folder: URL, index: NoteIndex) throws {
+        try rewriteNote(inMeetingFolder: folder, note: Self.noteURL(inMeetingFolder: folder, index: index))
+    }
+
+    /// Where the meeting's note is now. When it can't be found, the last known path, so the rename still updates
+    /// transcript.json and then reports `noteMissing`.
+    public static func noteURL(inMeetingFolder folder: URL, index: NoteIndex) throws -> URL {
+        let meeting = try Meeting.load(from: folder)
+        let hint = meeting.notePath.map { URL(fileURLWithPath: $0) }
+        return index.find(meeting.id, hint: hint)
+            ?? hint ?? index.notesRoot.appendingPathComponent(folder.lastPathComponent + ".md")
+    }
+
     /// The confirm action for `.needsConfirmation`: re-renders the note's transcript section from the current
     /// transcript.json, overwriting Aidan's edits inside it (text outside the section is kept), and records the new hash.
     public func rewriteNote(inMeetingFolder folder: URL, note: URL) throws {
@@ -121,8 +142,9 @@ public struct RenameService: Sendable {
             guard overwrite || NoteSections.hash(current) == lyraWrote else { return .needsConfirmation }
             try NoteSections.replaceTranscript(in: text, with: body).write(to: note, atomically: true, encoding: .utf8)
         }
-        if meeting.transcriptSectionHash != NoteSections.hash(body) {
+        if meeting.transcriptSectionHash != NoteSections.hash(body) || meeting.notePath != note.path {
             meeting.transcriptSectionHash = NoteSections.hash(body)
+            meeting.notePath = note.path
             try meeting.save(in: folder)
         }
         return .done

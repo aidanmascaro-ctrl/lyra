@@ -6,8 +6,10 @@ import SwiftUI
 @MainActor
 final class MeetingModel: ObservableObject {
     let folder: URL
-    let note: URL
+    private let notes: NoteIndex
     private let service: RenameService
+    /// Where the note is now (found by `lyra_id`, so a move in Obsidian is followed); refreshed on reload.
+    @Published private(set) var note: URL?
     @Published private(set) var meeting: Meeting?
     @Published private(set) var lines: [TranscriptLine] = []
     @Published private(set) var loadError: String?
@@ -17,9 +19,9 @@ final class MeetingModel: ObservableObject {
     /// Set when a rename error also needs the replace question: asked once the error is dismissed.
     private var confirmAfterMessage = false
 
-    init(folder: URL, notesDir: URL, people: PeopleStore) {
+    init(folder: URL, notes: NoteIndex, people: PeopleStore) {
         self.folder = folder
-        note = notesDir.appendingPathComponent(folder.lastPathComponent + ".md")  // same naming as processing
+        self.notes = notes
         service = RenameService(people: people)
         reload()
     }
@@ -29,6 +31,7 @@ final class MeetingModel: ObservableObject {
     func reload() {
         do {
             meeting = try Meeting.load(from: folder)
+            note = try RenameService.noteURL(inMeetingFolder: folder, index: notes)
             lines = try JSONDecoder().decode([TranscriptLine].self, from: Data(contentsOf: folder.appendingPathComponent("transcript.json")))
             loadError = nil
         } catch { loadError = "Couldn't read this meeting: \(error.localizedDescription)" }
@@ -36,10 +39,10 @@ final class MeetingModel: ObservableObject {
 
     func rename(_ label: String, to name: String) {
         renaming = true
-        let (service, folder, note) = (service, folder, note)
+        let (service, folder, notes) = (service, folder, notes)
         Task {
             let result = await Task.detached { () -> Result<RenameOutcome, Error> in
-                do { return .success(try service.rename(speakerLabel: label, to: name, inMeetingFolder: folder, note: note)) }
+                do { return .success(try service.rename(speakerLabel: label, to: name, inMeetingFolder: folder, index: notes)) }
                 catch { return .failure(error) }
             }.value
             renaming = false
@@ -67,10 +70,10 @@ final class MeetingModel: ObservableObject {
 
     /// "Replace" in the edited-note alert.
     func replaceNote() {
-        let (service, folder, note) = (service, folder, note)
+        let (service, folder, notes) = (service, folder, notes)
         Task {
             let error = await Task.detached { () -> Error? in
-                do { try service.rewriteNote(inMeetingFolder: folder, note: note); return nil } catch { return error }
+                do { try service.rewriteNote(inMeetingFolder: folder, index: notes); return nil } catch { return error }
             }.value
             if let error { message = error.localizedDescription }
             reload()
@@ -83,7 +86,7 @@ struct MeetingWindow: View {
 
     var body: some View {
         if let folder = app.shownMeeting {
-            MeetingContent(model: MeetingModel(folder: folder, notesDir: app.paths.notesDir, people: app.people), people: app.people)
+            MeetingContent(model: MeetingModel(folder: folder, notes: app.notes, people: app.people), people: app.people)
                 .id(folder)
         } else {
             Text("No meetings yet.").padding(40)
@@ -133,8 +136,8 @@ private struct MeetingContent: View {
                 }
             }
             Spacer()
-            Button("Open note in Obsidian") { NSWorkspace.shared.open(model.note) }
-                .disabled(!FileManager.default.fileExists(atPath: model.note.path))
+            Button("Open note in Obsidian") { if let note = model.note { NSWorkspace.shared.open(note) } }
+                .disabled(model.note.map { !FileManager.default.fileExists(atPath: $0.path) } ?? true)
         }
     }
 

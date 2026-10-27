@@ -3,11 +3,15 @@ import Foundation
 public enum NoteRenderer {
     public static func render(meeting: Meeting, lines: [TranscriptLine], recordingsFolder: URL,
                               timeZone: TimeZone = .current) -> String {
-        let minutes = meeting.endedAt.map { max(0, Int((($0.timeIntervalSince(meeting.startedAt)) / 60).rounded())) } ?? 0
         let front = NoteFrontmatter(lyraID: meeting.id, title: meeting.title, date: meeting.startedAt, app: meeting.appName,
-                                    durationMin: minutes, recordings: recordingsFolder)
+                                    durationMin: durationMinutes(of: meeting), recordings: recordingsFolder)
         return NoteDocument(front: front, warnings: meeting.warnings, myNotes: "", expanded: "",
                             transcript: transcriptBody(lines: lines)).render(timeZone: timeZone)
+    }
+
+    /// Whole minutes from start to end; 0 while the meeting is still being recorded.
+    public static func durationMinutes(of meeting: Meeting) -> Int {
+        meeting.endedAt.map { max(0, Int((($0.timeIntervalSince(meeting.startedAt)) / 60).rounded())) } ?? 0
     }
 
     /// What goes between the lyra transcript markers. Rename re-renders the section with this, so both paths share one format.
