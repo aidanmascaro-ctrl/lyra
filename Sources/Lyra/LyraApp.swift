@@ -40,6 +40,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         presence.start()
         model.launch()
+        #if DEBUG
+        DebugLaunch.apply(to: model)
+        #endif
     }
 
     /// The Dock icon clicked, or Lyra opened again while running: Lyra's windows forward (minimised ones restored),

@@ -9,6 +9,8 @@ enum NoteStyle {
     static let handleWidth: CGFloat = 16
     /// Widest the text column gets; the rest of a wide window is even margin.
     static let maxColumn: CGFloat = 680
+    /// A single blank line between two lines of text: a paragraph break, not a whole empty line.
+    static let blankLineHeight: CGFloat = 6
     /// Granola's flat warm dark grey (#292929) in dark mode; the normal page white in light mode.
     static let background = NSColor(name: "lyraNoteBackground") { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
@@ -32,7 +34,24 @@ enum NoteStyle {
         text.enumerateAttributes(in: NSRange(location: 0, length: text.length)) { attrs, range, _ in
             result.setAttributes(display(attrs), range: range)
         }
+        compactBlankLines(in: result)
         return result
+    }
+
+    /// A lone empty paragraph with text on both sides is drawn `blankLineHeight` tall. The blank line stays in the
+    /// text (and the file); only its height changes, and typing into it makes an ordinary line again.
+    private static func compactBlankLines(in text: NSMutableAttributedString) {
+        let lines = text.string.components(separatedBy: "\n")
+        guard lines.count >= 3 else { return }
+        var location = 0
+        for i in lines.indices {
+            defer { location += (lines[i] as NSString).length + 1 }
+            guard i > 0, i < lines.count - 1, lines[i].isEmpty, !lines[i - 1].isEmpty, !lines[i + 1].isEmpty else { continue }
+            let style = NSMutableParagraphStyle()
+            style.minimumLineHeight = blankLineHeight
+            style.maximumLineHeight = blankLineHeight
+            text.addAttribute(.paragraphStyle, value: style, range: NSRange(location: location, length: 1))
+        }
     }
 
     /// The note keys in `attrs` plus the look they stand for.
@@ -65,7 +84,7 @@ enum NoteStyle {
 
     /// Each numbered block's number, counted exactly as the file will write it.
     static func listNumbers(_ blocks: [NoteBlock]) -> [Int] {
-        let lines = NoteMarkdown.render(blocks).components(separatedBy: "\n")
+        let lines = NoteMarkdown.renderLines(blocks)
         return blocks.indices.map { i in
             guard blocks[i].kind == .numbered, lines.indices.contains(i) else { return 0 }
             return Int(lines[i].drop(while: { $0 == " " }).prefix(while: \.isNumber)) ?? 0

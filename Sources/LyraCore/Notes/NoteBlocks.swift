@@ -41,8 +41,21 @@ public enum NoteMarkdown {
         return md.components(separatedBy: "\n").map(parseLine)
     }
 
-    /// Numbered items count up from 1 within a run at one indent; any other block at that indent or shallower restarts it.
+    /// The note as Markdown. A heading Claude added gets a blank line before it when it would otherwise sit
+    /// straight under text; Aidan's own lines are written exactly as they are.
     public static func render(_ blocks: [NoteBlock]) -> String {
+        let lines = renderLines(blocks)
+        var out: [String] = []
+        for (i, line) in lines.enumerated() {
+            if i > 0, needsGapBefore(blocks[i], after: blocks[i - 1]) { out.append("") }
+            out.append(line)
+        }
+        return out.joined(separator: "\n")
+    }
+
+    /// One line per block, with no blank lines added. Numbered items count up from 1 within a run at one
+    /// indent; any other block at that indent or shallower restarts it.
+    public static func renderLines(_ blocks: [NoteBlock]) -> [String] {
         var counters = [Int](repeating: 0, count: maxIndent + 1)
         return blocks.map { block in
             let level = min(max(block.indent, 0), maxIndent)
@@ -63,7 +76,12 @@ public enum NoteMarkdown {
             }
             let inline = renderRuns(block.runs)
             return marker + (block.byClaude ? claudeOpen + inline + claudeClose : inline)
-        }.joined(separator: "\n")
+        }
+    }
+
+    private static func needsGapBefore(_ block: NoteBlock, after previous: NoteBlock) -> Bool {
+        let isHeading = block.kind == .heading1 || block.kind == .heading2
+        return isHeading && block.byClaude && !previous.plainText.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     // MARK: Lines

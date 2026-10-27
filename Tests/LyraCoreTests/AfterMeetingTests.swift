@@ -106,8 +106,8 @@ final class AfterMeetingTests: XCTestCase {
         XCTAssertEqual(note.document.myNotes, "- pricing")
 
         let expanded = NoteMarkdown.parse(note.document.expanded)
-        XCTAssertEqual(expanded.map(\.plainText), ["pricing", "They agreed $200 per unit", "Action items", "Aidan sends the quote"])
-        XCTAssertEqual(expanded.map(\.byClaude), [false, true, true, true])
+        XCTAssertEqual(expanded.map(\.plainText), ["pricing", "They agreed $200 per unit", "", "Action items", "Aidan sends the quote"])
+        XCTAssertEqual(expanded.map(\.byClaude), [false, true, false, true, true])  // a blank line before Claude's heading
 
         let saved = try Meeting.load(from: folder)
         XCTAssertEqual(saved.expandedHashes, ExpandedMerge.hashes(of: expanded))
@@ -116,7 +116,7 @@ final class AfterMeetingTests: XCTestCase {
         XCTAssertNil(saved.insightsError)
         XCTAssertNil(saved.expandError)
         let streamed = await seen.blocks
-        XCTAssertEqual(streamed.last, expanded)
+        XCTAssertEqual(streamed.last.map(NoteMarkdown.render), note.document.expanded)
     }
 
     func testAfterMeetingClaudeFailureKeepsNoteAndRecordsError() async throws {
@@ -283,7 +283,7 @@ final class AfterMeetingTests: XCTestCase {
         let claude = ScriptedClaude(insights: .success(insightsJSON), expansion: expansionLines)
         try await after(claude).run(folder: folder)
         let expanded = NoteMarkdown.parse(try index.load(meeting.id, hint: nil).document.expanded)
-        XCTAssertEqual(expanded.map(\.plainText), ["pricing", "They agreed $200 per unit", "Action items", "Aidan sends the quote"])
+        XCTAssertEqual(expanded.map(\.plainText), ["pricing", "They agreed $200 per unit", "", "Action items", "Aidan sends the quote"])
         XCTAssertEqual(claude.insightsCalls, 0)  // already done
         XCTAssertEqual(try Meeting.load(from: folder).afterMeetingDone, true)
     }

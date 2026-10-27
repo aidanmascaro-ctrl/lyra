@@ -25,17 +25,22 @@ struct NoteEditor: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let textView = NoteTextView()
         textView.delegate = context.coordinator
+        let scroll = Self.makeScrollView(for: textView)
+        context.coordinator.textView = textView
+        context.coordinator.lastKnown = blocks
+        context.coordinator.forced = forceLoad
+        context.coordinator.answered = pushID
+        textView.load(blocks)
+        return scroll
+    }
+
+    static func makeScrollView(for textView: NoteTextView) -> NSScrollView {
         let scroll = OverlayScrollView()
         scroll.documentView = textView
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.borderType = .noBorder
         scroll.drawsBackground = false
-        context.coordinator.textView = textView
-        context.coordinator.lastKnown = blocks
-        context.coordinator.forced = forceLoad
-        context.coordinator.answered = pushID
-        textView.load(blocks)
         return scroll
     }
 

@@ -73,13 +73,49 @@ final class InsightsTests: XCTestCase {
         XCTAssertNil(try series("null"))
     }
 
+    private func summary(_ text: String) throws -> String {
+        let json = #"{"title": "Strategy", "tags": [], "clients": [], "series": null, "summary": "\#(text)"}"#
+        return try InsightsService.parse(json, input: input()).summary
+    }
+
     func testSummaryCutAtWordBoundaryWithoutEllipsis() throws {
-        let long = Array(repeating: "alpha", count: 40).joined(separator: " ")
-        let json = #"{"title": "Strategy", "tags": [], "clients": [], "series": null, "summary": "\#(long)"}"#
-        let summary = try InsightsService.parse(json, input: input()).summary
-        XCTAssertLessThanOrEqual(summary.count, 140)
-        XCTAssertTrue(summary.hasSuffix("alpha"))
-        XCTAssertFalse(summary.hasSuffix("…"))
+        let result = try summary(Array(repeating: "alpha", count: 40).joined(separator: " "))
+        XCTAssertLessThanOrEqual(result.count, 120)
+        XCTAssertTrue(result.hasSuffix("alpha"))
+        XCTAssertFalse(result.hasSuffix("…"))
+    }
+
+    func testSummaryUnderLimitIsKeptWhole() throws {
+        XCTAssertEqual(try summary("  Week 1 workshop on discovery frameworks.  "), "Week 1 workshop on discovery frameworks.")
+    }
+
+    func testSummaryPrefersSentenceEnd() throws {
+        let text = "Week 1 workshop teaching consulting frameworks for discovering small business problems. "
+            + "It covered RACI, process maps, fishbone diagrams, ICE scoring and much more besides."
+        XCTAssertEqual(try summary(text),
+                       "Week 1 workshop teaching consulting frameworks for discovering small business problems.")
+    }
+
+    func testSummaryCutsAtClauseAndDropsDanglingConnective() throws {
+        let text = "Week 1 workshop teaching consulting frameworks for discovering small business problems, "
+            + "including RACI, process maps, fishbone, ICE and change management"
+        let result = try summary(text)
+        XCTAssertLessThanOrEqual(result.count, 120)
+        XCTAssertFalse(result.hasSuffix(" and"))
+        XCTAssertFalse(result.hasSuffix(","))
+        XCTAssertEqual(result, "Week 1 workshop teaching consulting frameworks for discovering small business problems, including RACI, process maps")
+    }
+
+    func testSummaryNeverEndsOnAConnective() throws {
+        let words = Array(repeating: "word", count: 22).joined(separator: " ")
+        let result = try summary(words + " including such things as the other stuff and more")
+        XCTAssertLessThanOrEqual(result.count, 120)
+        let last = result.split(separator: " ").last.map(String.init) ?? ""
+        XCTAssertFalse(["and", "or", "with", "including", "as", "such", "the"].contains(last.lowercased()), result)
+    }
+
+    func testPromptAsksForAShortSummary() {
+        XCTAssertTrue(Prompts.insightsUser(input: input()).contains("120 characters or fewer"))
     }
 
     func testParseThrowsPlainErrors() {

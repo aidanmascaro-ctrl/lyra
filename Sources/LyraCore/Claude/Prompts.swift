@@ -60,9 +60,12 @@ public enum Prompts {
     public static func expandUser(ctx: MeetingContext) -> String {
         let task = ctx.myNotes.contains(where: isNumbered)
             ? """
-              Expand Aidan's notes from the transcript. For each numbered note the meeting says more \
-              about, write @<n> and the useful detail under it: decisions, numbers, dates, who is doing \
-              what, and the reasons given. Skip a note the transcript adds nothing to. Then, for \
+              Expand Aidan's notes from the transcript. Write at least one @<n> group for every one of \
+              Aidan's numbered notes (not the lines marked as added by you earlier), and put the useful \
+              detail under it: decisions, numbers, dates, who is doing what, and the reasons given. A \
+              short note that reads like a heading or label (for example "discovery call / meeting") \
+              still gets its group: give a one-line summary of what the meeting said about that topic. \
+              If the meeting truly says nothing more about a note, write one bullet saying so. Then, for \
               important things the meeting covered that none of his notes touch, write @new sections \
               (for example decisions, action items, open questions). Go in the order of his notes.
               """
@@ -181,7 +184,7 @@ public enum Prompts {
         - series: if the meeting is one of a recurring set, the series name. Use an existing series \
         name exactly when the meeting plainly belongs to it (a title like "<series> | Workshop 2" belongs \
         to the series "<series>"); otherwise a short new name, or null when it is a one-off.
-        - summary: one plain sentence of 140 characters or fewer saying what the meeting was about, \
+        - summary: one plain, complete sentence of 120 characters or fewer saying what the meeting was about, \
         for a series page.
         </task>
 

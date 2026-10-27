@@ -58,6 +58,9 @@ final class MeetingModel: ObservableObject {
         // Live: ready to type. Nothing written yet (a Phase 2 meeting): the transcript is all there is.
         if app.liveMeeting?.folder == folder { tab = .myNotes }
         else if expandedBlocks.isEmpty && myBlocks.isEmpty { tab = .transcript }
+        #if DEBUG
+        if let debugTab = DebugLaunch.tab { tab = debugTab }
+        #endif
         loadSeriesNames()
     }
 
