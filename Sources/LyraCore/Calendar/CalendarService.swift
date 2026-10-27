@@ -47,18 +47,15 @@ public actor CalendarService {
 
     public func settings() throws -> CalendarSettings { try store.load() }
 
-    public func setClient(_ client: OAuthClient?, for provider: CalendarProvider) throws {
-        try store.save(try store.load().setting(client, for: provider))
-    }
-
     public func removeAccount(_ id: String) throws { try store.save(try store.load().removing(accountID: id)) }
 
-    /// Trades the browser's code for tokens and saves the account (replacing an earlier sign-in to it).
+    /// Trades the browser's code for tokens and saves the account (replacing an earlier sign-in to it). The app
+    /// details become the ones for new sign-ins only now, so a mistyped ID never touches the other accounts.
     public func finishSignIn(_ provider: CalendarProvider, client: OAuthClient, code: String, pkce: PKCE, redirect: URL) async throws -> CalendarAccount {
         let (data, status) = try await call(OAuth.codeRequest(provider, client: client, code: code, pkce: pkce, redirect: redirect))
-        let account = CalendarAccount(provider: provider, email: OAuth.email(fromTokenAnswer: data) ?? "",
+        let account = CalendarAccount(provider: provider, email: OAuth.email(fromTokenAnswer: data) ?? "", client: client,
                                       tokens: try OAuth.tokens(from: data, status: status, now: clock()))
-        try store.save(try store.load().adding(account))
+        try store.save(try store.load().setting(client, for: provider).adding(account))
         return account
     }
 
@@ -68,8 +65,7 @@ public actor CalendarService {
         var results: [AccountFetch] = []
         for account in settings.accounts {
             do {
-                guard let client = settings.client(for: account.provider) else { throw CalendarError.badClient }
-                let events = try await events(for: account, client: client)
+                let events = try await events(for: account, client: account.client)
                 results.append(AccountFetch(account: account, events: events.map { $0.inAccount(account.id) }, problem: nil))
             } catch {
                 results.append(AccountFetch(account: account, events: nil, problem: CalendarProblem(error)))

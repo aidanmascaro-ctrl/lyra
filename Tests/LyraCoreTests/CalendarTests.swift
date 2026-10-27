@@ -193,12 +193,27 @@ final class UpcomingMeetingsTests: XCTestCase {
         XCTAssertNil(PendingJoin(event: meeting("No link", hoursFromNow: 0.1), now: now))
         XCTAssertNil(PendingJoin(event: meeting("Over", hoursFromNow: -2, link: link), now: now))
 
+        let zoom = ["us.zoom.xos"]
         let soon = try XCTUnwrap(PendingJoin(event: meeting("Elm Park", hoursFromNow: 0.2, link: link), now: now))
-        XCTAssertEqual(soon.claim(now: now.addingTimeInterval(60)), "Elm Park")
-        XCTAssertNil(soon.claim(now: now.addingTimeInterval(PendingJoin.window)), "15 minutes after Join it no longer fires")
+        XCTAssertEqual(soon.claim(now: now.addingTimeInterval(60), bundleIDs: zoom), "Elm Park")
+        XCTAssertNil(soon.claim(now: now.addingTimeInterval(PendingJoin.window), bundleIDs: zoom), "15 minutes after Join it no longer fires")
 
         let endingSoon = try XCTUnwrap(PendingJoin(event: meeting("Wrap", hoursFromNow: -0.9, link: link), now: now))
-        XCTAssertNil(endingSoon.claim(now: now.addingTimeInterval(7 * 60)), "never past the meeting's end")
+        XCTAssertNil(endingSoon.claim(now: now.addingTimeInterval(7 * 60), bundleIDs: zoom), "never past the meeting's end")
+    }
+
+    func testOnlyTheCallsOwnAppOrABrowserClaimsTheJoin() throws {
+        let soon = try XCTUnwrap(PendingJoin(event: meeting("Elm Park", hoursFromNow: 0.1, link: link), now: now))
+        let later = now.addingTimeInterval(60)
+        XCTAssertNil(soon.claim(now: later, bundleIDs: ["com.apple.VoiceMemos", ""]), "another app gets the Allow panel")
+        XCTAssertNil(soon.claim(now: later, bundleIDs: ["com.microsoft.teams2"]), "Teams isn't where a Zoom call runs")
+        XCTAssertEqual(soon.claim(now: later, bundleIDs: ["com.google.Chrome.helper", ""]), "Elm Park", "Zoom in the browser")
+        XCTAssertEqual(soon.claim(now: later, bundleIDs: ["", "us.zoom.xos"]), "Elm Park", "the owning app counts")
+
+        let teams = try XCTUnwrap(PendingJoin(event: meeting("Client", hoursFromNow: 0.1,
+                                                             link: URL(string: "https://teams.microsoft.com/l/meetup-join/x")!), now: now))
+        XCTAssertEqual(teams.claim(now: later, bundleIDs: ["com.microsoft.teams2"]), "Client")
+        XCTAssertNil(teams.claim(now: later, bundleIDs: ["us.zoom.xos"]))
     }
 }
 
@@ -280,6 +295,10 @@ final class OAuthTests: XCTestCase {
         XCTAssertThrowsError(try OAuth.tokens(from: Data(#"{"error":"invalid_client"}"#.utf8), status: 401, now: now)) {
             XCTAssertEqual($0 as? CalendarError, .badClient)
         }
+        let locked = #"{"error":"invalid_grant","error_description":"AADSTS65001: The user or administrator has not consented."}"#
+        XCTAssertThrowsError(try OAuth.tokens(from: Data(locked.utf8), status: 400, now: now)) {
+            XCTAssertEqual($0 as? CalendarError, .needsAdmin, "a work tenant needing approval isn't 'signed out'")
+        }
     }
 
     func testEmailComesFromTheIDToken() {
@@ -299,15 +318,18 @@ final class OAuthTests: XCTestCase {
         XCTAssertEqual(try store.load(), CalendarSettings())
         let tokens = OAuthTokens(accessToken: "a", refreshToken: "r", expiresAt: .distantFuture)
         let settings = CalendarSettings().setting(google, for: .google)
-            .adding(CalendarAccount(provider: .microsoft, email: "Aidan@work.com", tokens: tokens))
-            .adding(CalendarAccount(provider: .microsoft, email: "aidan@outlook.com", tokens: tokens))
-            .adding(CalendarAccount(provider: .microsoft, email: "aidan@work.com", tokens: tokens))
+            .adding(CalendarAccount(provider: .microsoft, email: "Aidan@work.com", client: microsoft, tokens: tokens))
+            .adding(CalendarAccount(provider: .microsoft, email: "aidan@outlook.com", client: microsoft, tokens: tokens))
+            .adding(CalendarAccount(provider: .microsoft, email: "aidan@work.com", client: microsoft, tokens: tokens))
         try store.save(settings)
+        try store.save(settings)  // saving over an existing file
         let loaded = try store.load()
         XCTAssertEqual(loaded.client(for: .google), google)
         XCTAssertEqual(loaded.accounts.map(\.email), ["aidan@outlook.com", "aidan@work.com"])
         let mode = try FileManager.default.attributesOfItem(atPath: store.fileURL.path)[.posixPermissions] as? Int
         XCTAssertEqual(mode, 0o600)
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: store.fileURL.deletingLastPathComponent().path)
+        XCTAssertEqual(leftovers, ["calendars.json"], "no temporary files left behind")
     }
 }
 
@@ -354,7 +376,7 @@ final class CalendarServiceTests: XCTestCase {
     }
 
     func account(_ provider: CalendarProvider, _ email: String, expiresIn: TimeInterval = 600) -> CalendarAccount {
-        CalendarAccount(provider: provider, email: email, tokens: OAuthTokens(accessToken: "ok", refreshToken: "r", expiresAt: now.addingTimeInterval(expiresIn)))
+        CalendarAccount(provider: provider, email: email, client: provider == .google ? google : microsoft, tokens: OAuthTokens(accessToken: "ok", refreshToken: "r", expiresAt: now.addingTimeInterval(expiresIn)))
     }
 
     func testReadsEveryAccountAndOneFailureDoesNotHideTheOthers() async throws {
@@ -413,6 +435,25 @@ final class CalendarServiceTests: XCTestCase {
         XCTAssertEqual(result.problem, CalendarProblem(CalendarError.apiDisabled))
     }
 
+    func testNewAppDetailsAreKeptOnlyWhenSignInWorksAndOldAccountsKeepTheirOwn() async throws {
+        let fake = FakeServers()
+        fake.token = (400, #"{"error":"invalid_client"}"#)
+        let calendars = try service(fake, accounts: [account(.microsoft, "a@work.com")])
+        let typo = OAuthClient(clientID: "99999999-2222-3333-4444-555555555555")
+        do {
+            _ = try await calendars.finishSignIn(.microsoft, client: typo, code: "c", pkce: PKCE(verifier: "v"), redirect: URL(string: "http://localhost:1")!)
+            XCTFail("expected badClient")
+        } catch { XCTAssertEqual(error as? CalendarError, .badClient) }
+        XCTAssertEqual(try store.load().client(for: .microsoft), microsoft)
+
+        fake.token = (200, #"{"access_token":"a","refresh_token":"r","expires_in":3600}"#)
+        let other = OAuthClient(clientID: "88888888-2222-3333-4444-555555555555")
+        _ = try await calendars.finishSignIn(.microsoft, client: other, code: "c", pkce: PKCE(verifier: "v"), redirect: URL(string: "http://localhost:1")!)
+        let saved = try store.load()
+        XCTAssertEqual(saved.client(for: .microsoft), other)
+        XCTAssertEqual(saved.accounts.first { $0.email == "a@work.com" }?.client, microsoft, "refreshes with the app that signed it in")
+    }
+
     func testFinishSignInSavesTheAccountUnderItsEmail() async throws {
         let fake = FakeServers()
         let payload = PKCE.base64URL(Data(#"{"preferred_username":"aidan@work.com"}"#.utf8))
@@ -422,6 +463,7 @@ final class CalendarServiceTests: XCTestCase {
                                                      redirect: URL(string: "http://localhost:1")!)
         XCTAssertEqual(added.id, "microsoft:aidan@work.com")
         XCTAssertEqual(try store.load().accounts.map(\.tokens.refreshToken), ["r2"])
+        XCTAssertEqual(try store.load().accounts.first?.client, microsoft)
         let body = String(decoding: fake.requests[0].httpBody ?? Data(), as: UTF8.self)
         XCTAssertTrue(body.contains("code_verifier=v"))
         XCTAssertFalse(body.contains("client_secret"))

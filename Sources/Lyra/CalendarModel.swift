@@ -89,14 +89,14 @@ final class CalendarModel: ObservableObject {
         case .microsoft: askingForMicrosoftID = true
         case .google:
             guard let client = pickGoogleFile() else { return }
-            Task { await save(client, for: .google) }
+            Task { await signIn(.google, client: client) }
         }
     }
 
     func useMicrosoftID(_ text: String) {
         do {
             let client = try OAuthClient.microsoft(applicationID: text)
-            Task { await save(client, for: .microsoft) }
+            Task { await signIn(.microsoft, client: client) }
         } catch {
             notice = error.localizedDescription
         }
@@ -113,15 +113,6 @@ final class CalendarModel: ObservableObject {
     }
 
     func cancelSignIn() { listener?.stop() }
-
-    private func save(_ client: OAuthClient, for provider: CalendarProvider) async {
-        do {
-            try await service.setClient(client, for: provider)
-            await signIn(provider, client: client)
-        } catch {
-            notice = error.localizedDescription
-        }
-    }
 
     private func signIn(_ provider: CalendarProvider, client: OAuthClient) async {
         guard signingIn == nil else { return }
@@ -182,13 +173,14 @@ final class CalendarModel: ObservableObject {
         let outlook = env["LYRA_DEBUG_OUTLOOK"].flatMap { try? Data(contentsOf: URL(fileURLWithPath: $0)) }
         guard google != nil || outlook != nil else { return false }
         let placeholder = OAuthTokens(accessToken: "", refreshToken: "", expiresAt: .distantFuture)
+        let client = OAuthClient(clientID: "debug")
         if let google {
-            let account = CalendarAccount(provider: .google, email: "aidan@example.com", tokens: placeholder)
+            let account = CalendarAccount(provider: .google, email: "aidan@example.com", client: client, tokens: placeholder)
             accounts.append(account)
             eventsByAccount[account.id] = (try? GoogleEvents.parse(google))?.map { $0.inAccount(account.id) }
         }
         if let outlook {
-            let account = CalendarAccount(provider: .microsoft, email: "aidan@work.example", tokens: placeholder)
+            let account = CalendarAccount(provider: .microsoft, email: "aidan@work.example", client: client, tokens: placeholder)
             accounts.append(account)
             eventsByAccount[account.id] = (try? MicrosoftEvents.parse(outlook, selfEmail: account.email).events)?.map { $0.inAccount(account.id) }
         }

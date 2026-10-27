@@ -14,6 +14,20 @@ public enum JoinLink {
         return nil
     }
 
+    /// Every call service has a web client, so a browser can be where the call runs.
+    static let browsers = ["com.google.Chrome", "com.apple.Safari", "com.apple.WebKit", "company.thebrowser",
+                           "com.microsoft.edgemac", "org.mozilla.firefox", "com.brave.Browser", "com.operasoftware", "com.vivaldi"]
+
+    /// Bundle-ID prefixes of the apps a call link opens in: the service's own app, or a browser.
+    public static func apps(for url: URL) -> [String] {
+        let host = url.host?.lowercased() ?? ""
+        let own: [String] = if host == "zoom.us" || host.hasSuffix(".zoom.us") { ["us.zoom"] }
+            else if host.hasPrefix("teams.") { ["com.microsoft.teams"] }
+            else if host.hasSuffix("webex.com") { ["Cisco-Systems.Spark", "com.webex", "com.cisco"] }
+            else { [] }
+        return own + browsers
+    }
+
     public static func isCall(_ url: URL) -> Bool {
         guard let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http",
               let host = url.host?.lowercased() else { return false }

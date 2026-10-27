@@ -5,11 +5,14 @@ public struct CalendarAccount: Codable, Equatable, Identifiable, Sendable {
     public let provider: CalendarProvider
     /// From the sign-in; "" when the provider didn't say.
     public let email: String
+    /// The app details it signed in with: its tokens only refresh with these.
+    public let client: OAuthClient
     public var tokens: OAuthTokens
 
-    public init(provider: CalendarProvider, email: String, tokens: OAuthTokens) {
+    public init(provider: CalendarProvider, email: String, client: OAuthClient, tokens: OAuthTokens) {
         self.provider = provider
         self.email = email
+        self.client = client
         self.tokens = tokens
     }
 
@@ -21,7 +24,7 @@ public struct CalendarAccount: Codable, Equatable, Identifiable, Sendable {
 /// tokens. An owner-only file in Application Support (not the Keychain: the app is ad-hoc signed, and the Keychain
 /// would ask again after every rebuild).
 public struct CalendarSettings: Codable, Equatable, Sendable {
-    /// By provider raw value.
+    /// The app details for new sign-ins, by provider raw value.
     public var clients: [String: OAuthClient] = [:]
     public var accounts: [CalendarAccount] = []
 
@@ -75,9 +78,19 @@ public struct CalendarStore: Sendable {
         return try JSONDecoder().decode(CalendarSettings.self, from: Data(contentsOf: fileURL))
     }
 
+    /// Written owner-only from the start (a temporary file, then renamed over the old one), never readable by others.
     public func save(_ settings: CalendarSettings) throws {
-        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try JSONEncoder().encode(settings).write(to: fileURL, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+        let folder = fileURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let temporary = folder.appendingPathComponent(".\(fileURL.lastPathComponent).\(UUID().uuidString)")
+        guard FileManager.default.createFile(atPath: temporary.path, contents: try JSONEncoder().encode(settings),
+                                             attributes: [.posixPermissions: 0o600]) else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: fileURL.path])
+        }
+        guard rename(temporary.path, fileURL.path) == 0 else {
+            let code = errno
+            try? FileManager.default.removeItem(at: temporary)
+            throw POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
+        }
     }
 }

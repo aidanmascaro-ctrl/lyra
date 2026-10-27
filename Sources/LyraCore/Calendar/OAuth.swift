@@ -168,13 +168,14 @@ public enum OAuth {
     }
 
     private static func refusal(_ error: String, description: String) -> CalendarError {
+        // Microsoft: AADSTS65001 / 90094 / 90095 — the organisation wants its admin to approve the app. It can come
+        // under any error code, `invalid_grant` included, so it is checked first.
+        if ["AADSTS65001", "AADSTS90094", "AADSTS90095", "admin approval"].contains(where: description.contains) { return .needsAdmin }
         switch error {
         case "invalid_grant", "interaction_required": return .signedOut
         case "invalid_client", "unauthorized_client": return .badClient
-        default:
-            // Microsoft: AADSTS65001 / 90094 / 90095 — the organisation wants its admin to approve the app.
-            if ["AADSTS65001", "AADSTS90094", "AADSTS90095", "admin approval"].contains(where: description.contains) { return .needsAdmin }
-            return .signInRefused(error == "access_denied" ? "access was not allowed" : error)
+        case "access_denied": return .signInRefused("access was not allowed")
+        default: return .signInRefused(error)
         }
     }
 

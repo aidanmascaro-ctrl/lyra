@@ -125,8 +125,9 @@ final class AppModel: ObservableObject {
         for event in detector.update(users: micUsage.currentMicUsers(), now: now) {
             switch event {
             case .meetingStarted(let user):
-                // Aidan pressed Join in Lyra and the call now has the mic: he's in, so record (once, without asking).
-                if let title = pendingJoin?.claim(now: now) {
+                // Aidan pressed Join in Lyra and the call's app now has the mic: he's in, so record (once, without asking).
+                let owner = CoreAudioMicUsage.owningApp(of: user.pid)?.bundleIdentifier ?? ""
+                if let title = pendingJoin?.claim(now: now, bundleIDs: [user.bundleID, owner]) {
                     pendingJoin = nil
                     startRecording(target: user, title: title)
                     continue
