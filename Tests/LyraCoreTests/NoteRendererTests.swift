@@ -66,4 +66,16 @@ final class NoteRendererTests: XCTestCase {
         XCTAssertTrue(out.contains("&lt;!-- lyra:transcript:end -->"))
         XCTAssertEqual(out.components(separatedBy: "<!-- lyra:transcript:end -->").count, 2)
     }
+
+    func testDurationIsTheRecordedTimeNotTheClockTime() {
+        let start = Date(timeIntervalSince1970: 0)
+        var meeting = Meeting(title: "t", appName: "In person", startedAt: start, endedAt: start.addingTimeInterval(3_600))
+        XCTAssertEqual(NoteRenderer.durationMinutes(of: meeting), 60, "no tracks saved yet: start to end")
+        let folder = URL(fileURLWithPath: "/tmp")
+        meeting.tracks = [TrackResult(kind: .mic, url: folder, seconds: 1_500, peakLevel: 0.5, error: nil),
+                          TrackResult(kind: .meeting, url: folder, seconds: 1_480, peakLevel: 0.5, error: nil)]
+        XCTAssertEqual(NoteRenderer.durationMinutes(of: meeting), 25, "paused time and time before Record left out")
+        meeting.tracks = [TrackResult(kind: .mic, url: folder, seconds: 0, peakLevel: 1, error: nil)]
+        XCTAssertEqual(NoteRenderer.durationMinutes(of: meeting), 60, "recovered after a crash: no lengths saved")
+    }
 }

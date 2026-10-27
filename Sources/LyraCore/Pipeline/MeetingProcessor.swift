@@ -183,7 +183,7 @@ public struct MeetingProcessor: Sendable {
 
 extension Meeting {
     /// Adds a warning once; a reprocessed meeting must not repeat its warnings.
-    mutating func warn(_ text: String) {
+    public mutating func warn(_ text: String) {
         if !warnings.contains(text) { warnings.append(text) }
     }
 
