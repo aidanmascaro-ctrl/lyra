@@ -71,6 +71,33 @@ final class ExpanderTests: XCTestCase {
         XCTAssertEqual(parser.finish(), [])
     }
 
+    func testNewHeadingKeepsTrailingHashes() {
+        var parser = ExpansionParser(targets: [])
+        XCTAssertEqual(parser.feed("@new ## Learning F#  \n"), [.section(b("Learning F#", .heading2, grey: true))])
+    }
+
+    func testHeadersTolerateSmallFormatWobble() {
+        let targets = [b("A"), b("B"), b("C"), b("D")]
+        for header in ["@3", "@3:", "@3.", "@ 3", "@#3", "  @3 "] {
+            var parser = ExpansionParser(targets: targets)
+            XCTAssertEqual(parser.feed("\(header)\n- x\n"), [.under(index: 3, b("x", indent: 1, grey: true))], header)
+        }
+        for header in ["@new: Risks", "@NEW Risks", "@New:Risks", "@ new Risks"] {
+            var parser = ExpansionParser(targets: targets)
+            XCTAssertEqual(parser.feed("\(header)\n"), [.section(b("Risks", .heading2, grey: true))], header)
+        }
+        for header in ["@3x", "@3: more", "@newsletter ideas", "@new:", "@3,"] {
+            var parser = ExpansionParser(targets: targets)
+            XCTAssertEqual(parser.feed("\(header)\n- x\n"), [], header)
+        }
+    }
+
+    func testHeaderSplitAcrossChunks() {
+        var parser = ExpansionParser(targets: [b("A"), b("B")])
+        XCTAssertEqual(parser.feed("@"), [])
+        XCTAssertEqual(parser.feed("1:\n- x\n"), [.under(index: 1, b("x", indent: 1, grey: true))])
+    }
+
     func testParserIndentsNestedBulletsAndClampsDepth() {
         var parser = ExpansionParser(targets: [b("Sub point", indent: 1)])
         let events = parser.feed("@0\n- a\n  - b\n      - c\n@new Next steps\n- d\n  - e\n")

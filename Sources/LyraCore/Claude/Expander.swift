@@ -58,15 +58,27 @@ public struct ExpansionParser: Sendable {
         }
     }
 
+    /// Tolerates small wobbles: `@ 3`, `@#3`, `@3:`, `@3.`, `@NEW Heading`, `@new: Heading`.
     private mutating func header(_ text: String) -> [ExpansionEvent] {
-        let token = text.hasPrefix("#") ? String(text.dropFirst()) : text
-        if let index = Int(token.trimmingCharacters(in: .whitespaces)) {
-            group = canTake(index) ? .under(index) : .dropped
+        var token = Substring(text).drop(while: \.isWhitespace)
+        if token.hasPrefix("#") { token = token.dropFirst() }
+        let digits = token.prefix(while: { $0.isASCII && $0.isNumber })
+        if !digits.isEmpty {
+            let rest = token.dropFirst(digits.count).trimmingCharacters(in: .whitespaces)
+            let valid = (rest.isEmpty || rest == ":" || rest == ".") && Int(digits).map(canTake) == true
+            group = valid ? .under(Int(digits)!) : .dropped
             return []
         }
-        let word = token.prefix(while: { !$0.isWhitespace })
-        let heading = token.dropFirst(word.count).trimmingCharacters(in: CharacterSet(charactersIn: "# ").union(.whitespaces))
-        guard word.lowercased() == "new", allowsNew, !heading.isEmpty else { group = .dropped; return [] }
+        guard allowsNew, token.prefix(3).lowercased() == "new" else { group = .dropped; return [] }
+        var rest = token.dropFirst(3)
+        if rest.first == ":" {
+            rest = rest.dropFirst()
+        } else if let next = rest.first, !next.isWhitespace {
+            group = .dropped  // a word like "newsletter"
+            return []
+        }
+        let heading = rest.drop(while: { $0 == "#" || $0.isWhitespace }).trimmingCharacters(in: .whitespaces)
+        guard !heading.isEmpty else { group = .dropped; return [] }
         group = .section
         let runs = NoteMarkdown.parse("## " + heading).first?.runs ?? [InlineRun(text: heading)]
         return [.section(NoteBlock(kind: .heading2, runs: runs, byClaude: true))]
