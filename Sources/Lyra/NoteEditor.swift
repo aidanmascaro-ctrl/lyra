@@ -166,22 +166,10 @@ struct NoteEditor: NSViewRepresentable {
 
 /// Only ever the thin overlay scroller that shows while scrolling, whatever the system setting, so
 /// no track strip breaks the page.
-/// The note is always exactly as wide as what shows and never scrolled sideways, so text wraps inside the window.
 private final class OverlayScrollView: NSScrollView {
     override var scrollerStyle: NSScroller.Style {
         get { .overlay }
         set { super.scrollerStyle = .overlay }
-    }
-
-    override func tile() {
-        super.tile()
-        guard let document = documentView else { return }
-        let width = contentSize.width
-        if document.frame.width != width { document.setFrameSize(NSSize(width: width, height: document.frame.height)) }
-        if contentView.bounds.origin.x != 0 {
-            contentView.scroll(to: NSPoint(x: 0, y: contentView.bounds.origin.y))
-            reflectScrolledClipView(contentView)
-        }
     }
 }
 
