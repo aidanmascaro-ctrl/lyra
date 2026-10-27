@@ -29,10 +29,19 @@ public struct NoteBlock: Equatable, Codable, Sendable {
     }
 }
 
-/// The small Markdown dialect a note is written in: `**bold**`, `<u>underline</u>`, `# `, `## `, `- `, `1. `.
+/// The small Markdown dialect a note is written in: `**bold**`, `<u>underline</u>`, `### `, `#### `, `- `, `1. `.
 /// Anything else is kept as literal paragraph text, so a note Aidan edits elsewhere survives a round trip.
+///
+/// A heading is written two levels under its section's `##` (so Obsidian's outline nests it and the section folds
+/// as one); `# ` and `## `, which notes written before that used, still read as the same two headings.
 public enum NoteMarkdown {
     public static let maxIndent = 3
+    static let heading1Marker = "### "
+    static let heading2Marker = "#### "
+    static let oldHeading1Marker = "# "
+    static let oldHeading2Marker = "## "
+    /// Every marker a heading was ever written with, longest first.
+    static let headingMarkers = [heading2Marker, heading1Marker, oldHeading2Marker, oldHeading1Marker]
     private static let claudeOpen = "<span class=\"lyra\">"
     private static let claudeClose = "</span>"
 
@@ -67,8 +76,8 @@ public enum NoteMarkdown {
             var marker = ""
             switch block.kind {
             case .paragraph: break
-            case .heading1: marker = "# "
-            case .heading2: marker = "## "
+            case .heading1: marker = heading1Marker
+            case .heading2: marker = heading2Marker
             case .bullet: marker = String(repeating: "  ", count: level) + "- "
             case .numbered:
                 counters[level] += 1
@@ -100,8 +109,10 @@ public enum NoteMarkdown {
     }
 
     private static func splitMarker(_ line: String) -> (BlockKind, Int, String) {
-        if line.hasPrefix("# ") { return (.heading1, 0, String(line.dropFirst(2))) }
-        if line.hasPrefix("## ") { return (.heading2, 0, String(line.dropFirst(3))) }
+        for marker in headingMarkers where line.hasPrefix(marker) {
+            let kind: BlockKind = marker == heading1Marker || marker == oldHeading1Marker ? .heading1 : .heading2
+            return (kind, 0, String(line.dropFirst(marker.count)))
+        }
         let spaces = line.prefix(while: { $0 == " " }).count
         let rest = line.dropFirst(spaces)
         let indent = min(spaces / 2, maxIndent)

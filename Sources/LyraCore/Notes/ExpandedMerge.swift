@@ -12,11 +12,16 @@ public enum ExpandedMerge {
     public static func settle(_ blocks: [NoteBlock], lyraWrote: [String]) -> [NoteBlock] {
         let known = Set(lyraWrote)
         return blocks.map { block in
-            guard block.byClaude, !known.contains(hash(block)) else { return block }
+            guard block.byClaude, !isWritten(block, by: known) else { return block }
             var mine = block
             mine.byClaude = false
             return mine
         }
+    }
+
+    /// True when Lyra recorded writing every grey block: none was edited since.
+    public static func allWritten(_ blocks: [NoteBlock], by lyraWrote: Set<String>) -> Bool {
+        blocks.filter(\.byClaude).allSatisfy { isWritten($0, by: lyraWrote) }
     }
 
     /// My-notes points that no white Expanded block already covers.
@@ -66,6 +71,16 @@ public enum ExpandedMerge {
 
     private static func hash(_ block: NoteBlock) -> String {
         NoteSections.hash(NoteMarkdown.render([block]))
+    }
+
+    /// Recorded by the line as it is written now, or, for a heading, by the same text at any level: before headings
+    /// nested a topic heading was written `## X`, and the layout upgrade then made it the big heading (`### X`).
+    private static func isWritten(_ block: NoteBlock, by known: Set<String>) -> Bool {
+        if known.contains(hash(block)) { return true }
+        let line = NoteMarkdown.render([block])
+        guard let now = NoteMarkdown.headingMarkers.first(where: { line.hasPrefix($0) }) else { return false }
+        let text = line.dropFirst(now.count)
+        return NoteMarkdown.headingMarkers.contains { known.contains(NoteSections.hash($0 + text)) }
     }
 
     private static func normalised(_ block: NoteBlock) -> String {

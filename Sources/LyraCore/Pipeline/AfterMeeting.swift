@@ -197,7 +197,7 @@ public struct AfterMeeting: Sendable {
         guard meeting.expandError == unfinishedMessage else { return false }
         let blocks = NoteMarkdown.parse(doc.expanded)
         let lyraWrote = Set(meeting.expandedHashes ?? [])
-        let greyUntouched = ExpandedMerge.hashes(of: blocks).allSatisfy(lyraWrote.contains)
+        let greyUntouched = ExpandedMerge.allWritten(blocks, by: lyraWrote)
         let mine = Set(NoteMarkdown.parse(doc.myNotes).map { NoteMarkdown.render([$0]) })
         let whiteFromMyNotes = blocks.filter { !$0.byClaude && !$0.plainText.isEmpty }.allSatisfy { mine.contains(NoteMarkdown.render([$0])) }
         return greyUntouched && whiteFromMyNotes

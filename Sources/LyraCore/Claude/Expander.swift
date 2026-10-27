@@ -4,7 +4,7 @@ import Foundation
 public enum ExpansionEvent: Equatable, Sendable {
     /// A grey block under the target block at `index`.
     case under(index: Int, NoteBlock)
-    /// A grey `##` heading for something Aidan didn't note.
+    /// A grey topic heading (the editor's big one, `###` in the file) for something Aidan didn't note.
     case section(NoteBlock)
     /// A grey block under the latest section.
     case bullet(NoteBlock)
@@ -80,8 +80,8 @@ public struct ExpansionParser: Sendable {
         let heading = rest.drop(while: { $0 == "#" || $0.isWhitespace }).trimmingCharacters(in: .whitespaces)
         guard !heading.isEmpty else { group = .dropped; return [] }
         group = .section
-        let runs = NoteMarkdown.parse("## " + heading).first?.runs ?? [InlineRun(text: heading)]
-        return [.section(NoteBlock(kind: .heading2, runs: runs, byClaude: true))]
+        let runs = NoteMarkdown.parse(NoteMarkdown.heading1Marker + heading).first?.runs ?? [InlineRun(text: heading)]
+        return [.section(NoteBlock(kind: .heading1, runs: runs, byClaude: true))]
     }
 
     private func canTake(_ index: Int) -> Bool {

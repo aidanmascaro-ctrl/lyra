@@ -87,6 +87,7 @@ final class AppModel: ObservableObject {
     }
 
     func launch() {
+        upgradeNoteLayouts()
         recoverUnprocessed()
         // Processed, but Lyra quit before titles and expansion were done: finish them (after any recovery above).
         for folder in AfterMeeting.pendingFolders(in: paths.recordingsRoot) { runAfterMeeting(folder: folder) }
@@ -100,6 +101,16 @@ final class AppModel: ObservableObject {
                 self?.tick()
                 try? await Task.sleep(for: .seconds(1))
             }
+        }
+    }
+
+    /// Notes written in an older layout are brought to the current one once, off the main actor.
+    private func upgradeNoteLayouts() {
+        let notes = notes
+        Task.detached { [weak self] in
+            let problems = NoteLayoutUpgrade.run(index: notes)
+            guard !problems.isEmpty else { return }
+            await MainActor.run { self?.lastError = problems.joined(separator: "\n") }
         }
     }
 

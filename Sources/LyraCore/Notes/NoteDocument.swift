@@ -81,6 +81,9 @@ public struct NoteDocument: Equatable, Sendable {
         case literal(String)
     }
 
+    /// Links to the three sections, under the title, so Obsidian (on the phone too) jumps between them. Lyra's
+    /// furniture, not Aidan's text: parsing drops it wherever it sits and rendering puts it back under the title.
+    static let jumpLine = "[[#My notes|My notes]] · [[#Expanded|Expanded]] · [[#Transcript|Transcript]]"
     private static let gap = Piece.literal("\n\n")
     private static let defaultPieces: [Piece] = [.section(.myNotes), gap, .section(.expanded), gap, .section(.transcript), .literal("\n")]
 
@@ -89,6 +92,7 @@ public struct NoteDocument: Equatable, Sendable {
     public func render(timeZone: TimeZone = .current) -> String {
         var out = "---\n" + renderFront(timeZone: timeZone) + "---\n"
         out += "# \(oneLine(front.title))\n\n"
+        out += Self.jumpLine + "\n\n"
         for warning in warnings { out += "> [!warning] \(oneLine(warning))\n\n" }
         if !headExtra.isEmpty { out += headExtra + "\n\n" }
         for piece in pieces {
@@ -105,7 +109,7 @@ public struct NoteDocument: Equatable, Sendable {
         switch s {
         case .myNotes: body = myNotes
         case .expanded: body = expanded
-        case .transcript: body = transcript
+        case .transcript: body = NoteSections.fold(transcript)
         }
         // Section text can't hold a comment opener, or it could fake a marker.
         return "\(s.heading)\n\(s.start)\n\(body.replacingOccurrences(of: "<!--", with: "&lt;!--"))\n\(s.end)"
@@ -190,7 +194,7 @@ public struct NoteDocument: Equatable, Sendable {
             switch hit.section {
             case .myNotes: doc.myNotes = typed
             case .expanded: doc.expanded = typed
-            case .transcript: doc.transcript = sectionBody
+            case .transcript: doc.transcript = NoteSections.unfold(sectionBody)
             }
             cursor = hit.outer.upperBound
         }
@@ -226,6 +230,7 @@ public struct NoteDocument: Equatable, Sendable {
         for line in head.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
             if !titleSeen, line.hasPrefix("# ") { title = String(line.dropFirst(2)); titleSeen = true }
             else if line.hasPrefix("> [!warning] ") { warnings.append(String(line.dropFirst(13))) }
+            else if line == jumpLine { continue }
             else { rest.append(line) }
         }
         let extra = rest.joined(separator: "\n").trimmingCharacters(in: .newlines)

@@ -54,7 +54,7 @@ final class NoteRendererTests: XCTestCase {
         XCTAssertEqual(out.components(separatedBy: "<!-- lyra:transcript:end -->").count, 2, "a name must not spoof the end marker")
         XCTAssertTrue(out.contains("**x &lt;!-- lyra:transcript:end -->** _(known voice)_"))
         XCTAssertTrue(out.contains("**Marco** _(known voice)_ [00:12:04] morning"))
-        XCTAssertTrue(out.contains("\n\n**Marco** [00:12:04] morning"))
+        XCTAssertTrue(out.contains("\n>\n> **Marco** [00:12:04] morning"), "lines are folded in the file: a blank line is a bare `>`")
         XCTAssertTrue(out.contains("**Speaker 2** [00:12:04] hi"))
         XCTAssertTrue(out.contains(#"**Mr \*Star\* \_x\_** _(known voice)_ [00:12:04] morning"#))
     }

@@ -25,6 +25,24 @@ final class NoteDocumentTests: XCTestCase {
         XCTAssertEqual(try NoteDocument.parse(out), doc)
     }
 
+    /// Under the title, a line of links to the three sections, so Obsidian (phone included) jumps between them.
+    /// It is Lyra's, not Aidan's text: parsing drops it, and the note still round-trips.
+    func testJumpLineSitsUnderTheTitle() throws {
+        let doc = NoteDocument(front: front(), warnings: [], myNotes: "", expanded: "", transcript: "")
+        let out = doc.render(timeZone: zone)
+        XCTAssertTrue(out.contains("# Weekly sync\n\n[[#My notes|My notes]] · [[#Expanded|Expanded]] · [[#Transcript|Transcript]]\n\n## My notes"), out)
+        XCTAssertEqual(try NoteDocument.parse(out), doc)
+        XCTAssertEqual(try NoteDocument.parse(out).render(timeZone: zone), out)
+    }
+
+    /// The transcript is folded in the file and plain in the document, whichever layout the file has.
+    func testTranscriptIsFoldedInTheFile() throws {
+        let doc = NoteDocument(front: front(), warnings: [], myNotes: "", expanded: "", transcript: "**Aidan** [00:00:01] hello\n\n**Sam** [00:00:03] hi")
+        let out = doc.render(timeZone: zone)
+        XCTAssertTrue(out.contains("<!-- lyra:transcript:start -->\n> [!quote]- Full transcript\n> **Aidan** [00:00:01] hello\n>\n> **Sam** [00:00:03] hi\n<!-- lyra:transcript:end -->"), out)
+        XCTAssertEqual(try NoteDocument.parse(out), doc)
+    }
+
     func testOptionalFieldsAreOmittedAndStillRoundTrip() throws {
         var f = front(); f.series = nil; f.summary = nil; f.tags = []; f.links = []
         let doc = NoteDocument(front: f, warnings: [], myNotes: "", expanded: "", transcript: "")
@@ -91,7 +109,7 @@ final class NoteDocumentTests: XCTestCase {
     func testKeepsTextOutsideSectionsWhenReRendered() throws {
         let doc = NoteDocument(front: front(), warnings: [], myNotes: "- hi", expanded: "", transcript: "t")
         var out = doc.render(timeZone: zone)
-        out = out.replacingOccurrences(of: "# Weekly sync\n\n", with: "# Weekly sync\n\nMy own paragraph.\n\n")
+        out = out.replacingOccurrences(of: "[[#Transcript|Transcript]]\n\n", with: "[[#Transcript|Transcript]]\n\nMy own paragraph.\n\n")
         out = out.replacingOccurrences(of: "<!-- lyra:expanded:end -->\n\n", with: "<!-- lyra:expanded:end -->\n\nBetween sections.\n\n")
         out += "Footer by Aidan\n"
         let reparsed = try NoteDocument.parse(out)

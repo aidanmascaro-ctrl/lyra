@@ -4,8 +4,8 @@ import XCTest
 final class NoteBlocksTests: XCTestCase {
     func testRoundTripsAllAllowedFormatting() {
         let md = """
-        # Big
-        ## Small
+        ### Big
+        #### Small
         Plain **bold** and <u>under</u> text
         - point
           - child
@@ -62,7 +62,7 @@ final class NoteBlocksTests: XCTestCase {
     }
 
     func testBlankLinesAndClaudeParagraphsRoundTrip() {
-        let md = "one\n\n<span class=\"lyra\">two</span>\n\n## <span class=\"lyra\">Head</span>"
+        let md = "one\n\n<span class=\"lyra\">two</span>\n\n#### <span class=\"lyra\">Head</span>"
         let blocks = NoteMarkdown.parse(md)
         XCTAssertEqual(blocks.count, 5)
         XCTAssertTrue(blocks[2].byClaude)
@@ -87,22 +87,22 @@ final class NoteBlocksTests: XCTestCase {
             NoteBlock(kind: .bullet, runs: [.init(text: "Sam books the shoot")], byClaude: true),
         ]
         let md = NoteMarkdown.render(blocks)
-        XCTAssertEqual(md, "- <span class=\"lyra\">detail</span>\n\n## <span class=\"lyra\">Action items</span>\n- <span class=\"lyra\">Sam books the shoot</span>")
+        XCTAssertEqual(md, "- <span class=\"lyra\">detail</span>\n\n#### <span class=\"lyra\">Action items</span>\n- <span class=\"lyra\">Sam books the shoot</span>")
         XCTAssertEqual(NoteMarkdown.render(NoteMarkdown.parse(md)), md, "stable once written")
     }
 
     func testClaudeHeadingAfterBlankLineOrAtStartGetsNoExtraGap() {
         let head = NoteBlock(kind: .heading2, runs: [.init(text: "Decisions")], byClaude: true)
-        XCTAssertEqual(NoteMarkdown.render([head]), "## <span class=\"lyra\">Decisions</span>")
+        XCTAssertEqual(NoteMarkdown.render([head]), "#### <span class=\"lyra\">Decisions</span>")
         XCTAssertEqual(NoteMarkdown.render([NoteBlock(kind: .paragraph, runs: []), head]),
-                       "\n## <span class=\"lyra\">Decisions</span>")
+                       "\n#### <span class=\"lyra\">Decisions</span>")
     }
 
     func testRenderLinesHasOneLinePerBlock() {
         let blocks = NoteMarkdown.parse("- a")
             + [NoteBlock(kind: .heading2, runs: [.init(text: "H")], byClaude: true)]
             + NoteMarkdown.parse("1. x")
-        XCTAssertEqual(NoteMarkdown.renderLines(blocks), ["- a", "## <span class=\"lyra\">H</span>", "1. x"])
+        XCTAssertEqual(NoteMarkdown.renderLines(blocks), ["- a", "#### <span class=\"lyra\">H</span>", "1. x"])
     }
 
     /// Aidan's own notes, headings glued to text included, come back byte for byte.
@@ -128,9 +128,23 @@ final class NoteBlocksTests: XCTestCase {
         ## <span class="lyra">Glued heading from an old Lyra</span>
 
         """
+        // Headings move down two levels so they nest under the section's `##` in Obsidian; every other byte is kept.
+        let nested = md.replacingOccurrences(of: "\n## ", with: "\n#### ").replacingOccurrences(of: "\n# ", with: "\n### ")
         XCTAssertEqual(NoteMarkdown.render(NoteMarkdown.parse(md)).replacingOccurrences(
-            of: "\n\n## <span class=\"lyra\">Glued", with: "\n## <span class=\"lyra\">Glued"), md)
-        let aidanOnly = md.components(separatedBy: "\n- <span")[0]
+            of: "\n\n#### <span class=\"lyra\">Glued", with: "\n#### <span class=\"lyra\">Glued"), nested)
+        let aidanOnly = nested.components(separatedBy: "\n- <span")[0]
         XCTAssertEqual(NoteMarkdown.render(NoteMarkdown.parse(aidanOnly)), aidanOnly)
+    }
+
+    /// In the file a heading sits two levels under its section (`## Expanded` → `###`/`####`), so Obsidian's outline
+    /// nests it; notes written before that used `#`/`##` and still read as the same headings.
+    func testHeadingsNestUnderTheirSectionAndOldLevelsStillParse() {
+        let h1 = NoteBlock(kind: .heading1, runs: [.init(text: "Big")])
+        let h2 = NoteBlock(kind: .heading2, runs: [.init(text: "Small")], byClaude: true)
+        XCTAssertEqual(NoteMarkdown.renderLines([h1, h2]), ["### Big", "#### <span class=\"lyra\">Small</span>"])
+        XCTAssertEqual(NoteMarkdown.parse("### Big\n#### Small").map(\.kind), [.heading1, .heading2])
+        XCTAssertEqual(NoteMarkdown.parse("# Big\n## Small").map(\.kind), [.heading1, .heading2])
+        XCTAssertEqual(NoteMarkdown.parse("##### too deep").map(\.kind), [.paragraph])
+        XCTAssertEqual(NoteMarkdown.render(NoteMarkdown.parse("# Big\n## Small")), "### Big\n#### Small")
     }
 }

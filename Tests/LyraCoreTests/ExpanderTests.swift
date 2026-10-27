@@ -48,7 +48,7 @@ final class ExpanderTests: XCTestCase {
         XCTAssertEqual(parser.feed("@1\n- de"), [])
         XCTAssertEqual(parser.feed("tail\n@new Risks\n- one\n"), [
             .under(index: 1, b("detail", indent: 1, grey: true)),
-            .section(b("Risks", .heading2, grey: true)),
+            .section(b("Risks", .heading1, grey: true)),
             .bullet(b("one", grey: true)),
         ])
         XCTAssertEqual(parser.finish(), [])
@@ -73,7 +73,7 @@ final class ExpanderTests: XCTestCase {
 
     func testNewHeadingKeepsTrailingHashes() {
         var parser = ExpansionParser(targets: [])
-        XCTAssertEqual(parser.feed("@new ## Learning F#  \n"), [.section(b("Learning F#", .heading2, grey: true))])
+        XCTAssertEqual(parser.feed("@new ## Learning F#  \n"), [.section(b("Learning F#", .heading1, grey: true))])
     }
 
     func testHeadersTolerateSmallFormatWobble() {
@@ -84,7 +84,7 @@ final class ExpanderTests: XCTestCase {
         }
         for header in ["@new: Risks", "@NEW Risks", "@New:Risks", "@ new Risks"] {
             var parser = ExpansionParser(targets: targets)
-            XCTAssertEqual(parser.feed("\(header)\n"), [.section(b("Risks", .heading2, grey: true))], header)
+            XCTAssertEqual(parser.feed("\(header)\n"), [.section(b("Risks", .heading1, grey: true))], header)
         }
         for header in ["@3x", "@3: more", "@newsletter ideas", "@new:", "@3,"] {
             var parser = ExpansionParser(targets: targets)
@@ -105,7 +105,7 @@ final class ExpanderTests: XCTestCase {
             .under(index: 0, b("a", indent: 2, grey: true)),
             .under(index: 0, b("b", indent: 3, grey: true)),
             .under(index: 0, b("c", indent: 3, grey: true)),
-            .section(b("Next steps", .heading2, grey: true)),
+            .section(b("Next steps", .heading1, grey: true)),
             .bullet(b("d", grey: true)),
             .bullet(b("e", indent: 1, grey: true)),
         ])
@@ -126,7 +126,7 @@ final class ExpanderTests: XCTestCase {
             notes[0], b("first on pricing", indent: 1, grey: true), b("second on pricing", indent: 1, grey: true),
             notes[1],
             notes[2], b("gift box detail", indent: 2, grey: true),
-            b("Also", .heading2, grey: true), b("x", grey: true),
+            b("Also", .heading1, grey: true), b("x", grey: true),
         ])
         XCTAssertEqual(yields, 5, "one full list per event")
         XCTAssertEqual(blocks.filter { !$0.byClaude }, notes)
@@ -136,8 +136,8 @@ final class ExpanderTests: XCTestCase {
         let claude = FakeClaude(["@0\n- nowhere to go\n@new Decisions\n- Launch in March\n@new Next steps\n- Send quote\n"])
         let (blocks, _) = try await last(Expander(claude: claude).expandAll(ctx()))
         XCTAssertEqual(blocks, [
-            b("Decisions", .heading2, grey: true), b("Launch in March", grey: true),
-            b("Next steps", .heading2, grey: true), b("Send quote", grey: true),
+            b("Decisions", .heading1, grey: true), b("Launch in March", grey: true),
+            b("Next steps", .heading1, grey: true), b("Send quote", grey: true),
         ])
         XCTAssertTrue(claude.lastPrompt.contains("<my_notes>"))
     }
@@ -192,7 +192,7 @@ final class ExpanderTests: XCTestCase {
         let blocks = [b("Pricing"), b("grey", indent: 1, grey: true)]
         let claude = FakeClaude(["@new Morningside collab\n- Shared audience of early risers\n"])
         let result = try await Expander(claude: claude).inject("add a section on the Morningside collab", into: blocks, ctx: ctx())
-        XCTAssertEqual(result, blocks + [b("Morningside collab", .heading2, grey: true), b("Shared audience of early risers", grey: true)])
+        XCTAssertEqual(result, blocks + [b("Morningside collab", .heading1, grey: true), b("Shared audience of early risers", grey: true)])
         XCTAssertTrue(claude.lastPrompt.contains("Morningside collab"))
     }
 

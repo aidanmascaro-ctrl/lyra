@@ -161,12 +161,28 @@ either place show up in the other.
   is open). Change it in Lyra → it's in Obsidian.
 - If the file changes on disk while Lyra has unsaved edits to the same note, Lyra warns
   instead of overwriting.
-- Formatting must be Markdown Obsidian shows: bold, `<u>underline</u>`, `#`/`##`, `-`
+- Formatting must be Markdown Obsidian shows: bold, `<u>underline</u>`, headings, `-`
   bullets, `1.` lists, indentation.
 - Lyra keeps writing the Transcript section (rename re-renders it) with Phase 2's
   ask-before-replacing-an-edited-transcript behaviour.
 - In Obsidian the note reads as one page with three headings (My notes / Expanded /
   Transcript), plus frontmatter (date, series, tags, links, recordings folder).
+- **Structure in Obsidian** (added 2026-10-27, after Aidan found the note flat and a two-hour
+  transcript made Obsidian's editor jump about):
+  - A heading inside a section is written two levels under the section's `##` (`###` for the
+    editor's big heading, `####` for the small one), so the Outline pane nests topics under
+    Expanded and each of the three sections folds as one. `#`/`##` in older notes still read as
+    the same two headings. Claude's topic headings are the **big** heading (`###`: a real
+    heading in Minimal, where `####` is barely bigger than body text); in Lyra the big heading
+    is 18 pt and the small one 16 pt, so Expanded looks as it did.
+  - The transcript sits in a folded Obsidian callout (`> [!quote]- Full transcript`), so the
+    note opens as notes with the transcript one click away. To Lyra the section is always the
+    plain lines (hashes and rename compare those), whichever layout the file has.
+  - Under the title, a jump line: `[[#My notes|My notes]] · [[#Expanded|Expanded]] ·
+    [[#Transcript|Transcript]]`. Lyra's furniture, dropped on parse and put back on render.
+  - At launch Lyra brings any note in the older layout over once (`NoteLayoutUpgrade`), keeping
+    every word; a note already current is not touched. Grey text written before the change is
+    still recognised as Lyra's by its older line.
 
 ### 5.7 Claude
 - Runs through Aidan's **subscription** by calling the Claude Code CLI (`claude -p`), as in the

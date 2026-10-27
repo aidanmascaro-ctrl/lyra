@@ -20,8 +20,9 @@ enum NoteStyle {
 
     static func font(for kind: BlockKind, bold: Bool) -> NSFont {
         switch kind {
-        case .heading1: .systemFont(ofSize: 22, weight: bold ? .bold : .semibold)
-        case .heading2: .systemFont(ofSize: 18, weight: bold ? .bold : .semibold)
+        // The big heading is Claude's topic heading (`###` in the file); the small one a sub-heading (`####`).
+        case .heading1: .systemFont(ofSize: 18, weight: bold ? .bold : .semibold)
+        case .heading2: .systemFont(ofSize: 16, weight: bold ? .bold : .semibold)
         default: bold ? .systemFont(ofSize: 15, weight: .semibold) : body
         }
     }
@@ -111,8 +112,8 @@ enum NoteStyle {
         style.headIndent = lead
         style.lineSpacing = 5
         switch kind {
-        case .heading1: style.paragraphSpacingBefore = 18; style.paragraphSpacing = 6
-        case .heading2: style.paragraphSpacingBefore = 12; style.paragraphSpacing = 4
+        case .heading1: style.paragraphSpacingBefore = 12; style.paragraphSpacing = 4
+        case .heading2: style.paragraphSpacingBefore = 10; style.paragraphSpacing = 3
         case .bullet, .numbered: style.paragraphSpacing = 4
         case .paragraph: style.paragraphSpacing = 8
         }

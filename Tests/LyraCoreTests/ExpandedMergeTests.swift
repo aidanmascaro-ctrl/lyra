@@ -13,6 +13,20 @@ final class ExpandedMergeTests: XCTestCase {
         XCTAssertEqual(settled.map(\.byClaude), [true, false])
     }
 
+    /// Grey headings written before headings nested (`## X` in the file) were remembered by that older line, so
+    /// they are still Lyra's, not Aidan's, now that the same heading is written `#### X`.
+    func testGreyHeadingsWrittenBeforeNestingStayGrey() {
+        let head = NoteBlock(kind: .heading2, runs: [.init(text: "Decisions")], byClaude: true)
+        let bullet = b("detail", grey: true)
+        let older = [NoteSections.hash("## <span class=\"lyra\">Decisions</span>"), NoteSections.hash("- <span class=\"lyra\">detail</span>")]
+        XCTAssertEqual(ExpandedMerge.settle([head, bullet], lyraWrote: older).map(\.byClaude), [true, true])
+        XCTAssertTrue(ExpandedMerge.allWritten([head, bullet], by: Set(older)))
+        XCTAssertFalse(ExpandedMerge.allWritten([head, b("new", grey: true)], by: Set(older)))
+        XCTAssertEqual(ExpandedMerge.settle([head], lyraWrote: []).map(\.byClaude), [false])
+        var topic = head; topic.kind = .heading1  // the layout upgrade made it the big heading
+        XCTAssertEqual(ExpandedMerge.settle([topic], lyraWrote: older).map(\.byClaude), [true])
+    }
+
     func testHashesCoverOnlyGreyBlocks() {
         XCTAssertEqual(ExpandedMerge.hashes(of: [b("white"), b("grey", grey: true)]).count, 1)
     }
