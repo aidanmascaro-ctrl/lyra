@@ -93,6 +93,15 @@ final class SeriesLibraryTests: XCTestCase {
             """)
     }
 
+    /// A title with `|` or `]]` can't end the link early or split its alias.
+    func testSeriesPageAliasIsLinkSafe() {
+        let note = MeetingSummary(id: UUID(), title: "Workshop #2 | [Draft]]", date: date(20), series: "Weekly", tags: [],
+                                  summary: nil, suggestion: nil, folder: nil,
+                                  note: meetings.appendingPathComponent("Weekly/2026-10-20 0900 — Workshop 2 Draft.md"))
+        let page = SeriesLibrary.seriesPage(name: "Weekly", meetings: [note], notesRoot: meetings)
+        XCTAssertTrue(page.contains("- [[2026-10-20 0900 — Workshop 2 Draft|Workshop #2 - (Draft))]] — 20 Oct 2026\n"), page)
+    }
+
     func testFolderOverridesFrontmatterSeries() {
         let moved = loaded(title: "Moved", day: 2, in: meetings.appendingPathComponent("X"))
         let conflicting = loaded(title: "Conflict", day: 3, series: "Old", in: meetings.appendingPathComponent("X"))

@@ -66,7 +66,7 @@ public enum SeriesLibrary {
         formatter.dateFormat = "d MMM yyyy"
         let lines = meetings.sorted { $0.date < $1.date }.map { meeting -> String in
             let target = meeting.note.deletingPathExtension().lastPathComponent
-            var line = "- [[\(target)|\(oneLine(meeting.title))]] — \(formatter.string(from: meeting.date))"
+            var line = "- [[\(target)|\(linkAlias(meeting.title))]] — \(formatter.string(from: meeting.date))"
             if let summary = meeting.summary.map(oneLine), !summary.isEmpty { line += " — \(summary)" }
             return line + "\n"
         }
@@ -117,5 +117,11 @@ public enum SeriesLibrary {
 
     private static func oneLine(_ s: String) -> String {
         s.split(whereSeparator: \.isNewline).joined(separator: " ")
+    }
+
+    /// A title as a link's display text: `|` would split it and `]` could end the link, so they are swapped out.
+    private static func linkAlias(_ title: String) -> String {
+        oneLine(title).replacingOccurrences(of: "|", with: "-")
+            .replacingOccurrences(of: "[", with: "(").replacingOccurrences(of: "]", with: ")")
     }
 }
