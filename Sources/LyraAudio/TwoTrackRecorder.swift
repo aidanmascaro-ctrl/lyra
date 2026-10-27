@@ -54,6 +54,23 @@ public final class TwoTrackRecorder {
         return warning
     }
 
+    /// Both tracks stop capturing together, so they stay lined up once resumed.
+    public func pause() {
+        for recorder in recorders { recorder.pause() }
+    }
+
+    /// Restarts both tracks in the same files. A meeting track that won't restart is a warning (the mic carries
+    /// on alone, as at start); a mic that won't restart throws.
+    public func resume() throws -> String? {
+        var warning: String?
+        for recorder in recorders {
+            do { try recorder.resume() } catch where recorder !== recorders.last {
+                warning = "Couldn't capture \(target?.appName ?? "the meeting") audio after resuming: \(error). Transcript after that is from your microphone only."
+            }
+        }
+        return warning
+    }
+
     /// Runs on the caller's actor, so a @MainActor owner can await it without sending the recorder.
     /// Each result carries its `startOffset`: the tracks start up to ~3 s apart.
     nonisolated(nonsending) public func stop() async -> [TrackResult] {

@@ -44,6 +44,16 @@ final class DeviceMicSession: NSObject, AVCaptureAudioDataOutputSampleBufferDele
         guard session.isRunning else { throw AudioError(description: "the microphone could not be started") }
     }
 
+    /// Stops capture (the mic is let go); nothing is written until `resume`.
+    func pause() { session.stopRunning() }
+
+    /// Carries on in the same file.
+    func resume() throws {
+        guard !session.isRunning else { return }
+        session.startRunning()
+        guard session.isRunning else { throw AudioError(description: "the microphone could not be restarted") }
+    }
+
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         var block: CMBlockBuffer?
         var list = AudioBufferList()
