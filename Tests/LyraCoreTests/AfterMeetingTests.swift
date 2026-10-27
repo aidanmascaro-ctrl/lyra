@@ -385,4 +385,44 @@ final class AfterMeetingTests: XCTestCase {
         XCTAssertEqual(ctx.transcript.map(\.speakerLabel), ["Marco"])
         XCTAssertEqual(ctx.title, "Zoom Meeting")
     }
+
+    // MARK: Final fix wave
+
+    /// Aidan typed a title during the meeting: insights add tags and summary but never replace his title.
+    func testInsightsKeepATitleAidanTyped() async throws {
+        let loaded = try index.load(meeting.id, hint: reserved)
+        var doc = loaded.document
+        doc.front.title = "Pricing with Marco"
+        _ = try index.save(doc, over: loaded)
+
+        try await after(ScriptedClaude(insights: .success(insightsJSON), expansion: expansionLines)).run(folder: folder)
+        let note = try index.load(meeting.id, hint: nil)
+        XCTAssertEqual(note.document.front.title, "Pricing with Marco")
+        XCTAssertEqual(note.url.lastPathComponent, "\(stamp(meeting.startedAt)) — Pricing with Marco.md")
+        XCTAssertEqual(note.document.front.summary, "Agreed new reel pricing.")
+        XCTAssertEqual(note.document.front.links, ["Northwind"])
+    }
+
+    /// The rename fails after the frontmatter was written: insights count as done, so Retry never runs them again.
+    func testRelocateFailureStillMarksInsightsDone() async throws {
+        let nested = notesRoot.appendingPathComponent("Old/Deeper", isDirectory: true)
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: reserved, to: nested.appendingPathComponent("Zoom Meeting.md"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: notesRoot.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: notesRoot.path) }
+
+        do {
+            try await after(ScriptedClaude(insights: .success(insightsJSON), expansion: expansionLines)).run(folder: folder)
+            XCTFail("expected the rename to fail")
+        } catch {}
+        let saved = try Meeting.load(from: folder)
+        XCTAssertEqual(saved.insightsDone, true)
+        XCTAssertNil(saved.insightsError)
+        XCTAssertEqual(try index.load(meeting.id, hint: nil).document.front.title, "Northwind pricing review")
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: notesRoot.path)
+        let again = ScriptedClaude(insights: .success(insightsJSON), expansion: expansionLines)
+        try await after(again).run(folder: folder)
+        XCTAssertEqual(again.insightsCalls, 0)
+    }
 }

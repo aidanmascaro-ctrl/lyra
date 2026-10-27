@@ -98,18 +98,23 @@ public struct AfterMeeting: Sendable {
         }
 
         let saved = try index.update(note) { doc in
-            doc.front.title = insights.title
+            // Only the window title is replaced: one Aidan typed (the title field invites it) stays.
+            if doc.front.title == meeting.title { doc.front.title = insights.title }
             doc.front.tags = Self.union(doc.front.tags, insights.tags)
             doc.front.links = Self.union(doc.front.links, insights.clients)
             if !insights.summary.isEmpty { doc.front.summary = insights.summary }
+        }
+        // Done once the frontmatter is written, so a failed rename can't make Retry run insights again.
+        try Self.updateMeeting(in: folder) {
+            $0.seriesSuggestion = insights.series
+            $0.insightsError = nil
+            $0.insightsDone = true
+            $0.notePath = saved.url.path
         }
         // The series it is already in (a folder Aidan moved it to counts), so the rename never pulls it out.
         let series = SeriesLibrary.summaries(notes: [saved], meetingsByID: [:], notesRoot: index.notesRoot).first?.series
         let moved = try index.relocateReportingSkips(saved, title: saved.document.front.title, series: series)
         try Self.updateMeeting(in: folder) {
-            $0.seriesSuggestion = insights.series
-            $0.insightsError = nil
-            $0.insightsDone = true
             $0.notePath = moved.note.url.path
             if !moved.skippedLinkFiles.isEmpty {
                 $0.warn("Lyra renamed the note but couldn't update links to it in: "
