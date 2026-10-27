@@ -30,29 +30,31 @@ final class HomeModel: ObservableObject {
     func accept(_ summary: MeetingSummary) {
         guard let series = summary.suggestion else { return }
         let index = app.notes
-        act(on: summary) { note in try SeriesActions.move(note, to: series, index: index).problems }
+        vaultWork {
+            try SeriesActions.move(try index.load(summary.id, hint: summary.note), to: series, index: index).problems
+        }
     }
 
     func reject(_ summary: MeetingSummary) {
         guard let folder = summary.folder else { return }
-        do { try SeriesActions.reject(meetingFolder: folder) } catch { notice = "Lyra couldn't save that: \(error.localizedDescription)" }
-        refresh()
+        vaultWork { try SeriesActions.reject(meetingFolder: folder); return [] }
     }
 
     func rename(series: String, to name: String) {
-        do {
-            let problems = try SeriesActions.rename(series, to: name, index: app.notes)
-            if !problems.isEmpty { notice = problems.joined(separator: "\n") }
-        } catch { notice = error.localizedDescription }
-        refresh()
+        let index = app.notes
+        vaultWork { try SeriesActions.rename(series, to: name, index: index) }
     }
 
-    private func act(on summary: MeetingSummary, _ change: (LoadedNote) throws -> [String]) {
-        do {
-            let problems = try change(try app.notes.load(summary.id, hint: summary.note))
-            if !problems.isEmpty { notice = problems.joined(separator: "\n") }
-        } catch { notice = error.localizedDescription }
-        refresh()
+    /// Moving notes and rewriting links touches the whole vault: done off the main actor, then the list re-read.
+    private func vaultWork(_ work: @escaping @Sendable () throws -> [String]) {
+        Task {
+            let result = await Task.detached { Result { try work() } }.value
+            switch result {
+            case .success(let problems): if !problems.isEmpty { notice = problems.joined(separator: "\n") }
+            case .failure(let error): notice = error.localizedDescription
+            }
+            refresh()
+        }
     }
 
     private nonisolated static func summaries(notes: NoteIndex, recordingsRoot: URL) -> [MeetingSummary] {

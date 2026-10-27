@@ -4,37 +4,31 @@ import SwiftUI
 
 enum MeetingTab: Hashable { case myNotes, expanded, transcript }
 
-/// The note changed in Obsidian while Aidan had edits in Lyra that weren't saved yet.
-struct NoteConflict {
-    let section: NoteSection
-    var mine: [NoteBlock]
-    var disk: LoadedNote
-}
-
 /// One meeting window's state: the note (found by `lyra_id`, watched on disk), the two editable sections, the
 /// transcript with Phase 2's speaker renaming, and Claude's in-window actions (in `MeetingModel+Claude`).
 ///
-/// The editors get back exactly the blocks they sent out, so their undo history survives; new blocks are pushed
-/// only for real outside changes: the file changed on disk, Claude added something.
+/// Which version of the note each editor shows, and when a change is a conflict, is `NoteSync`'s job: the editors
+/// get back exactly the blocks they sent out (so their undo history survives), and new blocks are pushed only for
+/// real outside changes, each answered by the editor (`acknowledged`).
 @MainActor
 final class MeetingModel: ObservableObject {
-    /// How long a pushed outside change waits for an editor's unsent edits before it counts as accepted.
-    private static let unsentGrace: Duration = .milliseconds(300)
-
     let folder: URL
     let notes: NoteIndex
     let app: AppModel
     private let service: RenameService
     /// meeting.json as last read; Retry clears its errors here at once, before Claude starts.
     @Published var meeting: Meeting?
-    @Published private(set) var loaded: LoadedNote?
+    @Published private(set) var sync: NoteSync?
     @Published private(set) var lines: [TranscriptLine] = []
     @Published private(set) var loadError: String?
     @Published var myBlocks: [NoteBlock] = []
     @Published var expandedBlocks: [NoteBlock] = []
+    /// Raised to make an editor show its blocks over unsent typing (Reload).
+    @Published private(set) var forceLoad: [NoteSection: Int] = [:]
     @Published var tab: MeetingTab
     @Published var titleDraft = ""
-    @Published private(set) var conflict: NoteConflict?
+    /// While the title field has focus, the file's title doesn't overwrite what is being typed.
+    var editingTitle = false
     /// Plain-English problems (a save, a series move); shown in a banner until dismissed.
     @Published var notice: String?
     @Published private(set) var knownSeries: [String] = []
@@ -51,8 +45,6 @@ final class MeetingModel: ObservableObject {
     private var confirmAfterMessage = false
 
     private var watcher: NoteWatcher?
-    /// An outside change pushed to the editors, not yet accepted: unsent edits arriving now are a conflict.
-    private var pendingExternal: (disk: LoadedNote, changed: [NoteSection])?
 
     init(folder: URL, app: AppModel) {
         self.folder = folder
@@ -67,6 +59,8 @@ final class MeetingModel: ObservableObject {
         loadSeriesNames()
     }
 
+    var loaded: LoadedNote? { sync?.loaded }
+    var conflict: NoteSync.Conflict? { sync?.conflict }
     var isLive: Bool { app.liveMeeting?.folder == folder }
     var streaming: [NoteBlock]? { meeting.flatMap { app.liveExpansion[$0.id] } }
     var speakers: [SpeakerSummary] { MeetingOverview.speakers(in: lines) }
@@ -86,7 +80,7 @@ final class MeetingModel: ObservableObject {
 
     // MARK: Loading and watching
 
-    /// Re-reads meeting.json and the transcript; the note goes through the outside-change path.
+    /// Re-reads meeting.json and the transcript, then the note.
     func reload() {
         do {
             let meeting = try Meeting.load(from: folder)
@@ -103,6 +97,7 @@ final class MeetingModel: ObservableObject {
         noteChangedOnDisk()
     }
 
+    /// The watcher's call, and after anything else wrote the note.
     func noteChangedOnDisk() {
         // The after-meeting step writes meeting.json alongside the note (errors, series suggestion).
         if let fresh = try? Meeting.load(from: folder) { meeting = fresh }
@@ -114,28 +109,17 @@ final class MeetingModel: ObservableObject {
             return
         }
         loadError = nil
-        watch(disk.url)
-        guard let loaded else { return adopt(disk) }
-        guard disk.fingerprint != loaded.fingerprint else { return }  // Lyra's own save
-        let changed = [NoteSection.myNotes, .expanded].filter { $0.text(in: disk.document) != $0.text(in: loaded.document) }
-        if titleDraft == loaded.document.front.title { titleDraft = disk.document.front.title }
-        if conflict != nil { conflict?.disk = disk; self.loaded = disk; return }
-        guard !changed.isEmpty else { self.loaded = disk; return }
-        pendingExternal = (disk, changed)
-        for section in changed { push(NoteMarkdown.parse(section.text(in: disk.document)), to: section) }
-        Task {
-            try? await Task.sleep(for: Self.unsentGrace)
-            guard pendingExternal?.disk.fingerprint == disk.fingerprint else { return }
-            pendingExternal = nil
-            self.loaded = disk
+        guard var sync else {
+            sync = NoteSync(loaded: disk)
+            myBlocks = NoteMarkdown.parse(disk.document.myNotes)
+            expandedBlocks = NoteMarkdown.parse(disk.document.expanded)
+            titleDraft = disk.document.front.title
+            watch(disk.url)
+            return
         }
-    }
-
-    private func adopt(_ note: LoadedNote) {
-        loaded = note
-        titleDraft = note.document.front.title
-        myBlocks = NoteMarkdown.parse(note.document.myNotes)
-        expandedBlocks = NoteMarkdown.parse(note.document.expanded)
+        let effects = sync.diskChanged(disk)
+        self.sync = sync
+        apply(effects)
     }
 
     private func watch(_ url: URL) {
@@ -147,84 +131,104 @@ final class MeetingModel: ObservableObject {
 
     func close() { watcher?.stop() }
 
-    private func push(_ blocks: [NoteBlock], to section: NoteSection) {
+    /// Pushes blocks to the editors and follows the note to wherever it now is.
+    private func apply(_ effects: [NoteSync.Effect]) {
+        for effect in effects {
+            switch effect {
+            case .push(let section, let blocks):
+                setBlocks(blocks, for: section)
+            case .forcePush(let section, let blocks):
+                setBlocks(blocks, for: section)
+                forceLoad[section, default: 0] += 1
+            }
+        }
+        guard let loaded else { return }
+        watch(loaded.url)
+        if !editingTitle { titleDraft = loaded.document.front.title }
+    }
+
+    private func setBlocks(_ blocks: [NoteBlock], for section: NoteSection) {
         switch section {
         case .myNotes: myBlocks = blocks
         case .expanded: expandedBlocks = blocks
         }
     }
 
-    // MARK: Saving
+    // MARK: Editing
 
-    /// An editor's debounced change. Saved straight away unless it collides with an edit made in Obsidian.
+    /// An editor's debounced change, saved unless it collides with an edit made elsewhere.
     func edited(_ blocks: [NoteBlock], in section: NoteSection) {
-        push(blocks, to: section)
-        if let pending = pendingExternal, pending.changed.contains(section) {
-            pendingExternal = nil
-            loaded = pending.disk
-            conflict = NoteConflict(section: section, mine: blocks, disk: pending.disk)
-            return
-        }
-        if conflict?.section == section { conflict?.mine = blocks; return }
-        save(blocks, to: section)
-    }
-
-    func save(_ blocks: [NoteBlock], to section: NoteSection) {
-        guard let loaded else { return }
+        setBlocks(blocks, for: section)
+        guard var sync else { return }
         do {
-            switch try NoteEdits.save(blocks, to: section, over: loaded, index: notes) {
-            case .saved(let note): self.loaded = note; watch(note.url)
-            case .conflict(let disk): conflict = NoteConflict(section: section, mine: blocks, disk: disk)
-            }
-        } catch { notice = "Lyra couldn't save this note: \(error.localizedDescription)" }
+            let effects = try sync.edited(blocks, in: section, index: notes)
+            self.sync = sync
+            apply(effects)
+        } catch {
+            self.sync = sync
+            notice = "Lyra couldn't save this note: \(error.localizedDescription)"
+        }
     }
 
-    /// "Reload": Obsidian's version wins.
+    /// An editor's answer to a push: shown, or refused because of unsent typing.
+    func acknowledged(_ section: NoteSection, accepted: Bool) {
+        sync?.ack(section, accepted: accepted)
+    }
+
+    /// "Reload": the file's version wins, even over typing not yet sent.
     func takeDisk() {
-        guard let conflict else { return }
-        self.conflict = nil
-        loaded = conflict.disk
-        push(NoteMarkdown.parse(conflict.section.text(in: conflict.disk.document)), to: conflict.section)
+        guard var sync else { return }
+        let effects = sync.reload()
+        self.sync = sync
+        apply(effects)
     }
 
     /// "Keep mine": this section is written over Obsidian's, as the file is right now.
     func keepMine() {
-        guard let conflict, let meeting else { return }
-        self.conflict = nil
+        guard var sync else { return }
         do {
-            let disk = try notes.load(meeting.id, hint: conflict.disk.url)
-            loaded = try NoteEdits.keepMine(conflict.mine, section: conflict.section, over: disk, index: notes)
+            let effects = try sync.keepMine(index: notes)
+            self.sync = sync
+            apply(effects)
         } catch { notice = "Lyra couldn't save your version: \(error.localizedDescription)" }
     }
 
-    // MARK: Title and series
+    // MARK: Title and series (vault-wide file work, off the main actor)
 
     func commitTitle() {
-        guard let loaded, titleDraft != loaded.document.front.title else { return }
-        apply { try SeriesActions.retitle(loaded, to: titleDraft, index: notes) }
-        titleDraft = self.loaded?.document.front.title ?? titleDraft
+        editingTitle = false
+        let title = titleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let loaded, !title.isEmpty, title != loaded.document.front.title else {
+            titleDraft = loaded?.document.front.title ?? titleDraft
+            return
+        }
+        let notes = notes
+        vaultWork { try SeriesActions.retitle(loaded, to: title, index: notes).problems }
     }
 
     func move(to series: String?) {
         guard let loaded else { return }
-        apply { try SeriesActions.move(loaded, to: series, index: notes) }
-        loadSeriesNames()
+        let notes = notes
+        vaultWork { try SeriesActions.move(loaded, to: series, index: notes).problems }
     }
 
     func notRelated() {
-        do { try SeriesActions.reject(meetingFolder: folder) } catch {
-            notice = "Lyra couldn't save that: \(error.localizedDescription)"
-        }
-        reload()
+        let folder = folder
+        vaultWork { try SeriesActions.reject(meetingFolder: folder); return [] }
     }
 
-    private func apply(_ change: () throws -> SeriesOutcome) {
-        do {
-            let outcome = try change()
-            loaded = outcome.note
-            watch(outcome.note.url)
-            if !outcome.problems.isEmpty { notice = outcome.problems.joined(separator: "\n") }
-        } catch { notice = error.localizedDescription }
+    /// Runs `work` off the main actor, then reads the note back from disk (wherever it now is), so the editors
+    /// see exactly what the file holds.
+    private func vaultWork(_ work: @escaping @Sendable () throws -> [String]) {
+        Task {
+            let result = await Task.detached { Result { try work() } }.value
+            switch result {
+            case .success(let problems): if !problems.isEmpty { notice = problems.joined(separator: "\n") }
+            case .failure(let error): notice = error.localizedDescription
+            }
+            noteChangedOnDisk()
+            loadSeriesNames()
+        }
     }
 
     private func loadSeriesNames() {

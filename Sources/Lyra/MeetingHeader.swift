@@ -14,8 +14,11 @@ struct MeetingHeader: View {
                 .textFieldStyle(.plain)
                 .font(Chrome.titleFont)
                 .focused($titleFocused)
-                .onSubmit { model.commitTitle(); titleFocused = false }
-                .onChange(of: titleFocused) { if !titleFocused { model.commitTitle() } }
+                // Return just ends editing; losing focus is the one place the title is committed.
+                .onSubmit { titleFocused = false }
+                .onChange(of: titleFocused) {
+                    if titleFocused { model.editingTitle = true } else { model.commitTitle() }
+                }
             pills
             tabs.padding(.top, 6)
         }

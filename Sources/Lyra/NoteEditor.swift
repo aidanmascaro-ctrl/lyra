@@ -5,12 +5,17 @@ import SwiftUI
 enum SelectionAction { case expand, find, ask }
 
 /// The note canvas: plain text with bold, underline, two headings, bullets, numbered lists and indent.
-/// `blocks` from outside replace the text only when they differ from what the editor last sent out.
+/// `blocks` from outside replace the text only when they differ from what the editor last sent out, and not
+/// while it holds unsent typing; `onExternal` says which (true: shown, false: refused). Raising `forceLoad` shows
+/// `blocks` whatever was typed (Reload). With `editable` off it takes no typing and gives up the keyboard.
 struct NoteEditor: NSViewRepresentable {
     var blocks: [NoteBlock]
     var onChange: ([NoteBlock]) -> Void
     var selectionActions = false
     var onSelectionAction: ((SelectionAction, String, Int) -> Void)?
+    var onExternal: ((Bool) -> Void)?
+    var forceLoad = 0
+    var editable = true
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -25,6 +30,7 @@ struct NoteEditor: NSViewRepresentable {
         scroll.drawsBackground = false
         context.coordinator.textView = textView
         context.coordinator.lastKnown = blocks
+        context.coordinator.forced = forceLoad
         textView.load(blocks)
         return scroll
     }
@@ -32,11 +38,17 @@ struct NoteEditor: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let coordinator = context.coordinator
         coordinator.parent = self
-        coordinator.textView?.selectionActions = selectionActions
+        coordinator.setEditable(editable)
+        coordinator.textView?.selectionActions = selectionActions && editable
         coordinator.textView?.onSelectionAction = { [weak coordinator] action, text, block in
             coordinator?.parent.onSelectionAction?(action, text, block)
         }
-        coordinator.receive(blocks)
+        if forceLoad != coordinator.forced {
+            coordinator.forced = forceLoad
+            coordinator.replace(with: blocks)
+        } else {
+            coordinator.receive(blocks)
+        }
     }
 
     /// Teardown happens inside a SwiftUI update, so the last edits go out just after it.
@@ -50,6 +62,7 @@ struct NoteEditor: NSViewRepresentable {
         weak var textView: NoteTextView?
         /// What the editor last showed from outside or sent out: an equal `blocks` is not a change.
         var lastKnown: [NoteBlock] = []
+        var forced = 0
         private var unsent = false
         private var pendingSave: Task<Void, Never>?
         /// The editor's own undo history (not the window's), so a reload from outside can clear it.
@@ -66,9 +79,33 @@ struct NoteEditor: NSViewRepresentable {
         /// Typed words win: with unsent edits the incoming blocks are skipped and the edits go out instead.
         func receive(_ blocks: [NoteBlock]) {
             guard blocks != lastKnown, let textView else { return }
-            if unsent { flush(deferred: true); return }
+            let answer = parent.onExternal
+            if unsent {
+                // Answered before the flush below, so the refusal is known when the typing arrives.
+                Task { @MainActor in answer?(false) }
+                flush(deferred: true)
+                return
+            }
             lastKnown = blocks
             textView.load(blocks)
+            Task { @MainActor in answer?(true) }
+        }
+
+        /// Reload: shows `blocks`, dropping any unsent typing.
+        func replace(with blocks: [NoteBlock]) {
+            pendingSave?.cancel()
+            pendingSave = nil
+            unsent = false
+            lastKnown = blocks
+            textView?.load(blocks)
+        }
+
+        func setEditable(_ editable: Bool) {
+            guard let textView, textView.isEditable != editable else { return }
+            if !editable, let window = textView.window, window.firstResponder === textView {
+                window.makeFirstResponder(nil)  // ends editing, which sends any unsent typing out
+            }
+            textView.isEditable = editable
         }
 
         /// `deferred` sends on the next main-actor turn, for calls made while SwiftUI is updating views;

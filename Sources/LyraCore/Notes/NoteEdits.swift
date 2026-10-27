@@ -1,7 +1,7 @@
 import Foundation
 
 /// The two sections Aidan edits in the meeting window. Transcript has its own rename path.
-public enum NoteSection: Sendable {
+public enum NoteSection: Sendable, CaseIterable {
     case myNotes, expanded
 
     public func text(in document: NoteDocument) -> String {

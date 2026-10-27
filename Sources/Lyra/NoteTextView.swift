@@ -386,7 +386,7 @@ final class NoteTextView: NSTextView {
         let point = convert(event.locationInWindow, from: nil)
         let blocks = self.blocks
         var hovered: Int?
-        if let layout = layoutManager, let container = textContainer, !blocks.isEmpty {
+        if isEditable, let layout = layoutManager, let container = textContainer, !blocks.isEmpty {
             let inContainer = NSPoint(x: max(point.x - textContainerOrigin.x, 0), y: point.y - textContainerOrigin.y)
             let index = layout.characterIndex(for: inContainer, in: container, fractionOfDistanceBetweenInsertionPoints: nil)
             let candidate = blockIndex(at: index)
@@ -404,7 +404,7 @@ final class NoteTextView: NSTextView {
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         let blocks = self.blocks
-        guard let from = hoveredBlock, blocks.indices.contains(from),
+        guard isEditable, let from = hoveredBlock, blocks.indices.contains(from),
               let handle = handleRect(ofBlock: from, in: blocks), handle.insetBy(dx: -4, dy: -4).contains(point)
         else { return super.mouseDown(with: event) }
         drag = (from, from)

@@ -56,21 +56,33 @@ private struct MeetingContent: View {
         }
     }
 
-    @ViewBuilder private var page: some View {
-        switch model.tab {
-        case .myNotes:
-            NoteEditor(blocks: model.myBlocks, onChange: { model.edited($0, in: .myNotes) })
-                .overlay(alignment: .topLeading) { placeholder(model.myBlocks, "Write notes…") }
-        case .expanded:
-            NoteEditor(blocks: model.streaming ?? model.expandedBlocks, onChange: { model.edited($0, in: .expanded) },
-                       selectionActions: true,
-                       onSelectionAction: { model.selectionAction($0, text: $1, block: $2) })
-                // Claude is writing it: nothing to type into until it's done.
-                .allowsHitTesting(model.streaming == nil)
-                .overlay(alignment: .topLeading) { placeholder(model.streaming ?? model.expandedBlocks, expandedPlaceholder) }
-        case .transcript:
-            TranscriptTab(model: model, people: app.people)
+    /// Both editors stay alive behind the tabs, so each always answers pushes and keeps its undo history; the one
+    /// not shown can't be typed into. While Claude streams, a separate read-only view shows the stream.
+    private var page: some View {
+        ZStack {
+            editor(.myNotes, blocks: model.myBlocks, placeholder: "Write notes…")
+            editor(.expanded, blocks: model.expandedBlocks, placeholder: expandedPlaceholder, actions: true)
+            if model.tab == .expanded, let stream = model.streaming {
+                NoteEditor(blocks: stream, onChange: { _ in }, editable: false)
+            }
+            if model.tab == .transcript {
+                TranscriptTab(model: model, people: app.people).background(Chrome.page)
+            }
         }
+    }
+
+    private func editor(_ section: NoteSection, blocks: [NoteBlock], placeholder text: String, actions: Bool = false) -> some View {
+        let tab: MeetingTab = section == .myNotes ? .myNotes : .expanded
+        let active = model.tab == tab && (section == .myNotes || model.streaming == nil)
+        return NoteEditor(blocks: blocks, onChange: { model.edited($0, in: section) },
+                          selectionActions: actions,
+                          onSelectionAction: { model.selectionAction($0, text: $1, block: $2) },
+                          onExternal: { model.acknowledged(section, accepted: $0) },
+                          forceLoad: model.forceLoad[section] ?? 0,
+                          editable: active)
+            .overlay(alignment: .topLeading) { if active { placeholder(blocks, text) } }
+            .opacity(active ? 1 : 0)
+            .allowsHitTesting(active)
     }
 
     private var expandedPlaceholder: String {

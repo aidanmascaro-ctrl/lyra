@@ -68,7 +68,7 @@ extension MeetingModel {
 
     func reExpand() {
         guard working == nil, let id = meeting?.id else { return }
-        save(expandedBlocks, to: .expanded)
+        edited(expandedBlocks, in: .expanded)
         working = "Re-expanding…"
         claudeError = nil
         Task {
@@ -106,8 +106,7 @@ extension MeetingModel {
     /// Pushes Claude's version of Expanded to the editor, saves it, and records its new grey as Lyra's.
     private func addClaude(_ blocks: [NoteBlock]) {
         let before = Set(expandedBlocks.map { NoteMarkdown.render([$0]) })
-        expandedBlocks = blocks
-        save(blocks, to: .expanded)
+        edited(blocks, in: .expanded)
         let added = blocks.filter { $0.byClaude && !before.contains(NoteMarkdown.render([$0])) }
         do { try NoteEdits.rememberGrey(added, meetingFolder: folder) } catch {
             notice = "Lyra couldn't update this meeting's records: \(error.localizedDescription)"
