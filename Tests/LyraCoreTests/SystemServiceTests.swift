@@ -7,6 +7,11 @@ final class SystemServiceTests: XCTestCase {
         XCTAssertTrue(SystemService.isBackground(executablePath: "/System/Library/Frameworks/Speech.framework/Versions/A/XPCServices/localspeechrecognition.xpc/Contents/MacOS/localspeechrecognition"))
     }
 
+    /// Screen capture (Lyra's own screen text, screenshots) runs replayd, which opens audio input.
+    func testScreenCaptureServiceIsNotAMeeting() {
+        XCTAssertTrue(SystemService.isBackground(executablePath: "/usr/libexec/replayd"))
+    }
+
     func testRealAppsStayEligible() {
         XCTAssertFalse(SystemService.isBackground(executablePath: "/System/Applications/FaceTime.app/Contents/MacOS/FaceTime"))
         XCTAssertFalse(SystemService.isBackground(executablePath: "/Applications/zoom.us.app/Contents/MacOS/zoom.us"))
