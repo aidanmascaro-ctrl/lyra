@@ -301,6 +301,13 @@ final class OAuthTests: XCTestCase {
         }
     }
 
+    func testBuiltInAppsFileReadsBothProviders() throws {
+        let json = #"{"google":{"clientID":"g.apps.googleusercontent.com","clientSecret":"gs"},"microsoft":{"clientID":"11111111-2222-3333-4444-555555555555"}}"#
+        let apps = try BuiltInApps.parse(Data(json.utf8))
+        XCTAssertEqual(apps["google"], OAuthClient(clientID: "g.apps.googleusercontent.com", clientSecret: "gs"))
+        XCTAssertEqual(apps["microsoft"], microsoft)
+    }
+
     func testEmailComesFromTheIDToken() {
         func answer(_ claims: String) -> Data {
             let payload = PKCE.base64URL(Data(claims.utf8))
@@ -433,6 +440,18 @@ final class CalendarServiceTests: XCTestCase {
         let calendars = try service(fake, accounts: [account(.google, "a@gmail.com")])
         let result = try await calendars.fetchAll()[0]
         XCTAssertEqual(result.problem, CalendarProblem(CalendarError.apiDisabled))
+    }
+
+    func testBuiltInAppDetailsAreUsedUnlessOthersWereChosen() async throws {
+        let builtIn = OAuthClient(clientID: "built-in")
+        let calendars = CalendarService(store: store, builtIn: ["microsoft": builtIn])
+        let nothingSaved = try await calendars.client(for: .microsoft)
+        XCTAssertEqual(nothingSaved, builtIn)
+        let noGoogle = try await calendars.client(for: .google)
+        XCTAssertNil(noGoogle)
+        try store.save(CalendarSettings().setting(microsoft, for: .microsoft))
+        let chosen = try await calendars.client(for: .microsoft)
+        XCTAssertEqual(chosen, microsoft)
     }
 
     func testNewAppDetailsAreKeptOnlyWhenSignInWorksAndOldAccountsKeepTheirOwn() async throws {
