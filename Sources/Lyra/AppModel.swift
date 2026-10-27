@@ -15,8 +15,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var revision = 0
     /// The meeting being recorded now, for New note.
     @Published private(set) var liveMeeting: LiveMeeting?
-    /// The meeting the meeting window shows; set just before it opens.
-    @Published var shownMeeting: URL?
+    /// What Lyra's one window shows: home, or a meeting.
+    @Published var route: Route = .home
     @Published private(set) var lastError: String?
     @Published private(set) var now = Date()
     /// Apps the user chose to never be prompted about; mirrors the saved list so the menu refreshes.
@@ -309,6 +309,11 @@ private extension Result where Failure == Error {
     init(catching body: () async throws -> Success) async {
         do { self = .success(try await body()) } catch { self = .failure(error) }
     }
+}
+
+enum Route: Equatable {
+    case home
+    case meeting(URL)
 }
 
 struct LiveMeeting: Equatable {

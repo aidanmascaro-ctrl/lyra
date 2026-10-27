@@ -17,22 +17,17 @@ struct LyraApp: App {
         MenuBarExtra {
             MenuContent(model: delegate.model)
         } label: {
-            MenuLabel(model: delegate.model).modifier(HomeOpener(presence: delegate.presence))
+            MenuLabel(model: delegate.model).modifier(MainWindowOpener(presence: delegate.presence))
         }
         Window("Teach Lyra my voice", id: "enrol") { EnrolmentWindow(app: delegate.model) }
             .windowResizability(.contentSize)
             .defaultLaunchBehavior(.suppressed)
             .restorationBehavior(.disabled)
-        // The front door: opened at launch, from the Dock icon and from the menu's Open Lyra.
-        Window("Lyra", id: "home") { HomeWindow(app: delegate.model).modifier(HomeOpener(presence: delegate.presence)) }
-            .windowStyle(.hiddenTitleBar)
-            .defaultSize(width: 760, height: 760)
-            .defaultLaunchBehavior(.presented)
-            .restorationBehavior(.disabled)
-        Window("Meeting", id: "meeting") { MeetingWindow(app: delegate.model) }
+        // The one window: home, or a meeting opened from it. Opened at launch, from the Dock icon and from the menu.
+        Window("Lyra", id: MainWindow.id) { MainWindow(app: delegate.model).modifier(MainWindowOpener(presence: delegate.presence)) }
             .windowStyle(.hiddenTitleBar)
             .defaultSize(width: 820, height: 860)
-            .defaultLaunchBehavior(.suppressed)
+            .defaultLaunchBehavior(.presented)
             .restorationBehavior(.disabled)
     }
 }
@@ -40,7 +35,7 @@ struct LyraApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
-    let presence = DockPresence()
+    lazy var presence = DockPresence(app: model)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         presence.start()
@@ -48,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// The Dock icon clicked, or Lyra opened again while running: Lyra's windows forward (minimised ones restored),
-    /// or home when none is open.
+    /// or the main window on home when none is open.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         presence.reopen()
         return false

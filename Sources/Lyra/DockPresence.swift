@@ -7,11 +7,14 @@ import SwiftUI
 /// detection and processing don't depend on any of this.
 @MainActor
 final class DockPresence: NSObject {
-    /// Opens and fronts the home window through SwiftUI's `openWindow`. Set by `HomeOpener` from the menu bar label
-    /// and from home itself (shown at every launch), so it is there whichever appears first.
-    var openHome: (() -> Void)?
+    /// Opens Lyra's main window through SwiftUI's `openWindow`. Set by `MainWindowOpener` from the menu bar label and
+    /// from the main window itself (shown at every launch), so it is there whichever appears first.
+    var openMain: (() -> Void)?
+    private let app: AppModel
     /// Windows told to close that may still report visible; dropped a turn later, once they are really gone.
     private var closing: Set<Int> = []
+
+    init(app: AppModel) { self.app = app }
 
     func start() {
         let center = NotificationCenter.default
@@ -22,7 +25,7 @@ final class DockPresence: NSObject {
     }
 
     /// The Dock icon clicked, or Lyra opened again: minimised windows come back, open ones come forward, and with
-    /// none open, home opens.
+    /// none open, the main window opens on home.
     func reopen() {
         switch DockPolicy.reopen(Self.describe(NSApp.windows), closing: closing) {
         case .openHome:
@@ -34,9 +37,11 @@ final class DockPresence: NSObject {
         }
     }
 
-    /// Home through SwiftUI when it has handed over `openWindow`; otherwise a home window AppKit still holds.
+    /// The main window on home, through SwiftUI when it has handed over `openWindow`; otherwise a main window
+    /// AppKit still holds.
     private func showHome() {
-        if let openHome { openHome() } else { NSApp.windows.first(where: Self.isHome)?.makeKeyAndOrderFront(nil) }
+        app.route = .home
+        if let openMain { openMain() } else { NSApp.windows.first(where: Self.isMain)?.makeKeyAndOrderFront(nil) }
         activate()
     }
 
@@ -51,6 +56,8 @@ final class DockPresence: NSObject {
         guard let window = notification.object as? NSWindow else { return }
         let number = window.windowNumber
         closing.insert(number)
+        // Closed on a meeting: it opens on home next time. The meeting's editors flush as the window goes.
+        if Self.isMain(window) { app.route = .home }
         update()
         // Checked again once the close has finished, so a late occlusion or key change can't leave a Dock icon
         // with no window.
@@ -60,11 +67,15 @@ final class DockPresence: NSObject {
         }
     }
 
-    private func update() {
+    private func update(retry: Bool = true) {
         let policy: NSApplication.ActivationPolicy = DockPolicy.showsInDock(Self.describe(NSApp.windows), closing: closing)
             ? .regular : .accessory
         guard NSApp.activationPolicy() != policy else { return }
-        NSApp.setActivationPolicy(policy)
+        guard NSApp.setActivationPolicy(policy) else {
+            // Refused (seen once just after a relaunch): try again once the run loop has turned.
+            if retry { Task { @MainActor [weak self] in self?.update(retry: false) } }
+            return
+        }
         // A window just appeared because Aidan asked for it: bring it forward. The last one closed: give the
         // keyboard back to whatever he was using.
         if policy == .regular { activate() } else { NSApp.deactivate() }
@@ -89,22 +100,22 @@ final class DockPresence: NSObject {
         }
     }
 
-    /// SwiftUI names a `Window` scene's window after its id ("home", or "home-…").
-    private static func isHome(_ window: NSWindow) -> Bool {
+    /// SwiftUI names a `Window` scene's window after its id ("main", or "main-…").
+    private static func isMain(_ window: NSWindow) -> Bool {
         guard let id = window.identifier?.rawValue else { return false }
-        return id == "home" || id.hasPrefix("home-")
+        return id == MainWindow.id || id.hasPrefix(MainWindow.id + "-")
     }
 }
 
 /// Hands SwiftUI's window opener to `DockPresence` from a view that is on screen.
-struct HomeOpener: ViewModifier {
+struct MainWindowOpener: ViewModifier {
     let presence: DockPresence
     @Environment(\.openWindow) private var openWindow
 
     func body(content: Content) -> some View {
         content.onAppear {
-            guard presence.openHome == nil else { return }
-            presence.openHome = { openWindow(id: "home") }
+            guard presence.openMain == nil else { return }
+            presence.openMain = { openWindow(id: MainWindow.id) }
         }
     }
 }

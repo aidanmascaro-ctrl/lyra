@@ -4,19 +4,14 @@ import SwiftUI
 
 /// One meeting, Granola-style: serif title, a quiet row of pills, three tabs (My notes / Expanded / Transcript)
 /// and a floating bar at the bottom for the live transcript and for asking Claude.
-struct MeetingWindow: View {
+/// Shown inside Lyra's one window; leaving it (back to home, or the window closing) flushes the editors and stops
+/// the note watcher, through the editors' teardown and `onDisappear`.
+struct MeetingPage: View {
+    let folder: URL
     @ObservedObject var app: AppModel
 
     var body: some View {
-        Group {
-            if let folder = app.shownMeeting {
-                MeetingContent(model: MeetingModel(folder: folder, app: app), app: app).id(folder)
-            } else {
-                Text("No meeting open.").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .frame(minWidth: 560, minHeight: 480)
-        .lyraWindow()
+        MeetingContent(model: MeetingModel(folder: folder, app: app), app: app).id(folder)
     }
 }
 
@@ -74,6 +69,9 @@ private struct MeetingContent: View {
     private func editor(_ section: NoteSection, blocks: [NoteBlock], placeholder text: String, actions: Bool = false) -> some View {
         let tab: MeetingTab = section == .myNotes ? .myNotes : .expanded
         let active = model.tab == tab && (section == .myNotes || model.streaming == nil)
+        // The object itself, not this view's `@StateObject`: the editor's last flush runs just after the page is
+        // gone (back to home), when the view's property is no longer installed.
+        let model = model
         return NoteEditor(blocks: blocks, onChange: { model.edited($0, in: section) },
                           selectionActions: actions,
                           onSelectionAction: { model.selectionAction($0, text: $1, block: $2) },

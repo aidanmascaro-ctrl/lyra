@@ -4,13 +4,12 @@ import SwiftUI
 
 /// Lyra's home and front door, Granola-style: New note (the live meeting's notes, or a new in-person recording),
 /// series suggestions to confirm, each series with its meetings, and every meeting newest first.
-struct HomeWindow: View {
+struct HomePage: View {
     @ObservedObject var app: AppModel
     @StateObject private var model: HomeModel
-    @Environment(\.openWindow) private var openWindow
     @State private var renaming: String?
     @State private var newName = ""
-    /// New note started a recording: its meeting window opens as soon as the meeting exists.
+    /// New note started a recording: its meeting opens as soon as it exists.
     @State private var openWhenStarted = false
 
     init(app: AppModel) {
@@ -37,8 +36,6 @@ struct HomeWindow: View {
             .padding(.top, Chrome.topInset)
             .padding(.bottom, 40)
         }
-        .frame(minWidth: 520, minHeight: 420)
-        .lyraWindow()
         .onAppear { model.refresh() }
         .onChange(of: app.revision) { model.refresh() }
         .onChange(of: app.liveMeeting) {
@@ -150,11 +147,8 @@ struct HomeWindow: View {
         .help(s.folder == nil ? "Open in Obsidian" : "Open this meeting")
     }
 
-    private func open(_ folder: URL) {
-        app.shownMeeting = folder
-        openWindow(id: "meeting")
-        NSApp.activate()
-    }
+    /// In this same window: Lyra has one window, and the back pill returns here.
+    private func open(_ folder: URL) { app.route = .meeting(folder) }
 }
 
 /// A list row that lights up softly under the pointer.

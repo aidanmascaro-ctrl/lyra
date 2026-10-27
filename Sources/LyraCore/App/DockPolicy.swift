@@ -1,8 +1,8 @@
 import Foundation
 
 /// When Lyra is a Dock app and what the Dock icon does, decided over plain descriptions of its windows so it can
-/// be tested without AppKit. A Lyra window is a titled, non-panel window that is shown or minimised: home, meeting,
-/// enrolment. The Allow prompt (a panel), alerts and the menu bar item never count.
+/// be tested without AppKit. A Lyra window is a titled, non-panel window that is shown or minimised: the main window
+/// (home or a meeting) and enrolment. The Allow prompt (a panel), alerts and the menu bar item never count.
 public enum DockPolicy {
     public struct Window: Equatable, Sendable {
         public let id: Int

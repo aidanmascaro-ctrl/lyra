@@ -4,7 +4,7 @@ import SwiftUI
 
 enum MeetingTab: Hashable { case myNotes, expanded, transcript }
 
-/// One meeting window's state: the note (found by `lyra_id`, watched on disk), the two editable sections, the
+/// One meeting page's state: the note (found by `lyra_id`, watched on disk), the two editable sections, the
 /// transcript with Phase 2's speaker renaming, and Claude's in-window actions (in `MeetingModel+Claude`).
 ///
 /// Which version of the note each editor shows, and when a change is a conflict, is `NoteSync`'s job: the editors

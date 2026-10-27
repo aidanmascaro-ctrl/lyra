@@ -1,7 +1,7 @@
 import Foundation
 import LyraCore
 
-/// What the home window lists: every Lyra note under Meetings/, grouped into series, with pending suggestions.
+/// What the home page lists: every Lyra note under Meetings/, grouped into series, with pending suggestions.
 /// Read off the main actor; refreshed when the window shows, comes forward, or a meeting finishes.
 @MainActor
 final class HomeModel: ObservableObject {
