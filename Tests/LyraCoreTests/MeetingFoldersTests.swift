@@ -45,15 +45,15 @@ final class MeetingFoldersTests: XCTestCase {
 
     func testCreateMakesTheFolderAndItsMarker() throws {
         let made = try folders.create("  Clients ")
-        XCTAssertEqual(made, SidebarFolder(name: "Clients", colour: .grey))
+        XCTAssertEqual(made, SidebarFolder(name: "Clients", colour: .blue))
         XCTAssertTrue(exists("Clients/\(MeetingFolders.markerName)"))
         XCTAssertTrue(try marker("Clients").contains("\"colour\""))
         XCTAssertTrue(folders.isFolder(meetings.appendingPathComponent("Clients")))
     }
 
     func testNewFoldersTakeThePaletteInTurn() throws {
-        let colours = try ["A", "B", "C"].map { try folders.create($0).colour }
-        XCTAssertEqual(colours, Array(FolderColour.allCases.prefix(3)))
+        let colours = try (1...9).map { try folders.create("F\($0)").colour }
+        XCTAssertEqual(colours, [.blue, .green, .orange, .purple, .teal, .red, .yellow, .grey, .blue])
     }
 
     func testAllListsOnlyMarkedFoldersByName() throws {

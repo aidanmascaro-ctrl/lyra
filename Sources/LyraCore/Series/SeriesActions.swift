@@ -10,8 +10,9 @@ public struct SeriesOutcome: Sendable {
 /// `[[links]]` pointing at the note and rewrites the series pages it touches.
 public enum SeriesActions {
     /// Sets `series:` (nil leaves the series), moves the note into that series' folder, and rewrites the
-    /// pages of the series it left and joined.
+    /// pages of the series it left and joined. A series can't share its name with a sidebar folder.
     public static func move(_ loaded: LoadedNote, to series: String?, index: NoteIndex) throws -> SeriesOutcome {
+        if let series { try refuseFolderName(series, index: index) }
         let old = currentSeries(of: loaded, index: index)
         let saved = try index.update(loaded) { $0.front.series = series }
         let moved = try index.relocateReportingSkips(saved, title: saved.document.front.title, series: series)
@@ -25,10 +26,12 @@ public enum SeriesActions {
         try AfterMeeting.updateMeeting(in: meetingFolder) { $0.seriesRejected = true }
     }
 
-    /// Renames the series folder (and the notes' `series:`), then rewrites its page under the new name.
+    /// Renames the series folder (and `series:` in every meeting of the series, filed in a sidebar folder or not),
+    /// then rewrites its page under the new name. The new name can't be a sidebar folder's.
     public static func rename(_ from: String, to: String, index: NoteIndex) throws -> [String] {
         let name = to.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty, name != from else { return [] }
+        try refuseFolderName(name, index: index)
         let skipped = try index.renameSeriesFolder(from: from, to: name)
         var problems: [String] = []
         if !skipped.isEmpty {
@@ -51,6 +54,13 @@ public enum SeriesActions {
     /// The series the note is in now (its folder counts, as in the home window).
     public static func currentSeries(of note: LoadedNote, index: NoteIndex) -> String? {
         SeriesLibrary.summaries(notes: [note], meetingsByID: [:], notesRoot: index.notesRoot).first?.series
+    }
+
+    /// A series called like a sidebar folder would file its meetings and page into that folder.
+    private static func refuseFolderName(_ series: String, index: NoteIndex) throws {
+        let folder = NoteIndex.seriesFolder(series, under: index.notesRoot)
+        guard !NoteIndex.samePath(folder, index.notesRoot), MeetingFolders(index: index).isFolder(folder) else { return }
+        throw MeetingFoldersError.nameTaken(series)
     }
 
     static func writePage(_ name: String, index: NoteIndex) -> [String] {

@@ -155,6 +155,18 @@ final class FolderActionsTests: XCTestCase {
         XCTAssertNotEqual(parent(try index.load(a.document.front.lyraID, hint: nil)), "Clients")
     }
 
+    func testAFolderLyraCantLookInsideIsNotTrashed() throws {
+        let folder = meetings.appendingPathComponent("Clients")
+        // Write and search but no read: the marker is still found, but the folder can't be listed.
+        try FileManager.default.setAttributes([.posixPermissions: 0o300], ofItemAtPath: folder.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path) }
+        let problems = try FolderActions.remove("Clients", index: index, trash: fakeTrash)
+        XCTAssertTrue(trashed.isEmpty)
+        XCTAssertEqual(problems.count, 1)
+        XCTAssertTrue(problems.first?.contains("“Clients”") == true, "\(problems)")
+        XCTAssertTrue(problems.first?.contains("couldn't look inside") == true, "\(problems)")
+    }
+
     func testRemovingAMissingFolderIsRefused() {
         XCTAssertThrowsError(try FolderActions.remove("Nope", index: index, trash: fakeTrash)) {
             XCTAssertEqual($0 as? MeetingFoldersError, .missingFolder("Nope"))

@@ -2,7 +2,7 @@ import Foundation
 
 /// The eight muted colours a sidebar folder can have, in the order new folders take them.
 public enum FolderColour: String, Codable, CaseIterable, Sendable {
-    case grey, red, orange, yellow, green, teal, blue, purple
+    case blue, green, orange, purple, teal, red, yellow, grey
 }
 
 /// One of Aidan's sidebar folders: a directory under `Meetings/` that holds Lyra's marker file.

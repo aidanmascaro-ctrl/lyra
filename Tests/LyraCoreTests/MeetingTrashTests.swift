@@ -138,6 +138,15 @@ final class MeetingTrashTests: XCTestCase {
         XCTAssertTrue(exists(mine))
     }
 
+    func testAFolderWithTheMarkerIsNeverTrashedAsAnEmptySeries() throws {
+        let a = try make("Workshop 1", series: "Clients")
+        let folder = meetings.appendingPathComponent("Clients")
+        try Data("{\"colour\":\"blue\"}".utf8).write(to: folder.appendingPathComponent(MeetingFolders.markerName))
+        _ = MeetingTrash.trash(id: a.id, folder: a.folder, index: index, trash: fakeTrash)
+        XCTAssertTrue(exists(folder))
+        XCTAssertFalse(trashed.contains { $0.lastPathComponent == "Clients" })
+    }
+
     func testHandWrittenNoteWithTheSeriesNameIsNeverTrashed() throws {
         let a = try make("Workshop 1", series: "Elm Park")
         let handWritten = meetings.appendingPathComponent("Elm Park/Elm Park.md")

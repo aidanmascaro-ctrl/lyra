@@ -60,7 +60,12 @@ public enum FolderActions {
     /// Checked and trashed under the write lock, so nothing can be filed into the folder in between.
     private static func trashIfEmpty(_ folder: URL, name: String, trash: (URL) throws -> Void) -> [String] {
         NoteIndex.withWriteLock {
-            let contents = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+            let contents: [String]
+            do { contents = try FileManager.default.contentsOfDirectory(atPath: folder.path) } catch {
+                // Never taken for empty: what Lyra can't see might be Aidan's.
+                return ["Lyra moved the meetings out of “\(name)” but couldn't look inside the folder to check it was empty, "
+                        + "so it left the folder where it is: \(error.localizedDescription)"]
+            }
             let left = contents.filter { !ignorable.contains($0) }.sorted()
             guard left.isEmpty else {
                 return ["Lyra moved the meetings out of “\(name)” but left the folder where it is, because it still holds: "

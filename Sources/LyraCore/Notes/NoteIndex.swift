@@ -166,47 +166,61 @@ public struct NoteIndex: Sendable {
         return Relocation(note: try read(target), skippedLinkFiles: skipped)
     }
 
-    /// Renames the folder, updates `series:` in the notes inside, and renames the series page and its links.
+    /// Renames the series: its folder (when there is one), `series:` in every Lyra note of the series wherever it is
+    /// filed (sidebar folders included), and the series page and its links. A series whose meetings are all filed in
+    /// sidebar folders has no folder of its own; then only the notes and links change.
     /// Returns files it could not update (a note changed by hand meanwhile, an unreadable file); the rename itself still happened.
     @discardableResult
     public func renameSeriesFolder(from: String, to: String) throws -> [URL] {
         try Self.withWriteLock { try renameSeriesFolderLocked(from: from, to: to) }
     }
 
+    /// The caller holds the write lock.
     private func renameSeriesFolderLocked(from: String, to: String) throws -> [URL] {
         let fm = FileManager.default
         let oldName = Self.folderName(from), newName = Self.folderName(to)
         let source = notesRoot.appendingPathComponent(oldName, isDirectory: true)
         let destination = notesRoot.appendingPathComponent(newName, isDirectory: true)
-        guard fm.fileExists(atPath: source.path) else { throw NoteIndexError.seriesFolderMissing(from) }
+        guard !oldName.isEmpty else { throw NoteIndexError.seriesFolderMissing(from) }
         guard !newName.isEmpty else { throw NoteIndexError.seriesFolderMissing(to) }
+        // A sidebar folder is never a series folder, so it never moves with a series.
+        let hasFolder = fm.fileExists(atPath: source.path) && !MeetingFolders.hasMarker(source)
+        guard hasFolder || !members(ofSeriesFolder: oldName).isEmpty else { throw NoteIndexError.seriesFolderMissing(from) }
 
         if !Self.samePath(source, destination) {
             if fm.fileExists(atPath: destination.path) { throw NoteIndexError.seriesFolderExists(to) }
-            try fm.moveItem(at: source, to: destination)
-        } else if source.lastPathComponent != destination.lastPathComponent {
+            if hasFolder { try fm.moveItem(at: source, to: destination) }
+        } else if hasFolder, source.lastPathComponent != destination.lastPathComponent {
             // Case-only rename on a case-insensitive disk: go through a temporary name.
             let temp = notesRoot.appendingPathComponent(".lyra-rename-\(UUID().uuidString)", isDirectory: true)
             try fm.moveItem(at: source, to: temp)
             try fm.moveItem(at: temp, to: destination)
         }
 
+        // Read again after the folder moved, so each note is saved at the path it now has.
         var skipped: [URL] = []
-        for url in markdownFiles(under: destination) {
-            guard Self.frontmatterID(of: url) != nil, let loaded = try? read(url),
-                  let series = loaded.document.front.series, Self.folderName(series) == oldName else { continue }
+        for loaded in members(ofSeriesFolder: oldName) {
             var edited = loaded.document
             edited.front.series = to
-            do { _ = try saveLocked(edited, over: loaded) } catch { skipped.append(url) }
+            do { _ = try saveLocked(edited, over: loaded) } catch { skipped.append(loaded.url) }
         }
 
         let oldPage = destination.appendingPathComponent(oldName + ".md")
         let newPage = destination.appendingPathComponent(newName + ".md")
-        if oldName != newName, fm.fileExists(atPath: oldPage.path), !fm.fileExists(atPath: newPage.path) {
+        if hasFolder, oldName != newName, fm.fileExists(atPath: oldPage.path), !fm.fileExists(atPath: newPage.path) {
             try fm.moveItem(at: oldPage, to: newPage)
         }
         if oldName != newName { skipped += rewriteLinks(from: oldName, to: newName) }
         return skipped
+    }
+
+    /// Every Lyra note under `notesRoot` whose `series:` names the series with this folder name, wherever it is filed.
+    private func members(ofSeriesFolder name: String) -> [LoadedNote] {
+        markdownFiles(under: notesRoot).compactMap { url in
+            guard Self.frontmatterID(of: url) != nil, let loaded = try? read(url),
+                  let series = loaded.document.front.series, Self.folderName(series) == name else { return nil }
+            return loaded
+        }
     }
 
     // MARK: Links

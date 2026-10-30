@@ -128,4 +128,60 @@ final class SeriesActionsTests: XCTestCase {
         XCTAssertEqual(moved.url.deletingLastPathComponent().lastPathComponent, "Clients")
         XCTAssertEqual(moved.document.myNotes, "- mine")
     }
+
+    // MARK: Renaming a series with members filed in sidebar folders
+
+    func testRenameSeriesUpdatesMembersFiledInFolders() throws {
+        _ = try note("Workshop 1", series: "Elm Park")
+        let away = try filed("Workshop 2", series: "Elm Park")
+        try SeriesLibrary.writeSeriesPage(name: "Elm Park", index: index)
+        XCTAssertEqual(try SeriesActions.rename("Elm Park", to: "AI Boost", index: index), [])
+        let moved = try index.load(away.document.front.lyraID, hint: nil)
+        XCTAssertEqual(moved.document.front.series, "AI Boost")
+        XCTAssertEqual(moved.url.deletingLastPathComponent().lastPathComponent, "Clients")
+        XCTAssertEqual(moved.document.myNotes, "- mine")
+        XCTAssertEqual(Set(index.allNotes().map { $0.document.front.series }), ["AI Boost"])
+        XCTAssertTrue(try page("AI Boost").contains("|Workshop 2]]"))
+    }
+
+    func testRenameSeriesWhoseMembersAreAllFiledHasNoFolderToMove() throws {
+        let away = try filed("Workshop 1", series: "Elm Park")
+        // Filing left the series folder empty; Aidan tidied it away in Obsidian (test temp dir only).
+        try FileManager.default.removeItem(at: meetings.appendingPathComponent("Elm Park"))
+        XCTAssertEqual(try SeriesActions.rename("Elm Park", to: "AI Boost", index: index), [])
+        let moved = try index.load(away.document.front.lyraID, hint: nil)
+        XCTAssertEqual(moved.document.front.series, "AI Boost")
+        XCTAssertEqual(moved.url.deletingLastPathComponent().lastPathComponent, "Clients")
+        XCTAssertTrue(try page("AI Boost").contains("|Workshop 1]]"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: meetings.appendingPathComponent("Elm Park").path))
+    }
+
+    func testRenameSeriesWithNoFolderAndNoMembersIsRefused() {
+        XCTAssertThrowsError(try SeriesActions.rename("Nope", to: "Other", index: index)) {
+            XCTAssertEqual($0 as? NoteIndexError, .seriesFolderMissing("Nope"))
+        }
+    }
+
+    // MARK: A series can't share a name with a sidebar folder
+
+    func testMovingIntoASeriesNamedLikeAFolderIsRefused() throws {
+        _ = try MeetingFolders(index: index).create("Clients")
+        let loaded = try note("Workshop 1")
+        XCTAssertThrowsError(try SeriesActions.move(loaded, to: "Clients", index: index)) {
+            XCTAssertEqual($0 as? MeetingFoldersError, .nameTaken("Clients"))
+        }
+        let after = try index.load(loaded.document.front.lyraID, hint: nil)
+        XCTAssertNil(after.document.front.series)
+        XCTAssertEqual(after.url.lastPathComponent, loaded.url.lastPathComponent)
+        XCTAssertEqual(after.url.deletingLastPathComponent().lastPathComponent, "Meetings")
+    }
+
+    func testRenamingASeriesToAFolderNameIsRefused() throws {
+        _ = try MeetingFolders(index: index).create("Clients")
+        _ = try note("Workshop 1", series: "Elm Park")
+        XCTAssertThrowsError(try SeriesActions.rename("Elm Park", to: "clients", index: index)) {
+            XCTAssertEqual($0 as? MeetingFoldersError, .nameTaken("clients"))
+        }
+        XCTAssertEqual(index.allNotes().first?.document.front.series, "Elm Park")
+    }
 }
