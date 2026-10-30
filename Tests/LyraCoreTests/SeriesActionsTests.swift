@@ -99,4 +99,33 @@ final class SeriesActionsTests: XCTestCase {
         try SeriesActions.reject(meetingFolder: folder)
         XCTAssertEqual(try Meeting.load(from: folder).seriesRejected, true)
     }
+    // MARK: Notes filed in a sidebar folder
+
+    private func filed(_ title: String, series: String? = nil) throws -> LoadedNote {
+        _ = try? MeetingFolders(index: index).create("Clients")
+        let loaded = try note(title, series: series)
+        let url = meetings.appendingPathComponent("Clients/" + loaded.url.lastPathComponent)
+        try FileManager.default.moveItem(at: loaded.url, to: url)
+        return try index.load(loaded.document.front.lyraID, hint: url)
+    }
+
+    func testRetitleKeepsAFiledNoteInItsFolder() throws {
+        let outcome = try SeriesActions.retitle(try filed("Workshop 1", series: "Elm Park"), to: "Discovery", index: index)
+        XCTAssertEqual(outcome.note.url.lastPathComponent, prefix + "Discovery.md")
+        XCTAssertEqual(outcome.note.url.deletingLastPathComponent().lastPathComponent, "Clients")
+        XCTAssertTrue(try page("Elm Park").contains("|Discovery]]"))
+    }
+
+    func testAddingAFiledNoteToASeriesKeepsItFiled() throws {
+        let outcome = try SeriesActions.move(try filed("Workshop 1"), to: "Elm Park", index: index)
+        XCTAssertEqual(outcome.note.document.front.series, "Elm Park")
+        XCTAssertEqual(outcome.note.url.deletingLastPathComponent().lastPathComponent, "Clients")
+        XCTAssertTrue(try page("Elm Park").contains("[[\(prefix)Workshop 1|Workshop 1]]"))
+    }
+
+    func testRelocateKeepsAFiledNoteInItsFolder() throws {
+        let moved = try index.relocate(try filed("Workshop 1"), title: "Workshop 1", series: "Other")
+        XCTAssertEqual(moved.url.deletingLastPathComponent().lastPathComponent, "Clients")
+        XCTAssertEqual(moved.document.myNotes, "- mine")
+    }
 }

@@ -115,7 +115,7 @@ public struct NoteIndex: Sendable {
     }
 
     /// Runs `body` holding the lock every note write and move takes. `body` must be synchronous and must not call
-    /// anything that takes the lock again (`save`, `update`, `relocate…`, `renameSeriesFolder`): it isn't reentrant.
+    /// anything that takes the lock again (`save`, `update`, `relocate…`, `move`, `renameSeriesFolder`, `MeetingFolders`): it isn't reentrant.
     static func withWriteLock<T>(_ body: () throws -> T) rethrows -> T {
         try writeLock.withLock(body)
     }
@@ -131,11 +131,23 @@ public struct NoteIndex: Sendable {
         try Self.withWriteLock { try relocateLocked(loaded, title: title, series: series) }
     }
 
+    /// A note filed in a sidebar folder stays there whatever its title or series; otherwise it goes to its series folder.
     private func relocateLocked(_ loaded: LoadedNote, title: String, series: String?) throws -> Relocation {
-        let fm = FileManager.default
-        let folder = Self.seriesFolder(series, under: notesRoot)
-        let base = Self.noteBaseName(title: title, date: loaded.document.front.date)
+        let filed = MeetingFolders.folderName(of: loaded.url, under: notesRoot)
+        let folder = filed.map { notesRoot.appendingPathComponent($0, isDirectory: true) } ?? Self.seriesFolder(series, under: notesRoot)
+        return try moveLocked(loaded, into: folder, base: Self.noteBaseName(title: title, date: loaded.document.front.date))
+    }
 
+    /// Moves the note into `folder` keeping its file name (` (n)` added on a clash) and points `[[links]]` at it.
+    /// Used for sidebar folders: nothing in the note changes.
+    public func move(_ loaded: LoadedNote, into folder: URL) throws -> Relocation {
+        let base = loaded.url.deletingPathExtension().lastPathComponent
+        return try Self.withWriteLock { try moveLocked(loaded, into: folder, base: base) }
+    }
+
+    /// The caller holds the write lock.
+    private func moveLocked(_ loaded: LoadedNote, into folder: URL, base: String) throws -> Relocation {
+        let fm = FileManager.default
         var target = folder.appendingPathComponent(base + ".md")
         if Self.samePath(target, loaded.url) { return Relocation(note: loaded, skippedLinkFiles: []) }
         var n = 2
@@ -315,13 +327,13 @@ public struct NoteIndex: Sendable {
 
     private static func folderName(_ series: String) -> String { MeetingPaths.sanitise(series) }
 
-    private static func seriesFolder(_ series: String?, under root: URL) -> URL {
+    static func seriesFolder(_ series: String?, under root: URL) -> URL {
         guard let series, !folderName(series).isEmpty else { return root }
         return root.appendingPathComponent(folderName(series), isDirectory: true)
     }
 
     /// Case-insensitive, because the vault lives on a case-insensitive disk.
-    private static func samePath(_ a: URL, _ b: URL) -> Bool {
+    static func samePath(_ a: URL, _ b: URL) -> Bool {
         a.standardizedFileURL.path.lowercased() == b.standardizedFileURL.path.lowercased()
     }
 }

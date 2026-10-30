@@ -12,11 +12,14 @@ public struct MeetingSummary: Identifiable, Equatable, Sendable {
     /// The meeting's recordings folder, nil when Lyra has no record of the meeting.
     public var folder: URL?
     public var note: URL
+    /// The sidebar folder the note is filed in, nil when it isn't in one.
+    public var filedIn: String?
 
     public init(id: UUID, title: String, date: Date, series: String?, tags: [String], summary: String?,
-                suggestion: String?, folder: URL?, note: URL) {
+                suggestion: String?, folder: URL?, note: URL, filedIn: String? = nil) {
         self.id = id; self.title = title; self.date = date; self.series = series; self.tags = tags
         self.summary = summary; self.suggestion = suggestion; self.folder = folder; self.note = note
+        self.filedIn = filedIn
     }
 }
 
@@ -32,7 +35,8 @@ public enum SeriesLibrary {
     private static let tagLimit = 3
 
     /// One summary per note. A note sitting in `notesRoot/<X>/` belongs to series X even if its header says otherwise,
-    /// because moving a note into a series folder in Obsidian counts as joining that series.
+    /// because moving a note into a series folder in Obsidian counts as joining that series. A sidebar folder is never a
+    /// series: a note filed in one keeps the series in its header.
     public static func summaries(notes: [LoadedNote], meetingsByID: [UUID: (Meeting, URL)], notesRoot: URL) -> [MeetingSummary] {
         notes.map { note in
             let front = note.document.front
@@ -40,7 +44,8 @@ public enum SeriesLibrary {
             let series = folderSeries(of: note.url, under: notesRoot, frontmatter: front.series) ?? front.series
             let suggestion = series == nil && known?.0.seriesRejected != true ? known?.0.seriesSuggestion : nil
             return MeetingSummary(id: front.lyraID, title: front.title, date: front.date, series: series, tags: front.tags,
-                                  summary: front.summary, suggestion: suggestion, folder: known?.1, note: note.url)
+                                  summary: front.summary, suggestion: suggestion, folder: known?.1, note: note.url,
+                                  filedIn: MeetingFolders.folderName(of: note.url, under: notesRoot))
         }
     }
 
@@ -95,10 +100,11 @@ public enum SeriesLibrary {
 
     // MARK: Helpers
 
-    /// The series folder name when the note's parent is a direct child of `root` and isn't just the sanitised frontmatter series.
+    /// The series folder name when the note's parent is a direct child of `root`, isn't a sidebar folder, and isn't just the sanitised frontmatter series.
     private static func folderSeries(of note: URL, under root: URL, frontmatter: String?) -> String? {
         let parent = note.deletingLastPathComponent().resolvingSymlinksInPath()
-        guard parent.deletingLastPathComponent().path == root.resolvingSymlinksInPath().path else { return nil }
+        guard parent.deletingLastPathComponent().path == root.resolvingSymlinksInPath().path,
+              !MeetingFolders.hasMarker(parent) else { return nil }
         let folder = parent.lastPathComponent
         if let frontmatter, MeetingPaths.sanitise(frontmatter).caseInsensitiveCompare(folder) == .orderedSame { return nil }
         return folder
