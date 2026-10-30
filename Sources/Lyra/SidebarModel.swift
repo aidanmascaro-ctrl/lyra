@@ -25,6 +25,9 @@ final class SidebarModel: ObservableObject {
     private var onDisk: [MeetingSummary] = []
     /// Moves not finished yet, by note: kept over any refresh that lands meanwhile.
     private var pending: [UUID: String?] = [:]
+    /// The meeting being dragged, so a folder it is already in doesn't light up under it. Not published: it is set
+    /// as the drag starts, outside any view update.
+    private(set) var dragging: UUID?
 
     init(store: SidebarStore, defaults: UserDefaults = .standard) {
         self.store = store
@@ -67,6 +70,29 @@ final class SidebarModel: ObservableObject {
             report(result)
             await refresh().value
         }
+    }
+
+    // MARK: Drag and drop
+
+    /// What a meeting row hands to a drag, noting which meeting is on the move.
+    func dragPayload(for summary: MeetingSummary) -> MeetingDrag {
+        dragging = summary.id
+        return MeetingDrag(summary)
+    }
+
+    /// Whether the meeting being dragged can land in `folder` (nil: out of folders): not when it is already there.
+    func accepts(into folder: String?) -> Bool {
+        guard let dragging, let note = notes.first(where: { $0.id == dragging }) else { return true }
+        return note.filedIn != folder
+    }
+
+    /// Files the dropped meetings in `folder` (nil: out of folders). False when none of them moved.
+    @discardableResult
+    func drop(_ items: [MeetingDrag], into folder: String?) -> Bool {
+        dragging = nil
+        let moving = items.filter { item in notes.contains { $0.id == item.id && $0.filedIn != folder } }
+        for item in moving { move(noteID: item.id, to: folder) }
+        return !moving.isEmpty
     }
 
     // MARK: Folder actions

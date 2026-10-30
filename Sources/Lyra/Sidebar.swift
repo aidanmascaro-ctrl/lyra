@@ -11,15 +11,20 @@ struct Sidebar: View {
     @ObservedObject var model: SidebarModel
     @State private var editing: String?
     @State private var removing: String?
+    /// A filed meeting is over the Home row: dropping it there takes it out of its folder.
+    @State private var homeLit = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 1) {
-                SidebarRow(selected: app.route == .home, action: { app.route = .home }) {
+                SidebarRow(selected: app.route == .home, highlight: homeLit ? FolderColour.grey.color : nil,
+                           action: { app.route = .home }) {
                     Image(systemName: "house").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary).frame(width: 19)
                     Text("Home")
                     Spacer(minLength: 0)
                 }
+                .meetingDropTarget(into: nil, sidebar: model, lit: $homeLit)
+                .help("Home. Drop a meeting here to take it out of its folder.")
                 header.padding(.top, 18).padding(.bottom, 4)
                 if let notice = model.notice { Banner(text: notice) { Button("OK") { model.notice = nil } }.padding(.bottom, 6) }
                 if model.loaded && model.folders.isEmpty {
@@ -30,11 +35,13 @@ struct Sidebar: View {
                     folderRow(folder)
                     if model.expanded.contains(folder.name) {
                         ForEach(model.notes(in: folder.name)) { note in
-                            SidebarNoteRow(summary: note, selected: isOpen(note)) { open(note) }
+                            SidebarNoteRow(summary: note, selected: isOpen(note), sidebar: model) { open(note) }
+                                .transition(.opacity.combined(with: .move(edge: .top)))
                         }
                     }
                 }
             }
+            .animation(SidebarModel.spring, value: model.expanded)
             .padding(.horizontal, 10)
             .padding(.top, Chrome.topInset)
             .padding(.bottom, 20)
@@ -77,7 +84,8 @@ struct Sidebar: View {
             editing: editing == name,
             open: { app.route = .folder(name) },
             renamed: { rename(name, to: $0) },
-            menu: FolderMenu(rename: { editing = name }, colour: { model.setColour($0, of: name) }, remove: { removing = name }))
+            menu: FolderMenu(rename: { editing = name }, colour: { model.setColour($0, of: name) }, remove: { removing = name }),
+            sidebar: model)
     }
 
     // MARK: Actions

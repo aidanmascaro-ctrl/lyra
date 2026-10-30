@@ -31,6 +31,9 @@ struct MainWindow: View {
                 pages
             }
             .overlay(alignment: .leading) { if sidebar.visible && overlays { overlaySidebar } }
+            .overlay(alignment: .leading) {
+                if !sidebar.visible { SidebarEdgeTrigger(open: sidebar.toggle).padding(.top, Chrome.topInset) }
+            }
         }
         .animation(SidebarModel.spring, value: sidebar.visible)
         .overlay(alignment: .top) { TitleBarStrip().frame(height: Chrome.topInset).ignoresSafeArea() }
@@ -71,5 +74,28 @@ struct MainWindow: View {
     private func page(from shift: CGFloat) -> AnyTransition {
         .asymmetric(insertion: AnyTransition.opacity.combined(with: .offset(x: shift)).animation(Self.fadeIn),
                     removal: AnyTransition.opacity.animation(Self.fadeOut))
+    }
+}
+
+/// While the sidebar is hidden: a meeting dragged to the window's left edge and held there brings the sidebar out,
+/// so it can be dropped on a folder. A thin strip that takes no drop itself.
+private struct SidebarEdgeTrigger: View {
+    static let width: CGFloat = 10
+    static let holdFor = Duration.milliseconds(500)
+
+    let open: () -> Void
+    @State private var held = false
+
+    var body: some View {
+        Color.clear
+            .frame(width: Self.width)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .dropDestination(for: MeetingDrag.self) { _, _ in false } isTargeted: { held = $0 }
+            .task(id: held) {
+                guard held else { return }
+                try? await Task.sleep(for: Self.holdFor)
+                if !Task.isCancelled, held { open() }
+            }
     }
 }

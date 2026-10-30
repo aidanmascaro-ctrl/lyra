@@ -27,9 +27,26 @@ enum DebugLaunch {
     /// `LYRA_DEBUG_PEOPLE=1`: the people pill starts laid out, one pill per name.
     static var peopleOpen: Bool { env["LYRA_DEBUG_PEOPLE"] == "1" }
 
+    /// `LYRA_DEBUG_TARGET`: a sidebar folder drawn as if a meeting were being dragged over it.
+    static var dropTarget: String? { env["LYRA_DEBUG_TARGET"] }
+
+    /// `LYRA_DEBUG_SIDEBAR` (1: shown, 0: hidden), `LYRA_DEBUG_FOLDER` (that folder's page),
+    /// `LYRA_DEBUG_EXPAND` (that folder opened in the sidebar).
+    private static func applySidebar(to model: AppModel) {
+        let sidebar = model.sidebar
+        switch env["LYRA_DEBUG_SIDEBAR"] {
+        case "1" where !sidebar.visible: sidebar.toggle()
+        case "0" where sidebar.visible: sidebar.hide()
+        default: break
+        }
+        if let name = env["LYRA_DEBUG_FOLDER"] { model.route = .folder(name) }
+        if let name = env["LYRA_DEBUG_EXPAND"] { sidebar.expanded.insert(name) }
+    }
+
     /// `LYRA_DEBUG_OPEN`: a meeting folder to show. `LYRA_DEBUG_WIDTH` / `LYRA_DEBUG_HEIGHT`: the window's size;
     /// the width may be a comma-separated list, applied half a second apart, to try a series of resizes.
     static func apply(to model: AppModel) {
+        applySidebar(to: model)
         if let folder = env["LYRA_DEBUG_OPEN"] {
             let url = URL(fileURLWithPath: folder, isDirectory: true)
             model.route = .meeting(url)

@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 import LyraCore
 import XCTest
 @testable import Lyra
@@ -82,6 +83,56 @@ final class SidebarModelTests: XCTestCase {
         let model = SidebarModel(store: .stub(snapshot: Self.snapshot([old, new])) { _, _ in [] }, defaults: defaults)
         await model.refresh().value
         XCTAssertEqual(model.notes(in: "Clients").map(\.title), ["New", "Old"])
+    }
+
+    // MARK: Drag and drop
+
+    func testDraggedMeetingSurvivesTheTripIntact() throws {
+        let drag = MeetingDrag(id: UUID(), title: "Kickoff — “Acme”")
+        let data = try JSONEncoder().encode(drag)
+        XCTAssertEqual(try JSONDecoder().decode(MeetingDrag.self, from: data), drag)
+        XCTAssertEqual(UTType.lyraMeeting.identifier, "au.aidos.lyra.meeting")
+    }
+
+    func testFolderItIsAlreadyInDoesNotLightUp() async {
+        let filed = Self.summary("Kickoff", filedIn: "Clients")
+        let loose = Self.summary("Standup", filedIn: nil)
+        let model = SidebarModel(store: .stub(snapshot: Self.snapshot([filed, loose])) { _, _ in [] }, defaults: defaults)
+        await model.refresh().value
+
+        XCTAssertEqual(model.dragPayload(for: filed), MeetingDrag(filed))
+        XCTAssertFalse(model.accepts(into: "Clients"))
+        XCTAssertTrue(model.accepts(into: "Content"))
+        XCTAssertTrue(model.accepts(into: nil))
+
+        _ = model.dragPayload(for: loose)
+        XCTAssertFalse(model.accepts(into: nil), "Home doesn't light up for a meeting in no folder")
+        XCTAssertTrue(model.accepts(into: "Clients"))
+    }
+
+    func testDropOnItsOwnFolderDoesNothing() async {
+        let note = Self.summary("Kickoff", filedIn: "Clients")
+        let store = SidebarStore.stub(snapshot: Self.snapshot([note])) { _, _ in XCTFail("moved"); return [] }
+        let model = SidebarModel(store: store, defaults: defaults)
+        await model.refresh().value
+        _ = model.dragPayload(for: note)
+        XCTAssertFalse(model.drop([MeetingDrag(note)], into: "Clients"))
+        XCTAssertNil(model.dragging)
+        XCTAssertEqual(model.notes(in: "Clients").map(\.id), [note.id])
+    }
+
+    func testDropFilesItAtOnce() async {
+        let note = Self.summary("Kickoff", filedIn: nil)
+        let model = SidebarModel(store: .stub(snapshot: Self.snapshot([note])) { _, _ in [] }, defaults: defaults)
+        await model.refresh().value
+        XCTAssertTrue(model.drop([MeetingDrag(note)], into: "Content"))
+        XCTAssertEqual(model.notes(in: "Content").map(\.id), [note.id])
+    }
+
+    func testDropOfAnUnknownMeetingDoesNothing() async {
+        let model = SidebarModel(store: .stub(snapshot: Self.snapshot([])) { _, _ in XCTFail("moved"); return [] }, defaults: defaults)
+        await model.refresh().value
+        XCTAssertFalse(model.drop([MeetingDrag(id: UUID(), title: "Ghost")], into: "Clients"))
     }
 
     // MARK: Routes

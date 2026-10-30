@@ -9,12 +9,16 @@ struct FolderPage: View {
     @ObservedObject var app: AppModel
     @ObservedObject var sidebar: SidebarModel
     @State private var trashing: MeetingSummary?
+    /// A meeting from elsewhere is over the page: dropping it anywhere here files it in this folder.
+    @State private var dropLit = false
+
+    private var colour: FolderColour { sidebar.folder(named: name)?.colour ?? .grey }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 HStack(spacing: 12) {
-                    FolderGlyph(colour: sidebar.folder(named: name)?.colour ?? .grey, size: 22)
+                    FolderGlyph(colour: colour, open: dropLit, size: 22)
                     Text(name).font(Chrome.titleFont)
                 }
                 // The sidebar shows its own notices while it is open.
@@ -25,6 +29,8 @@ struct FolderPage: View {
             .padding(.top, Chrome.topInset)
             .padding(.bottom, 40)
         }
+        .background { if dropLit { DropHighlight(colour: colour.color, cornerRadius: 12).padding(8).transition(.opacity) } }
+        .meetingDropTarget(into: name, sidebar: sidebar, lit: $dropLit)
         .onAppear { sidebar.refresh() }
         .alert("Move “\(trashing?.title ?? "")” to the Trash?", isPresented: Binding(get: { trashing != nil }, set: { if !$0 { trashing = nil } })) {
             Button("Move to Trash", role: .destructive) { if let s = trashing { trash(s) } }
@@ -39,6 +45,8 @@ struct FolderPage: View {
                 ForEach(notes) { note in
                     FolderNoteRow(summary: note, open: { open(note) },
                                   unfile: { sidebar.move(noteID: note.id, to: nil) }, trash: { trashing = note })
+                        .meetingDraggable(note, sidebar: sidebar)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
             .padding(.horizontal, -8)

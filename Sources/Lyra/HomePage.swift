@@ -135,6 +135,7 @@ struct HomePage: View {
         .buttonStyle(RowButtonStyle())
         .help(s.folder == nil ? "Open in Obsidian" : "Open this meeting")
         .contextMenu { Button("Move to Trash", role: .destructive) { trashing = s } }
+        .meetingDraggable(s, sidebar: app.sidebar)
     }
 
     /// In this same window: Lyra has one window, and the back pill returns here.
