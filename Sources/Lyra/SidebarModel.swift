@@ -27,6 +27,8 @@ final class SidebarModel: ObservableObject {
     /// an older move of the same note finishing (or failing) never clears or undoes a newer one.
     private var pending: [UUID: PendingMove] = [:]
     private var moveTokens = 0
+    /// The last file move queued: moves run one after another, so two quick drags of a note land in the order made.
+    private var moveTail: Task<Void, Never>?
     /// Goes up with every refresh started: an older one landing late is dropped.
     private var refreshGeneration = 0
     /// The meeting being dragged, so a folder it is already in doesn't light up under it. Not published: it is set
@@ -73,8 +75,9 @@ final class SidebarModel: ObservableObject {
         let token = moveTokens
         pending[noteID] = PendingMove(token: token, folder: folder)
         withAnimation(Self.spring) { applyPending() }
-        let store = store
-        return Task {
+        let (store, previous) = (store, moveTail)
+        let task = Task {
+            await previous?.value
             let result = await Task.detached { Result { try store.move(onDiskSummary, folder) } }.value
             if pending[noteID]?.token == token {
                 pending[noteID] = nil
@@ -83,6 +86,8 @@ final class SidebarModel: ObservableObject {
             report(result)
             await refresh().value
         }
+        moveTail = task
+        return task
     }
 
     // MARK: Drag and drop
