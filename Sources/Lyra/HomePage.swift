@@ -40,6 +40,7 @@ struct HomePage: View {
         .onAppear { model.refresh() }
         .onChange(of: app.revision) { model.refresh() }
         .onChange(of: app.liveMeeting) { model.refresh() }
+        .onReceive(app.sidebar.$changes) { _ in model.refresh() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in model.refresh() }
         .alert("Move “\(trashing?.title ?? "")” to the Trash?", isPresented: Binding(get: { trashing != nil }, set: { if !$0 { trashing = nil } })) {
             Button("Move to Trash", role: .destructive) { if let s = trashing { model.trash(s) } }

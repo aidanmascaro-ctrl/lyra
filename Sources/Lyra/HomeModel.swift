@@ -65,10 +65,11 @@ final class HomeModel: ObservableObject {
             case .failure(let error): notice = error.localizedDescription
             }
             refresh()
+            app.sidebar.refresh()
         }
     }
 
-    private nonisolated static func summaries(notes: NoteIndex, recordingsRoot: URL) -> [MeetingSummary] {
+    nonisolated static func summaries(notes: NoteIndex, recordingsRoot: URL) -> [MeetingSummary] {
         let folders = (try? FileManager.default.contentsOfDirectory(at: recordingsRoot, includingPropertiesForKeys: nil)) ?? []
         var meetings: [UUID: (Meeting, URL)] = [:]
         for folder in folders {
