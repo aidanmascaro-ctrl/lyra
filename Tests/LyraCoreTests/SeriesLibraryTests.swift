@@ -157,4 +157,24 @@ final class SeriesLibraryTests: XCTestCase {
         let result = SeriesLibrary.summaries(notes: [note, lower], meetingsByID: [:], notesRoot: meetings)
         XCTAssertEqual(result.map(\.series), ["A/B", "a/b"])
     }
+    // MARK: Sidebar folders
+
+    func testNoteInASidebarFolderKeepsItsFrontmatterSeriesAndIsFiled() throws {
+        let clients = meetings.appendingPathComponent("Clients")
+        _ = try MeetingFolders(index: index).create("Clients")
+        let inSeries = loaded(title: "Workshop", day: 3, series: "Elm Park", in: clients)
+        let solo = loaded(title: "Solo", day: 4, in: clients)
+        let all = SeriesLibrary.summaries(notes: [inSeries, solo], meetingsByID: [:], notesRoot: meetings)
+        XCTAssertEqual(all.map(\.series), ["Elm Park", nil])
+        XCTAssertEqual(all.map(\.filedIn), ["Clients", "Clients"])
+    }
+
+    func testHandMadeFolderWithoutMarkerStillReadsAsSeries() throws {
+        let dir = meetings.appendingPathComponent("Weekly")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let note = loaded(title: "Chat", day: 3, in: dir)
+        let summary = SeriesLibrary.summaries(notes: [note], meetingsByID: [:], notesRoot: meetings).first
+        XCTAssertEqual(summary?.series, "Weekly")
+        XCTAssertNil(summary?.filedIn)
+    }
 }

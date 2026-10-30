@@ -13,5 +13,14 @@
     <key>LSMinimumSystemVersion</key><string>15.0</string>
     <key>NSMicrophoneUsageDescription</key><string>Lyra records your microphone during meetings you allow.</string>
     <key>NSAudioCaptureUsageDescription</key><string>Lyra records the meeting app's audio during meetings you allow.</string>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key><string>au.aidos.lyra.meeting</string>
+            <key>UTTypeDescription</key><string>Lyra meeting</string>
+            <key>UTTypeConformsTo</key>
+            <array><string>public.data</string></array>
+        </dict>
+    </array>
 </dict>
 </plist>

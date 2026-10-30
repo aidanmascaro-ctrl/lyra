@@ -17,7 +17,7 @@ enum Chrome {
     /// Room for the floating traffic lights above the first line.
     static let topInset: CGFloat = 44
 
-    private static func dynamic(dark: NSColor, light: NSColor) -> NSColor {
+    static func dynamic(dark: NSColor, light: NSColor) -> NSColor {
         NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light }
     }
 }

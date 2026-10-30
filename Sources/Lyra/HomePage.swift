@@ -6,6 +6,8 @@ import SwiftUI
 /// series suggestions to confirm, each series with its meetings, and every meeting newest first.
 struct HomePage: View {
     @ObservedObject var app: AppModel
+    /// For its notices: a meeting dragged from here may fail to move while the sidebar is hidden.
+    @ObservedObject private var sidebar: SidebarModel
     @StateObject private var model: HomeModel
     @State private var renaming: String?
     @State private var newName = ""
@@ -14,6 +16,7 @@ struct HomePage: View {
 
     init(app: AppModel) {
         self.app = app
+        sidebar = app.sidebar
         _model = StateObject(wrappedValue: HomeModel(app: app))
     }
 
@@ -24,6 +27,8 @@ struct HomePage: View {
                 newNote
                 UpcomingSection(app: app)
                 if let notice = model.notice { Banner(text: notice) { Button("OK") { model.notice = nil } } }
+                // The sidebar shows its own notices while it is open.
+                if !sidebar.visible, let notice = sidebar.notice { Banner(text: notice) { Button("OK") { sidebar.notice = nil } } }
                 ForEach(model.suggestions) { suggestionCard($0) }
                 if !model.groups.isEmpty { section("Series") { ForEach(model.groups, id: \.name) { seriesCard($0) } } }
                 if !model.recent.isEmpty {
@@ -40,6 +45,7 @@ struct HomePage: View {
         .onAppear { model.refresh() }
         .onChange(of: app.revision) { model.refresh() }
         .onChange(of: app.liveMeeting) { model.refresh() }
+        .onReceive(app.sidebar.$changes) { _ in model.refresh() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in model.refresh() }
         .alert("Move “\(trashing?.title ?? "")” to the Trash?", isPresented: Binding(get: { trashing != nil }, set: { if !$0 { trashing = nil } })) {
             Button("Move to Trash", role: .destructive) { if let s = trashing { model.trash(s) } }
@@ -134,6 +140,7 @@ struct HomePage: View {
         .buttonStyle(RowButtonStyle())
         .help(s.folder == nil ? "Open in Obsidian" : "Open this meeting")
         .contextMenu { Button("Move to Trash", role: .destructive) { trashing = s } }
+        .meetingDraggable(s, sidebar: app.sidebar)
     }
 
     /// In this same window: Lyra has one window, and the back pill returns here.

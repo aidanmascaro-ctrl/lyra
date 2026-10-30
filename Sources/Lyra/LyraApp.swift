@@ -29,7 +29,7 @@ struct LyraApp: App {
             .defaultSize(width: 820, height: 860)
             .defaultLaunchBehavior(.presented)
             .restorationBehavior(.disabled)
-            .commands { LyraCommands() }
+            .commands { LyraCommands(sidebar: delegate.model.sidebar) }
         Settings { SettingsPage(loginItem: delegate.loginItem) }
     }
 }
@@ -37,10 +37,16 @@ struct LyraApp: App {
 /// Lyra's menu in the menu bar while its window is open: voice setup lives in the app, not the menu-bar icon.
 private struct LyraCommands: Commands {
     @Environment(\.openWindow) private var openWindow
+    @ObservedObject var sidebar: SidebarModel
 
     var body: some Commands {
         CommandGroup(after: .appInfo) {
             Button("Teach Lyra my voice…") { openWindow(id: "enrol") }
+        }
+        // View › Show Sidebar / Hide Sidebar, ⌘\ — the same as the sidebar pill in the title bar.
+        CommandGroup(replacing: .sidebar) {
+            Button(sidebar.visible ? "Hide Sidebar" : "Show Sidebar", action: sidebar.toggle)
+                .keyboardShortcut("\\", modifiers: .command)
         }
     }
 }

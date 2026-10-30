@@ -42,6 +42,8 @@ final class AppModel: ObservableObject {
     let paths = MeetingPaths(recordingsRoot: AppModel.recordingsRoot, notesDir: AppModel.notesRoot)
     /// Notes are found by `lyra_id` anywhere under Meetings/; links are rewritten across the whole vault.
     let notes = NoteIndex(notesRoot: AppModel.notesRoot, vaultRoot: AppModel.notesRoot.deletingLastPathComponent())
+    /// The sidebar's folders and whether it shows.
+    lazy var sidebar = SidebarModel(store: .live(index: notes, recordingsRoot: paths.recordingsRoot))
     /// For Claude's in-window actions (Expand this, Ask, add an idea).
     let expander = Expander(claude: ClaudeCLI())
 
@@ -472,6 +474,8 @@ private extension Result where Failure == Error {
 enum Route: Equatable {
     case home
     case meeting(URL)
+    /// A sidebar folder's page, by name.
+    case folder(String)
 }
 
 /// The Slides switch for the call being recorded, and how many slides it has saved.

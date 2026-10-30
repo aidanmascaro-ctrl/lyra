@@ -64,7 +64,10 @@ public enum MeetingTrash {
         let page = folder.appendingPathComponent(name + ".md")
         // Only Lyra's own page: a note Aidan wrote that shares the name stays, and so does its folder.
         if let text = try? String(contentsOf: page, encoding: .utf8), SeriesLibrary.isSeriesPage(text) { try trash(page) }
-        let left = (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)) ?? []
-        if left.isEmpty, fm.fileExists(atPath: folder.path) { try trash(folder) }
+        // A sidebar folder is Aidan's, whatever series shares its name: it is never trashed here.
+        guard !MeetingFolders.hasMarker(folder) else { return }
+        // A folder Lyra can't look inside is never taken for empty.
+        guard let left = try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil, options: .skipsHiddenFiles) else { return }
+        if left.isEmpty { try trash(folder) }
     }
 }
