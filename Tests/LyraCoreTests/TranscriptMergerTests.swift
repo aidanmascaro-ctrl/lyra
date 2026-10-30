@@ -78,6 +78,22 @@ final class TranscriptMergerTests: XCTestCase {
         XCTAssertEqual(out.clusters.map(\.id), ["meeting:S1", "mic:S2"])
     }
 
+    /// cos 47.3° ≈ 0.68: the 2026-10-30 leak (a Meet call through the speakers), weaker than the 0.85 one. Still echo.
+    func testDropsWeakerLeakOfTheCall() {
+        let out = TranscriptMerger.dropVoiceEcho(lines: [raw("meeting:S1", 0), raw("mic:S1", 1), raw("mic:S2", 2)],
+                                                 clusters: [cl("meeting:S1", 0), cl("mic:S1", 87.8), cl("mic:S2", 47.3)],
+                                                 people: [], policy: .init())
+        XCTAssertEqual(out.lines.map(\.speakerID), ["meeting:S1", "mic:S1"])
+        XCTAssertEqual(out.clusters.map(\.id), ["meeting:S1", "mic:S1"])
+    }
+
+    /// cos 63.3° ≈ 0.45: just under the threshold. Kept, so the threshold is pinned from both sides.
+    func testKeepsMicClusterJustUnderTheEchoThreshold() {
+        let out = TranscriptMerger.dropVoiceEcho(lines: [raw("meeting:S1", 0), raw("mic:S1", 1)],
+                                                 clusters: [cl("meeting:S1", 0), cl("mic:S1", 63.3)], people: [], policy: .init())
+        XCTAssertEqual(out.clusters.map(\.id), ["meeting:S1", "mic:S1"])
+    }
+
     /// cos 72.5° ≈ 0.30: a different voice. Kept.
     func testKeepsMicClusterUnlikeTheCall() {
         let out = TranscriptMerger.dropVoiceEcho(lines: [raw("meeting:S1", 0), raw("mic:S1", 1)],
@@ -86,7 +102,7 @@ final class TranscriptMergerTests: XCTestCase {
         XCTAssertEqual(out.clusters.count, 2)
     }
 
-    /// Similarity is measured on unit vectors: a centroid that wasn't normalised must not cross 0.75 by its length.
+    /// Similarity is measured on unit vectors: a centroid that wasn't normalised must not cross the echo threshold by its length.
     func testVoiceEchoIgnoresCentroidLength() {
         let r = 72.5 * Double.pi / 180  // cos ≈ 0.30 once normalised; 3.0 as a raw dot product with these lengths
         let call = SpeakerCluster(id: "meeting:S1", track: .meeting, centroid: [10, 0], speechSeconds: 5)
