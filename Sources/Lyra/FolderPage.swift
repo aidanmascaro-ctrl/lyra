@@ -32,6 +32,9 @@ struct FolderPage: View {
         .background { if dropLit { DropHighlight(colour: colour.color, cornerRadius: 12).padding(8).transition(.opacity) } }
         .meetingDropTarget(into: name, sidebar: sidebar, lit: $dropLit)
         .onAppear { sidebar.refresh() }
+        // Its own hooks, as the sidebar's: it may be hidden.
+        .onChange(of: app.revision) { sidebar.refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in sidebar.refresh() }
         .alert("Move “\(trashing?.title ?? "")” to the Trash?", isPresented: Binding(get: { trashing != nil }, set: { if !$0 { trashing = nil } })) {
             Button("Move to Trash", role: .destructive) { if let s = trashing { trash(s) } }
             Button("Cancel", role: .cancel) {}

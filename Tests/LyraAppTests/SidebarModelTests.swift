@@ -85,6 +85,91 @@ final class SidebarModelTests: XCTestCase {
         XCTAssertEqual(model.notes(in: "Clients").map(\.title), ["New", "Old"])
     }
 
+    func testOlderMoveFailingDoesNotUndoANewerOne() async {
+        let note = Self.summary("Kickoff", filedIn: "Clients")
+        let gate = DispatchSemaphore(value: 0)
+        let store = SidebarStore.stub(snapshot: Self.snapshot([note])) { _, folder in
+            if folder == "Content" { throw StubError.failed }
+            gate.wait()  // The newer move is still running while the older one fails.
+            return []
+        }
+        let model = SidebarModel(store: store, defaults: defaults)
+        await model.refresh().value
+
+        let older = model.move(noteID: note.id, to: "Content")
+        let newer = model.move(noteID: note.id, to: nil)
+        await older.value
+        XCTAssertNil(model.notes.first?.filedIn, "the newer move still shows")
+        XCTAssertTrue(model.notes(in: "Clients").isEmpty)
+
+        gate.signal()
+        await newer.value
+    }
+
+    func testOlderMoveFinishingLeavesTheNewerOneShowing() async {
+        let note = Self.summary("Kickoff", filedIn: "Clients")
+        let gate = DispatchSemaphore(value: 0)
+        let store = SidebarStore.stub(snapshot: Self.snapshot([note])) { _, folder in
+            if folder == nil { gate.wait() }
+            return []
+        }
+        let model = SidebarModel(store: store, defaults: defaults)
+        await model.refresh().value
+
+        let older = model.move(noteID: note.id, to: "Content")
+        let newer = model.move(noteID: note.id, to: nil)
+        await older.value  // Its refresh reads the disk (still Clients) while the newer move runs.
+        XCTAssertNil(model.notes.first?.filedIn)
+
+        gate.signal()
+        await newer.value
+    }
+
+    // MARK: Refreshing
+
+    func testALateOlderRefreshIsDropped() async throws {
+        let old = Self.summary("Old", filedIn: "Clients")
+        let new = Self.summary("New", filedIn: "Content")
+        let calls = Box(0)
+        let gate = DispatchSemaphore(value: 0)
+        let store = SidebarStore.stub(load: {
+            calls.value += 1
+            if calls.value == 1 { gate.wait(); return Self.snapshot([old]) }
+            return Self.snapshot([new])
+        }) { _, _ in [] }
+        let model = SidebarModel(store: store, defaults: defaults)
+
+        let first = model.refresh()
+        while calls.value < 1 { try await Task.sleep(for: .milliseconds(5)) }
+        await model.refresh().value
+        XCTAssertEqual(model.notes.map(\.id), [new.id])
+
+        gate.signal()
+        await first.value
+        XCTAssertEqual(model.notes.map(\.id), [new.id], "the older read landed last but was dropped")
+    }
+
+    // MARK: Renaming
+
+    func testRenameShowsTheNewNameBeforeTheVaultIsReRead() async {
+        let note = Self.summary("Kickoff", filedIn: "Clients")
+        var store = SidebarStore.stub(snapshot: Self.snapshot([note])) { _, _ in [] }
+        store.rename = { _, _ in }
+        let model = SidebarModel(store: store, defaults: defaults)
+        await model.refresh().value
+        model.expanded.insert("Clients")
+
+        var seen: [String] = []
+        let worked = await model.rename("Clients", to: "Customers") { newName in
+            seen.append(newName)
+            XCTAssertNotNil(model.folder(named: newName))
+            XCTAssertEqual(model.notes(in: newName).map(\.id), [note.id])
+            XCTAssertTrue(model.expanded.contains(newName))
+        }
+        XCTAssertTrue(worked)
+        XCTAssertEqual(seen, ["Customers"])
+    }
+
     // MARK: Drag and drop
 
     func testDraggedMeetingSurvivesTheTripIntact() throws {

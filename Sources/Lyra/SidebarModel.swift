@@ -23,8 +23,12 @@ final class SidebarModel: ObservableObject {
     private let store: SidebarStore
     private let defaults: UserDefaults
     private var onDisk: [MeetingSummary] = []
-    /// Moves not finished yet, by note: kept over any refresh that lands meanwhile.
-    private var pending: [UUID: String?] = [:]
+    /// Moves not finished yet, by note: kept over any refresh that lands meanwhile. Each carries its own token, so
+    /// an older move of the same note finishing (or failing) never clears or undoes a newer one.
+    private var pending: [UUID: PendingMove] = [:]
+    private var moveTokens = 0
+    /// Goes up with every refresh started: an older one landing late is dropped.
+    private var refreshGeneration = 0
     /// The meeting being dragged, so a folder it is already in doesn't light up under it. Not published: it is set
     /// as the drag starts, outside any view update.
     private(set) var dragging: UUID?
@@ -47,8 +51,11 @@ final class SidebarModel: ObservableObject {
     @discardableResult
     func refresh() -> Task<Void, Never> {
         let store = store
+        refreshGeneration += 1
+        let generation = refreshGeneration
         return Task {
             let snapshot = await Task.detached { store.load() }.value
+            guard generation == refreshGeneration else { return }
             folders = snapshot.folders
             onDisk = snapshot.notes
             applyPending()
@@ -60,13 +67,19 @@ final class SidebarModel: ObservableObject {
     @discardableResult
     func move(noteID: UUID, to folder: String?) -> Task<Void, Never> {
         guard let summary = notes.first(where: { $0.id == noteID }), summary.filedIn != folder else { return Task {} }
-        pending[noteID] = .some(folder)
+        // What is on disk, not the optimistic view: a failure falls back to it.
+        let onDiskSummary = onDisk.first { $0.id == noteID } ?? summary
+        moveTokens += 1
+        let token = moveTokens
+        pending[noteID] = PendingMove(token: token, folder: folder)
         withAnimation(Self.spring) { applyPending() }
         let store = store
         return Task {
-            let result = await Task.detached { Result { try store.move(summary, folder) } }.value
-            pending[noteID] = nil
-            if case .failure = result { withAnimation(Self.spring) { applyPending() } }
+            let result = await Task.detached { Result { try store.move(onDiskSummary, folder) } }.value
+            if pending[noteID]?.token == token {
+                pending[noteID] = nil
+                if case .failure = result { withAnimation(Self.spring) { applyPending() } }
+            }
             report(result)
             await refresh().value
         }
@@ -106,10 +119,12 @@ final class SidebarModel: ObservableObject {
         return try? result.get().name
     }
 
-    func rename(_ name: String, to newName: String) async -> Bool {
+    /// Renames the folder; once it has worked, it shows under its new name at once and `followed` runs (so the
+    /// open page can follow it) before the vault is re-read.
+    func rename(_ name: String, to newName: String, followed: (String) -> Void = { _ in }) async -> Bool {
         let store = store
         let result = await Task.detached { Result { try store.rename(name, newName) } }.value
-        if case .success = result, expanded.remove(name) != nil { expanded.insert(newName) }
+        if case .success = result { showRenamed(name, to: newName); followed(newName) }
         report(result.map { [] })
         await refresh().value
         return (try? result.get()) != nil
@@ -152,12 +167,31 @@ final class SidebarModel: ObservableObject {
 
     private func applyPending() {
         notes = onDisk.map { note in
-            guard let folder = pending[note.id] else { return note }
+            guard let move = pending[note.id] else { return note }
             var moved = note
-            moved.filedIn = folder
+            moved.filedIn = move.folder
             return moved
         }
     }
+
+    private func showRenamed(_ name: String, to newName: String) {
+        if expanded.remove(name) != nil { expanded.insert(newName) }
+        folders = folders.map { $0.name == name ? SidebarFolder(name: newName, colour: $0.colour) : $0 }
+        onDisk = onDisk.map { note in
+            guard note.filedIn == name else { return note }
+            var renamed = note
+            renamed.filedIn = newName
+            return renamed
+        }
+        pending = pending.mapValues { $0.folder == name ? PendingMove(token: $0.token, folder: newName) : $0 }
+        applyPending()
+    }
+}
+
+/// A move shown before its file has moved.
+private struct PendingMove {
+    let token: Int
+    let folder: String?
 }
 
 extension Route {

@@ -6,6 +6,8 @@ import SwiftUI
 /// series suggestions to confirm, each series with its meetings, and every meeting newest first.
 struct HomePage: View {
     @ObservedObject var app: AppModel
+    /// For its notices: a meeting dragged from here may fail to move while the sidebar is hidden.
+    @ObservedObject private var sidebar: SidebarModel
     @StateObject private var model: HomeModel
     @State private var renaming: String?
     @State private var newName = ""
@@ -14,6 +16,7 @@ struct HomePage: View {
 
     init(app: AppModel) {
         self.app = app
+        sidebar = app.sidebar
         _model = StateObject(wrappedValue: HomeModel(app: app))
     }
 
@@ -24,6 +27,8 @@ struct HomePage: View {
                 newNote
                 UpcomingSection(app: app)
                 if let notice = model.notice { Banner(text: notice) { Button("OK") { model.notice = nil } } }
+                // The sidebar shows its own notices while it is open.
+                if !sidebar.visible, let notice = sidebar.notice { Banner(text: notice) { Button("OK") { sidebar.notice = nil } } }
                 ForEach(model.suggestions) { suggestionCard($0) }
                 if !model.groups.isEmpty { section("Series") { ForEach(model.groups, id: \.name) { seriesCard($0) } } }
                 if !model.recent.isEmpty {

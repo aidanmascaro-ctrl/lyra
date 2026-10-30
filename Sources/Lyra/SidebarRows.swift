@@ -121,6 +121,7 @@ private struct FolderNameField: View {
     let name: String
     let done: (String?) -> Void
     @State private var draft = ""
+    @State private var finished = false
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -129,6 +130,7 @@ private struct FolderNameField: View {
             .focused($focused)
             .onSubmit { finish(draft) }
             .onExitCommand { finish(nil) }
+            .onChange(of: focused) { _, isFocused in if !isFocused { finish(draft) } }  // Clicked away: saves.
             .onAppear {
                 draft = name
                 DispatchQueue.main.async { focused = true }
@@ -136,6 +138,8 @@ private struct FolderNameField: View {
     }
 
     private func finish(_ value: String?) {
+        guard !finished else { return }
+        finished = true
         let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         done(trimmed.isEmpty || trimmed == name ? nil : trimmed)
     }

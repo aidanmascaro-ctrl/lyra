@@ -46,6 +46,7 @@ struct Sidebar: View {
             .padding(.top, Chrome.topInset)
             .padding(.bottom, 20)
         }
+        .scrollIndicators(.hidden)
         .frame(width: Self.width)
         .background(Chrome.page.ignoresSafeArea())
         .overlay(alignment: .trailing) { Rectangle().fill(Chrome.capsuleStroke).frame(width: 1).ignoresSafeArea() }
@@ -99,7 +100,7 @@ struct Sidebar: View {
     private func rename(_ name: String, to newName: String?) {
         guard let newName else { editing = nil; return }
         Task {
-            if await model.rename(name, to: newName) { app.route = app.route.renamingFolder(name, to: newName) }
+            _ = await model.rename(name, to: newName) { app.route = app.route.renamingFolder(name, to: $0) }
             editing = nil
         }
     }
