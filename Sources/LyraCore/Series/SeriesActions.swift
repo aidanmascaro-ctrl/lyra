@@ -53,13 +53,13 @@ public enum SeriesActions {
         SeriesLibrary.summaries(notes: [note], meetingsByID: [:], notesRoot: index.notesRoot).first?.series
     }
 
-    private static func writePage(_ name: String, index: NoteIndex) -> [String] {
+    static func writePage(_ name: String, index: NoteIndex) -> [String] {
         do { try SeriesLibrary.writeSeriesPage(name: name, index: index); return [] } catch {
             return [error.localizedDescription]
         }
     }
 
-    private static func linkProblems(_ skipped: [URL]) -> [String] {
+    static func linkProblems(_ skipped: [URL]) -> [String] {
         skipped.isEmpty ? [] : ["Lyra moved the note but couldn't update links to it in: " + skipped.map(\.lastPathComponent).joined(separator: ", ")]
     }
 }
