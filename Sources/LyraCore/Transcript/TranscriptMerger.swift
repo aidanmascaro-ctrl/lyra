@@ -38,7 +38,9 @@ public enum TranscriptMerger {
     /// A mic cluster this close (cosine) to any call cluster is the call leaking into the mic.
     /// Measured 2026-10-27 (docs/notes/phase2-findings.md): a speaker leak scored 0.852 against the call's
     /// voice; different voices scored at most 0.243; the same voice across meetings 0.858-0.866.
-    public static let voiceEchoSimilarity = 0.75
+    /// 2026-10-30: a Meet call leaking through the speakers scored only 0.678 and got through at 0.75, showing up
+    /// as a third speaker. 0.5 sits between that leak and the highest different-voice score (0.245).
+    public static let voiceEchoSimilarity = 0.5
 
     /// Second echo pass, by voice instead of words: catches leaked call audio the text filter missed because
     /// the mic heard it differently. Drops the leaking mic cluster and all its lines. Only a mic cluster that

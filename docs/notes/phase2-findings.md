@@ -62,3 +62,21 @@ pure calls (nothing written beside the recording):
 | After naming | — | 4 lines, all "Aidan" |
 
 The final transcript's mic track carries one label only: "Aidan".
+
+### Fix round 3 — a weaker leak got through (2026-10-30)
+
+A 29-minute Google Meet call (Aidan + one client, speakers not headphones) came out with three speakers.
+The mic track split into Aidan and the client's voice leaking through the speakers. The text echo filter
+dropped all but one of the leak's lines, but the leak scored only **0.678** against the call's cluster, under
+the 0.75 voice-echo threshold, so it kept its cluster and its one line ("Speaker 1").
+
+| Mic cluster | Speech | vs call cluster | vs Aidan (1 sample) |
+| --- | --- | --- | --- |
+| mic:S1 (Aidan) | 556 s | 0.038 | 0.544 |
+| mic:S2 (the leak) | 832 s | **0.678** | -0.017 |
+
+`voiceEchoSimilarity` is now **0.5**: below this leak, and well above the highest different-voice score
+seen (0.245, today's call voice vs an enrolled stranger). Leaks vary with volume and room, so 0.85 was not typical.
+
+Aidan's own cluster scored 0.544 against his single enrolled sample, under the 0.60 naming floor, so he showed
+as "Speaker 2". Renaming him in that meeting adds a sample; no threshold change for naming.
