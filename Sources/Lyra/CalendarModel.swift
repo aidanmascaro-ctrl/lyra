@@ -21,11 +21,7 @@ final class CalendarModel: ObservableObject {
     /// The "paste your Microsoft app ID" alert.
     @Published var askingForMicrosoftID = false
 
-    /// `LYRA_CALENDARS_FILE` points Lyra at a scratch calendar list, like `LYRA_PEOPLE_FILE` for voices.
-    private let service = CalendarService(
-        store: CalendarStore(fileURL: ProcessInfo.processInfo.environment["LYRA_CALENDARS_FILE"]
-            .map { URL(fileURLWithPath: $0) } ?? CalendarStore.defaultURL),
-        builtIn: CalendarModel.builtInApps())
+    private let service = CalendarService(store: CalendarModel.store(), builtIn: CalendarModel.builtInApps())
     private var eventsByAccount: [String: [CalendarEvent]] = [:]
     private var fetchedAt: Date?
     private var fetching = false
@@ -39,6 +35,7 @@ final class CalendarModel: ObservableObject {
         if loadDebugEvents() { return }
         #endif
         Task {
+            await migrateTokens()
             await reloadAccounts()
             ready = accounts.isEmpty
             refresh()
@@ -145,6 +142,26 @@ final class CalendarModel: ObservableObject {
         refresh()
     }
 
+    /// `LYRA_CALENDARS_FILE` points Lyra at a scratch calendar list, like `LYRA_PEOPLE_FILE` for voices, with its own
+    /// Keychain entries so the real ones are never touched.
+    private static func store() -> CalendarStore {
+        let scratch = ProcessInfo.processInfo.environment["LYRA_CALENDARS_FILE"]
+        return CalendarStore(
+            fileURL: scratch.map { URL(fileURLWithPath: $0) } ?? CalendarStore.defaultURL,
+            secrets: KeychainSecretStore(service: KeychainSecretStore.calendarService + (scratch == nil ? "" : ".scratch")))
+    }
+
+    /// Calendars keep working on the tokens still in the file when this fails; the next launch tries again.
+    private func migrateTokens() async {
+        do {
+            if try await service.migrateTokens() > 0 {
+                notice = "Couldn't move every calendar sign-in to the Keychain yet. Lyra will try again next time it opens."
+            }
+        } catch {
+            notice = ErrorBrief.sentence("Couldn't move calendar sign-ins to the Keychain", error)
+        }
+    }
+
     /// `CalendarApps.json` in the app bundle; none (a build without it) means connecting asks for app details.
     private static func builtInApps() -> [String: OAuthClient] {
         guard let url = Bundle.main.url(forResource: "CalendarApps", withExtension: "json") else { return [:] }
@@ -185,15 +202,14 @@ final class CalendarModel: ObservableObject {
         let google = env["LYRA_DEBUG_CALENDAR"].flatMap { try? Data(contentsOf: URL(fileURLWithPath: $0)) }
         let outlook = env["LYRA_DEBUG_OUTLOOK"].flatMap { try? Data(contentsOf: URL(fileURLWithPath: $0)) }
         guard google != nil || outlook != nil else { return false }
-        let placeholder = OAuthTokens(accessToken: "", refreshToken: "", expiresAt: .distantFuture)
         let client = OAuthClient(clientID: "debug")
         if let google {
-            let account = CalendarAccount(provider: .google, email: "aidan@example.com", client: client, tokens: placeholder)
+            let account = CalendarAccount(provider: .google, email: "aidan@example.com", client: client)
             accounts.append(account)
             eventsByAccount[account.id] = (try? GoogleEvents.parse(google))?.map { $0.inAccount(account.id) }
         }
         if let outlook {
-            let account = CalendarAccount(provider: .microsoft, email: "aidan@work.example", client: client, tokens: placeholder)
+            let account = CalendarAccount(provider: .microsoft, email: "aidan@work.example", client: client)
             accounts.append(account)
             eventsByAccount[account.id] = (try? MicrosoftEvents.parse(outlook, selfEmail: account.email).events)?.map { $0.inAccount(account.id) }
         }

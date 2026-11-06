@@ -25,7 +25,7 @@ public struct CalendarProblem: Equatable, Sendable {
 }
 
 /// Talks to Google and Microsoft: finishes sign-ins, keeps each account's access token fresh, and reads the coming
-/// week of each account's main calendar. Owns the settings file, so token saves never race. The network is
+/// week of each account's main calendar. Owns the settings file and tokens, so token saves never race. The network is
 /// injected so tests run without it.
 public actor CalendarService {
     public typealias Send = @Sendable (URLRequest) async throws -> (Data, URLResponse)
@@ -55,14 +55,22 @@ public actor CalendarService {
         try store.load().client(for: provider) ?? builtIn[provider.rawValue]
     }
 
-    public func removeAccount(_ id: String) throws { try store.save(try store.load().removing(accountID: id)) }
+    /// Tokens first: if they can't be removed the account stays listed, rather than leaving them behind unseen.
+    public func removeAccount(_ id: String) throws {
+        try store.deleteTokens(for: id)
+        try store.save(try store.load().removing(accountID: id))
+    }
+
+    /// Moves tokens from an older version's file into the Keychain. Answers how many accounts have to wait for next launch.
+    public func migrateTokens() throws -> Int { try store.migrateLegacyTokens() }
 
     /// Trades the browser's code for tokens and saves the account (replacing an earlier sign-in to it). The app
     /// details become the ones for new sign-ins only now, so a mistyped ID never touches the other accounts.
     public func finishSignIn(_ provider: CalendarProvider, client: OAuthClient, code: String, pkce: PKCE, redirect: URL) async throws -> CalendarAccount {
         let (data, status) = try await call(OAuth.codeRequest(provider, client: client, code: code, pkce: pkce, redirect: redirect))
-        let account = CalendarAccount(provider: provider, email: OAuth.email(fromTokenAnswer: data) ?? "", client: client,
-                                      tokens: try OAuth.tokens(from: data, status: status, now: clock()))
+        let tokens = try OAuth.tokens(from: data, status: status, now: clock())
+        let account = CalendarAccount(provider: provider, email: OAuth.email(fromTokenAnswer: data) ?? "", client: client)
+        try store.storeTokens(tokens, for: account.id)
         try store.save(try store.load().setting(client, for: provider).adding(account))
         return account
     }
@@ -126,11 +134,11 @@ public actor CalendarService {
 
     /// The saved access token, or a refreshed one (saved) when it has under a minute left or was refused.
     private func accessToken(_ account: CalendarAccount, client: OAuthClient, now: Date, force: Bool) async throws -> String {
-        let current = try store.load().accounts.first { $0.id == account.id }?.tokens ?? account.tokens
+        guard let current = try store.tokens(for: account.id) else { throw CalendarError.signedOut }
         if !force, current.expiresAt > now.addingTimeInterval(60) { return current.accessToken }
         let (data, status) = try await call(OAuth.refreshRequest(account.provider, client: client, refreshToken: current.refreshToken))
         let fresh = try OAuth.tokens(from: data, status: status, now: now, keepingRefresh: current.refreshToken)
-        try store.save(try store.load().updating(tokens: fresh, for: account.id))
+        try store.updateTokens(fresh, for: account.id)
         return fresh.accessToken
     }
 

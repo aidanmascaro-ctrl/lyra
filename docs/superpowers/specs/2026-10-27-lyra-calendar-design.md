@@ -65,10 +65,14 @@
   - Endpoint: `common`. Each sign-in uses `prompt=select_account`, so he can add the work and the personal
     account one after the other.
   - A work organisation may require admin approval (AADSTS65001 / 90094 / 90095). Lyra says so plainly.
-- **Storage:** app details and every account's tokens live in one owner-only file,
-  `~/Library/Application Support/Lyra/calendars.json` (0600). They are not in the Keychain: the app is ad-hoc
-  signed, and the Keychain would ask again after every rebuild. The `CalendarService` actor owns the file, so token
-  saves never race.
+- **Storage:**
+  - App details and the list of accounts live in an owner-only file,
+    `~/Library/Application Support/Lyra/calendars.json` (0600).
+  - Each account's tokens live in the login Keychain: service `au.aidos.lyra.calendar-tokens`, account = the Lyra
+    account id. The stable "Lyra Local" signature lets rebuilds read them without asking. An ad-hoc build would ask.
+  - Tokens found in the file from an older version move once at launch. Each leaves the file only after it reads
+    back from the Keychain. Anything that fails stays in the file, keeps working, and is retried next launch.
+  - The `CalendarService` actor owns both, so token saves never race.
 - **Token refresh:**
   - Access tokens are refreshed before expiry.
   - Microsoft rotates refresh tokens, so the new one is saved each time.
@@ -105,11 +109,12 @@
 - **`LyraCore/Calendar/`** (Foundation + CryptoKit, all tested):
   - `CalendarEvent` and `CalendarError`
   - `OAuth`: providers, PKCE, requests, token answers, ID-token email
-  - `CalendarStore`: settings and the accounts file
+  - `CalendarStore`: settings, the accounts file, tokens through a `SecretStore`, and moving old tokens
   - `GoogleEvents`, `MicrosoftEvents`, `JoinLink`
   - `UpcomingMeetings`: merge, filter, group by day, and `PendingJoin`
   - `CalendarService`: the actor
 - **`Lyra/`:**
+  - `KeychainSecretStore`: the macOS Keychain behind `SecretStore` (`LyraCore` can't import Security)
   - `CalendarModel`: fetch and refresh, sign-in, the Microsoft ID alert
   - `LoopbackListener`, with a real-socket test in `LyraAppTests`
   - `UpcomingSection`
