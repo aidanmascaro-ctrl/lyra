@@ -142,6 +142,7 @@ final class JoinLinkTests: XCTestCase {
         XCTAssertFalse(JoinLink.isCall(URL(string: "https://notzoom.us/j/1")!))
         XCTAssertTrue(JoinLink.isCall(URL(string: "https://us02web.zoom.us/j/1")!))
         XCTAssertFalse(JoinLink.isCall(URL(string: "zoommtg://zoom.us/join")!))
+        XCTAssertFalse(JoinLink.isCall(URL(string: "http://zoom.us/j/1")!), "only secure links count as calls")
     }
 }
 

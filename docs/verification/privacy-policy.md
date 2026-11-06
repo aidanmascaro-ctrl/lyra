@@ -54,4 +54,4 @@ doesn't use it to develop, improve or train AI models.
 ## Changes and contact
 
 If this policy changes, the new version will appear on this page with a new date.
-Questions: aidan@example.com
+Questions: aidanmascaro@gmail.com

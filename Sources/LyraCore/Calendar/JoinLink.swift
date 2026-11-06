@@ -29,7 +29,7 @@ public enum JoinLink {
     }
 
     public static func isCall(_ url: URL) -> Bool {
-        guard let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http",
+        guard url.scheme?.lowercased() == "https",
               let host = url.host?.lowercased() else { return false }
         return callHosts.contains { host == $0 || host.hasSuffix("." + $0) }
     }

@@ -7,3 +7,6 @@ build/
 docs/notes/phase3-screens/
 # Lyra's Google / Microsoft app details (see scripts/build-app.sh)
 Resources/CalendarApps.json
+# Private session notes
+handoffs/
+.worktrees/

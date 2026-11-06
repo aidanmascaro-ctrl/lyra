@@ -42,6 +42,10 @@ Before installing, make sure nothing is recording (Aidan says so, or no fresh `.
 - Never record without Aidan's Allow click — the one exception: he pressed **Join** on an upcoming meeting in
   Lyra and the meeting app then takes the mic (see `docs/superpowers/specs/2026-10-27-lyra-calendar-design.md`). Voice fingerprints never leave the Mac.
 - Wrong names/series are worse than none: series is always a suggestion Aidan confirms.
+- **This repo is public.** Never commit real client or people names, real meeting content, prices, personal
+  emails or home-folder paths: tests and docs use made-up examples. Never commit `Resources/CalendarApps.json`
+  or `handoffs/`, and never share a built `Lyra.app` (it contains the Google client secret). Commits use the
+  GitHub noreply address, set in this repo's git config.
 
 ## Working with Aidan
 - **Never send synthetic clicks or keystrokes on his Mac** (an agent once typed into his Chrome). Verify UI with
