@@ -322,13 +322,12 @@ final class OAuthTests: XCTestCase {
     func testStoreIsOwnerOnlyAndAccountsReplaceBySameLogin() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: dir) }
-        let store = CalendarStore(fileURL: dir.appendingPathComponent("Lyra/calendars.json"))
+        let store = CalendarStore(fileURL: dir.appendingPathComponent("Lyra/calendars.json"), secrets: FakeSecrets())
         XCTAssertEqual(try store.load(), CalendarSettings())
-        let tokens = OAuthTokens(accessToken: "a", refreshToken: "r", expiresAt: .distantFuture)
         let settings = CalendarSettings().setting(google, for: .google)
-            .adding(CalendarAccount(provider: .microsoft, email: "Aidan@work.com", client: microsoft, tokens: tokens))
-            .adding(CalendarAccount(provider: .microsoft, email: "aidan@outlook.com", client: microsoft, tokens: tokens))
-            .adding(CalendarAccount(provider: .microsoft, email: "aidan@work.com", client: microsoft, tokens: tokens))
+            .adding(CalendarAccount(provider: .microsoft, email: "Aidan@work.com", client: microsoft))
+            .adding(CalendarAccount(provider: .microsoft, email: "aidan@outlook.com", client: microsoft))
+            .adding(CalendarAccount(provider: .microsoft, email: "aidan@work.com", client: microsoft))
         try store.save(settings)
         try store.save(settings)  // saving over an existing file
         let loaded = try store.load()
@@ -346,7 +345,8 @@ final class CalendarServiceTests: XCTestCase {
     let microsoft = OAuthClient(clientID: "11111111-2222-3333-4444-555555555555")
     let now = Date(timeIntervalSince1970: 1_800_000_000)
     var dir: URL!
-    var store: CalendarStore { CalendarStore(fileURL: dir.appendingPathComponent("calendars.json")) }
+    let secrets = FakeSecrets()
+    var store: CalendarStore { CalendarStore(fileURL: dir.appendingPathComponent("calendars.json"), secrets: secrets) }
 
     override func setUp() { dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString) }
     override func tearDown() { try? FileManager.default.removeItem(at: dir) }
@@ -384,7 +384,9 @@ final class CalendarServiceTests: XCTestCase {
     }
 
     func account(_ provider: CalendarProvider, _ email: String, expiresIn: TimeInterval = 600) -> CalendarAccount {
-        CalendarAccount(provider: provider, email: email, client: provider == .google ? google : microsoft, tokens: OAuthTokens(accessToken: "ok", refreshToken: "r", expiresAt: now.addingTimeInterval(expiresIn)))
+        let account = CalendarAccount(provider: provider, email: email, client: provider == .google ? google : microsoft)
+        try? store.storeTokens(OAuthTokens(accessToken: "ok", refreshToken: "r", expiresAt: now.addingTimeInterval(expiresIn)), for: account.id)
+        return account
     }
 
     func testReadsEveryAccountAndOneFailureDoesNotHideTheOthers() async throws {
@@ -420,7 +422,7 @@ final class CalendarServiceTests: XCTestCase {
         _ = try await calendars.fetchAll()
         XCTAssertEqual(fake.requests.map { $0.url?.host }, ["login.microsoftonline.com", "graph.microsoft.com"])
         XCTAssertEqual(fake.requests.last?.value(forHTTPHeaderField: "Authorization"), "Bearer fresh")
-        let saved = try store.load().accounts.first?.tokens
+        let saved = try store.tokens(for: "microsoft:a@work.com")
         XCTAssertEqual(saved?.accessToken, "fresh")
         XCTAssertEqual(saved?.refreshToken, "rotated")
     }
@@ -482,7 +484,7 @@ final class CalendarServiceTests: XCTestCase {
         let added = try await calendars.finishSignIn(.microsoft, client: microsoft, code: "c", pkce: PKCE(verifier: "v"),
                                                      redirect: URL(string: "http://localhost:1")!)
         XCTAssertEqual(added.id, "microsoft:aidan@work.com")
-        XCTAssertEqual(try store.load().accounts.map(\.tokens.refreshToken), ["r2"])
+        XCTAssertEqual(try store.tokens(for: added.id)?.refreshToken, "r2")
         XCTAssertEqual(try store.load().accounts.first?.client, microsoft)
         let body = String(decoding: fake.requests[0].httpBody ?? Data(), as: UTF8.self)
         XCTAssertTrue(body.contains("code_verifier=v"))

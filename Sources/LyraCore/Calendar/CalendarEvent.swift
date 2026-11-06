@@ -49,6 +49,7 @@ public enum CalendarError: LocalizedError, Equatable {
     case signedOut
     case apiDisabled
     case badResponse(Int)
+    case tokensNotSaved
 
     public var errorDescription: String? {
         switch self {
@@ -61,6 +62,7 @@ public enum CalendarError: LocalizedError, Equatable {
         case .signedOut: "Lyra was signed out. Reconnect to see these meetings again."
         case .apiDisabled: "The Google Calendar API is off for the Lyra project. Turn it on in Google Cloud Console."
         case .badResponse(let status): "The calendar answered with an error (\(status))."
+        case .tokensNotSaved: "The Keychain didn't keep Lyra's calendar sign-in. Try again in a moment."
         }
     }
 }
