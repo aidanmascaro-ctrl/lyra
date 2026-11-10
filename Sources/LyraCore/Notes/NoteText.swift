@@ -14,10 +14,29 @@ public enum NoteText {
     public static let trailingKind = NSAttributedString.Key("lyraTrailingKind")
     public static let trailingIndent = NSAttributedString.Key("lyraTrailingIndent")
     public static let trailingByClaude = NSAttributedString.Key("lyraTrailingByClaude")
+    /// A divider's or picture's line as written in the file (`NoteBlock.media`), on its one character.
+    public static let media = NSAttributedString.Key("lyraMedia")
+    /// The one character a divider or picture is in the text: the attachment character.
+    public static let mediaCharacter = "\u{FFFC}"
+
+    /// The kind of block a character with these keys belongs to.
+    public static func kind(of attributes: [NSAttributedString.Key: Any]) -> BlockKind {
+        kind(named: attributes[blockKind] as? String)
+    }
+
+    /// How many UTF-16 units block `block` takes in the text, not counting the "\n" after it.
+    public static func length(of block: NoteBlock) -> Int {
+        block.kind.isMedia ? 1 : block.plainText.utf16.count
+    }
 
     public static func attributed(_ blocks: [NoteBlock]) -> NSAttributedString {
         let result = NSMutableAttributedString()
         for (i, block) in blocks.enumerated() {
+            if block.kind.isMedia {
+                var keys = attributes(block, run: InlineRun(text: mediaCharacter))
+                keys[media] = block.media
+                result.append(NSAttributedString(string: mediaCharacter, attributes: keys))
+            }
             for run in block.runs {
                 result.append(NSAttributedString(string: run.text, attributes: attributes(block, run: run)))
             }
@@ -42,8 +61,8 @@ public enum NoteText {
         while start <= string.length {
             let newline = string.range(of: "\n", range: NSRange(location: start, length: string.length - start))
             let end = newline.location == NSNotFound ? string.length : newline.location
-            blocks.append(block(in: text, range: NSRange(location: start, length: end - start),
-                                hasTerminator: newline.location != NSNotFound))
+            blocks.append(contentsOf: lineBlocks(in: text, range: NSRange(location: start, length: end - start),
+                                                 hasTerminator: newline.location != NSNotFound))
             if newline.location == NSNotFound { break }
             start = end + 1
         }
@@ -60,7 +79,7 @@ public enum NoteText {
     /// The block an editor showing `blocks` must hold itself: their only block, when it has no characters and is
     /// more than a plain empty line (an empty note is no blocks).
     public static func emptyBlock(of blocks: [NoteBlock]) -> NoteBlock? {
-        guard blocks.count == 1, let only = blocks.first, only.runs.isEmpty,
+        guard blocks.count == 1, let only = blocks.first, only.runs.isEmpty, !only.kind.isMedia,
               only != NoteBlock(kind: .paragraph, runs: []) else { return nil }
         return only
     }
@@ -90,6 +109,28 @@ public enum NoteText {
          underline: run.underline, byClaude: block.byClaude]
     }
 
+    /// One line's blocks: usually one, but a divider or picture character that has ended up beside text (a line
+    /// joined by a deletion) is split back out onto a line of its own, so a picture is never inside text.
+    private static func lineBlocks(in text: NSAttributedString, range: NSRange, hasTerminator: Bool) -> [NoteBlock] {
+        let units = text.string as NSString
+        var media: [Int] = []
+        for i in range.location..<NSMaxRange(range) where units.character(at: i) == 0xFFFC {
+            if kind(named: text.attribute(blockKind, at: i, effectiveRange: nil) as? String).isMedia { media.append(i) }
+        }
+        guard !media.isEmpty else { return [block(in: text, range: range, hasTerminator: hasTerminator)] }
+        var result: [NoteBlock] = []
+        var cursor = range.location
+        for at in media {
+            if at > cursor { result.append(block(in: text, range: NSRange(location: cursor, length: at - cursor), hasTerminator: true)) }
+            result.append(block(in: text, range: NSRange(location: at, length: 1), hasTerminator: true))
+            cursor = at + 1
+        }
+        if cursor < NSMaxRange(range) {
+            result.append(block(in: text, range: NSRange(location: cursor, length: NSMaxRange(range) - cursor), hasTerminator: true))
+        }
+        return result
+    }
+
     private static func block(in text: NSAttributedString, range: NSRange, hasTerminator: Bool) -> NoteBlock {
         var keys: [NSAttributedString.Key: Any] = [:]
         if range.length > 0 || hasTerminator {
@@ -99,6 +140,14 @@ public enum NoteText {
             let before = text.attributes(at: range.location - 1, effectiveRange: nil)
             keys = [blockKind: before[trailingKind] as Any, indent: before[trailingIndent] as Any,
                     byClaude: before[trailingByClaude] as Any]
+        }
+        var found = kind(named: keys[blockKind] as? String)
+        if found.isMedia {
+            // Only the divider's or picture's own character is one; anything else carrying its keys is plain text.
+            let isOwnCharacter = range.length == 1 && (text.string as NSString).character(at: range.location) == 0xFFFC
+            if isOwnCharacter { return NoteBlock(kind: found, runs: [], media: keys[media] as? String) }
+            found = .paragraph
+            keys[indent] = 0
         }
         var runs: [InlineRun] = []
         text.enumerateAttributes(in: range) { attrs, sub, _ in
@@ -110,7 +159,7 @@ public enum NoteText {
                 runs.append(InlineRun(text: piece, bold: isBold, underline: isUnderline))
             }
         }
-        return NoteBlock(kind: kind(named: keys[blockKind] as? String), indent: keys[indent] as? Int ?? 0,
+        return NoteBlock(kind: found, indent: keys[indent] as? Int ?? 0,
                          runs: runs, byClaude: keys[byClaude] as? Bool ?? false)
     }
 
@@ -121,6 +170,8 @@ public enum NoteText {
         case .heading2: "heading2"
         case .bullet: "bullet"
         case .numbered: "numbered"
+        case .divider: "divider"
+        case .image: "image"
         }
     }
 
@@ -130,6 +181,8 @@ public enum NoteText {
         case "heading2": .heading2
         case "bullet": .bullet
         case "numbered": .numbered
+        case "divider": .divider
+        case "image": .image
         default: .paragraph
         }
     }

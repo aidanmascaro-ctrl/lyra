@@ -19,6 +19,10 @@ struct NoteEditor: NSViewRepresentable {
     var onExternal: ((Int, Bool) -> Void)?
     var forceLoad = 0
     var editable = true
+    /// The note's file and its vault: where pasted pictures are saved and pictures are found. Nil before the note exists.
+    var noteURL: URL?
+    var vaultRoot: URL?
+    var onNotice: ((String) -> Void)?
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -48,6 +52,16 @@ struct NoteEditor: NSViewRepresentable {
         let coordinator = context.coordinator
         coordinator.parent = self
         coordinator.setEditable(editable)
+        if let textView = coordinator.textView {
+            if let noteURL, let vaultRoot {
+                if textView.imageLoader?.note != noteURL || textView.imageLoader?.vaultRoot != vaultRoot {
+                    textView.imageLoader = NoteImageLoader(note: noteURL, vaultRoot: vaultRoot)
+                }
+            } else if textView.imageLoader != nil {
+                textView.imageLoader = nil
+            }
+            textView.onNotice = { [weak coordinator] in coordinator?.parent.onNotice?($0) }
+        }
         coordinator.textView?.selectionActions = selectionActions && editable
         coordinator.textView?.onSelectionAction = { [weak coordinator] action, text, block in
             coordinator?.parent.onSelectionAction?(action, text, block)

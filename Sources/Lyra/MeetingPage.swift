@@ -85,7 +85,10 @@ private struct MeetingContent: View {
                           pushID: model.pushID[section] ?? 0,
                           onExternal: { model.acknowledged(section, id: $0, accepted: $1) },
                           forceLoad: model.forceLoad[section] ?? 0,
-                          editable: active)
+                          editable: active,
+                          noteURL: model.noteURL,
+                          vaultRoot: model.vaultRoot,
+                          onNotice: { model.notice = $0 })
             .overlay(alignment: .topLeading) { if active { placeholder(blocks, text) } }
             .opacity(active ? 1 : 0)
             .allowsHitTesting(active)

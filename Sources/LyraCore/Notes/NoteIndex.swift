@@ -181,6 +181,7 @@ public struct NoteIndex: Sendable {
 
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
         try fm.moveItem(at: loaded.url, to: target)
+        NoteImages.moveEmbedded(loaded.document, from: loaded.url, to: target)
         return Move(note: try read(target), oldName: oldName)
     }
 

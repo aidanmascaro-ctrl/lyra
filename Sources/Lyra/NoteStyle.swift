@@ -35,8 +35,25 @@ enum NoteStyle {
         text.enumerateAttributes(in: NSRange(location: 0, length: text.length)) { attrs, range, _ in
             result.setAttributes(display(attrs), range: range)
         }
+        attachMedia(in: result)
         compactBlankLines(in: result)
         return result
+    }
+
+    /// Each divider's or picture's character drawn as one (its "\n" stays plain text).
+    private static func attachMedia(in text: NSMutableAttributedString) {
+        let units = text.string as NSString
+        var search = NSRange(location: 0, length: units.length)
+        while true {
+            let found = units.range(of: NoteText.mediaCharacter, range: search)
+            guard found.location != NSNotFound else { return }
+            let attrs = text.attributes(at: found.location, effectiveRange: nil)
+            let kind = NoteText.kind(of: attrs)
+            if kind.isMedia {
+                text.addAttribute(.attachment, value: NoteMediaAttachment(kind: kind, media: attrs[NoteText.media] as? String), range: found)
+            }
+            search = NSRange(location: NSMaxRange(found), length: units.length - NSMaxRange(found))
+        }
     }
 
     /// A lone empty paragraph with text on both sides is drawn `blankLineHeight` tall. The blank line stays in the
@@ -94,13 +111,14 @@ enum NoteStyle {
 
     /// The note keys in `attrs` plus the look they stand for.
     static func display(_ attrs: [NSAttributedString.Key: Any]) -> [NSAttributedString.Key: Any] {
-        let kind = NoteText.blocks(NSAttributedString(string: "x", attributes: attrs)).first?.kind ?? .paragraph
+        let kind = NoteText.kind(of: attrs)
         let indent = attrs[NoteText.indent] as? Int ?? 0
         var result = attrs
         result[.font] = font(for: kind, bold: attrs[NoteText.bold] as? Bool ?? false)
         result[.foregroundColor] = colour(grey: attrs[NoteText.byClaude] as? Bool ?? false)
         result[.underlineStyle] = (attrs[NoteText.underline] as? Bool ?? false) ? NSUnderlineStyle.single.rawValue : 0
         result[.paragraphStyle] = paragraphStyle(kind, indent: indent)
+        result[.attachment] = nil  // only `styled` makes attachments, and only on a divider's or picture's own character
         return result
     }
 
@@ -116,6 +134,8 @@ enum NoteStyle {
         case .heading2: style.paragraphSpacingBefore = 10; style.paragraphSpacing = 3
         case .bullet, .numbered: style.paragraphSpacing = 4
         case .paragraph: style.paragraphSpacing = 8
+        case .divider: style.paragraphSpacingBefore = 4; style.paragraphSpacing = 8
+        case .image: style.paragraphSpacingBefore = 6; style.paragraphSpacing = 12
         }
         return style
     }
