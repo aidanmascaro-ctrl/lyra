@@ -298,7 +298,7 @@ final class AppModel: ObservableObject {
                 recordingSince = Date()
                 pausedSince = nil
                 pausedBefore = 0
-                liveMeeting = LiveMeeting(folder: started.folder, appName: meeting.appName)
+                liveMeeting = LiveMeeting(folder: started.folder, appName: meeting.appName, title: meeting.title)
                 // The call ended (or Stop was clicked) while we were still starting.
                 if state.started() { stopSession() }
             } catch {
@@ -505,7 +505,7 @@ extension AppModel {
     /// Debug builds only: shows `folder` as the call being recorded, with its Slides switch, so the bottom bar can be
     /// looked at. Nothing records.
     func debugShowLiveCall(folder: URL, slides: Int) {
-        liveMeeting = LiveMeeting(folder: folder, appName: "zoom.us")
+        liveMeeting = LiveMeeting(folder: folder, appName: "zoom.us", title: "Coffee Roaster shoot")
         self.slides = CallSlides(on: slides > 0, count: slides)
     }
 
@@ -519,4 +519,7 @@ extension AppModel {
 struct LiveMeeting: Equatable {
     let folder: URL
     let appName: String
+    /// The meeting's title (the calendar event's, when joined from the calendar), so Home can match it to its
+    /// "Coming up" row and show one card instead of two.
+    let title: String
 }

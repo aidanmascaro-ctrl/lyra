@@ -23,13 +23,16 @@ struct UpcomingSection: View {
                 Text("No meetings in the next week.").font(.system(size: 14)).foregroundStyle(.tertiary)
             }
             ForEach(calendar.days, id: \.date) { day in
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(UpcomingMeetings.label(for: day.date, now: Date()))
-                        .font(.system(size: 12.5, weight: .medium)).foregroundStyle(.secondary)
-                        .padding(.horizontal, 8).padding(.top, 4).padding(.bottom, 2)
-                    ForEach(day.events) { row($0) }
+                let events = day.events.filter { !isLiveMeeting($0) }
+                if !events.isEmpty {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(UpcomingMeetings.label(for: day.date, now: Date()))
+                            .font(.system(size: 12.5, weight: .medium)).foregroundStyle(.secondary)
+                            .padding(.horizontal, 8).padding(.top, 4).padding(.bottom, 2)
+                        ForEach(events) { row($0) }
+                    }
+                    .padding(.horizontal, -8)
                 }
-                .padding(.horizontal, -8)
             }
         }
         .onAppear { calendar.refresh() }
@@ -109,6 +112,12 @@ struct UpcomingSection: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(RowButtonStyle())
+    }
+
+    /// True for the event that is now showing as the live-recording card on Home, so it isn't listed twice.
+    private func isLiveMeeting(_ event: CalendarEvent) -> Bool {
+        guard let title = app.liveMeeting?.title.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else { return false }
+        return event.title.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(title) == .orderedSame
     }
 
     private func row(_ event: CalendarEvent) -> some View {

@@ -24,7 +24,7 @@ struct HomePage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 Text("Meetings").font(Chrome.titleFont)
-                newNote
+                if let live = app.liveMeeting { liveCard(live) } else { newNote }
                 UpcomingSection(app: app)
                 if let notice = model.notice { Banner(text: notice) { Button("OK") { model.notice = nil } } }
                 // The sidebar shows its own notices while it is open.
@@ -82,6 +82,32 @@ struct HomePage: View {
     private func newNoteTapped() {
         if let live = app.liveMeeting { return open(live.folder) }
         if let folder = app.newNote() { open(folder) } else { model.notice = app.lastError }
+    }
+
+    /// Shown while a meeting is being recorded: the one card for it — red dot, title, running time — that opens the
+    /// live note. When the meeting was joined from the calendar, its "Coming up" row is hidden so this is the only
+    /// place it appears.
+    private func liveCard(_ live: LiveMeeting) -> some View {
+        Button { open(live.folder) } label: {
+            HStack(spacing: 12) {
+                Circle().fill(app.isPaused ? Color.secondary : Chrome.live).frame(width: 10, height: 10)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(live.title.isEmpty ? live.appName : live.title)
+                        .font(.system(size: 15, weight: .semibold)).lineLimit(1)
+                    Text("\(app.isPaused ? "Paused" : "Recording") · \(live.appName)")
+                        .font(.system(size: 12.5)).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 12)
+                Text(app.elapsed).font(.system(size: 14, weight: .medium)).monospacedDigit().foregroundStyle(.secondary)
+                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 12)
+            .background(RoundedRectangle(cornerRadius: 12).fill(Chrome.pill))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Chrome.live.opacity(0.35)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Open the meeting you're recording")
     }
 
     private func suggestionCard(_ s: MeetingSummary) -> some View {

@@ -40,6 +40,11 @@ struct BottomBar: View {
                     } else {
                         Image(systemName: "waveform").font(.system(size: 13)).foregroundStyle(.secondary)
                     }
+                    // The running recorded time, now that the menu-bar icon no longer shows it.
+                    if model.isLive {
+                        Text(app.elapsed).font(.system(size: 12.5, weight: .medium)).monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
                     Image(systemName: drawerOpen ? "chevron.down" : "chevron.up").font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
                 }
