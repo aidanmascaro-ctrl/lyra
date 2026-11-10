@@ -155,6 +155,25 @@ final class NoteIndexTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: result.note.url.path))
     }
 
+    /// The vault-wide link scan runs without the write lock, so the editor's saves never wait on it; each file's
+    /// rewrite still takes the lock, so it can't interleave with a save to that file.
+    func testRelocateScansLinksWithoutHoldingTheWriteLock() throws {
+        let doc = makeDocument(title: "Chat")
+        let url = try writeNote(doc, name: prefix + "Chat")
+        for n in 0..<3 { try "[[\(prefix)Chat]] \(n)".write(to: vault.appendingPathComponent("Link \(n).md"), atomically: true, encoding: .utf8) }
+        final class Count: @unchecked Sendable { var value = 0 }
+        let scanned = Count()
+        var probed = index!
+        probed.linkScanProbe = { _ in
+            scanned.value += 1
+            XCTAssertTrue(NoteIndex.writeLockIsFree, "link scan ran holding the write lock")
+        }
+        let result = try probed.relocateReportingSkips(try probed.load(doc.front.lyraID, hint: url), title: "New", series: nil)
+        XCTAssertGreaterThan(scanned.value, 3)
+        XCTAssertEqual(try read(vault.appendingPathComponent("Link 1.md")), "[[\(prefix)New]] 1")
+        XCTAssertEqual(result.skippedLinkFiles, [])
+    }
+
     func testRenameSeriesFolderUpdatesNotes() throws {
         let dir = meetings.appendingPathComponent("Old Series")
         let doc = makeDocument(title: "Chat", series: "Old Series")
