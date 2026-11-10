@@ -39,6 +39,37 @@ public enum DockPolicy {
         return .front(restore: open.filter { $0.isMiniaturized }.map(\.id))
     }
 
+    public enum MenuBarClick: Equatable, Sendable {
+        /// Lyra is already in front: hide it, keeping whatever page it is on.
+        case hide
+        /// Bring Lyra forward: unhide it, then as `reopen` (restore a minimised window, or open home).
+        case show
+    }
+
+    /// The menu-bar icon left-clicked: a toggle. Hide when Lyra is the app in front with one of its windows showing;
+    /// show it otherwise (another app in front, Lyra hidden, or only minimised or no windows).
+    public static func menuBarClick(_ windows: [Window], closing: Set<Int>, isActive: Bool, isHidden: Bool) -> MenuBarClick {
+        let showing = lyraWindows(windows, closing: closing).contains { $0.isVisible && !$0.isMiniaturized }
+        return isActive && !isHidden && showing ? .hide : .show
+    }
+
+    /// A rectangle on screen in plain numbers. LyraCore stays free of CoreGraphics types: CGRect here crashed the
+    /// release compiler's cross-module optimiser, which can't resolve it from a module that doesn't import CoreGraphics.
+    public struct Frame: Equatable, Sendable {
+        public let x: Double, y: Double, width: Double, height: Double
+        public init(x: Double, y: Double, width: Double, height: Double) {
+            self.x = x; self.y = y; self.width = width; self.height = height
+        }
+    }
+
+    /// Where a window `width` × `height` goes on a screen's usable area (`visible`): centred, and shrunk to fit if it
+    /// is bigger. Used when a menu-bar click opens Lyra on a different display from the one its window is on.
+    public static func place(width: Double, height: Double, on visible: Frame) -> Frame {
+        let w = min(width, visible.width)
+        let h = min(height, visible.height)
+        return Frame(x: visible.x + (visible.width - w) / 2, y: visible.y + (visible.height - h) / 2, width: w, height: h)
+    }
+
     private static func lyraWindows(_ windows: [Window], closing: Set<Int>) -> [Window] {
         windows.filter { !closing.contains($0.id) && !$0.isPanel && $0.isTitled && ($0.isVisible || $0.isMiniaturized) }
     }

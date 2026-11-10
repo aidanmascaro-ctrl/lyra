@@ -7,8 +7,8 @@ import SwiftUI
 /// detection and processing don't depend on any of this.
 @MainActor
 final class DockPresence: NSObject {
-    /// Opens Lyra's main window through SwiftUI's `openWindow`. Set by `MainWindowOpener` from the menu bar label and
-    /// from the main window itself (shown at every launch), so it is there whichever appears first.
+    /// Opens Lyra's main window through SwiftUI's `openWindow`. Set by `MainWindowOpener` from the main window itself
+    /// (shown at every launch), so it is there once that window has appeared.
     var openMain: (() -> Void)?
     private let app: AppModel
     /// Windows told to close that may still report visible; dropped a turn later, once they are really gone.
@@ -32,15 +32,52 @@ final class DockPresence: NSObject {
             showHome()
         case .front(let restore):
             for window in NSApp.windows where restore.contains(window.windowNumber) { window.deminiaturize(nil) }
-            NSApp.windows.first { $0.windowNumber == restore.first }?.makeKeyAndOrderFront(nil)
+            // A minimised window first; otherwise the open main window, which may just be behind other apps' windows
+            // (the Dock activates Lyra itself, but a menu-bar click doesn't, so the window is fronted here).
+            let target = NSApp.windows.first { $0.windowNumber == restore.first }
+                ?? NSApp.windows.first { Self.isMain($0) && $0.isVisible }
+            target?.makeKeyAndOrderFront(nil)
             activate()
+        }
+    }
+
+    /// The menu-bar icon left-clicked on `screen`'s menu bar: hides Lyra when it is already in front, otherwise brings
+    /// it forward on that display (moving the window across if it is on another one). Hiding keeps the page it was
+    /// on, so the next click shows that same page.
+    func toggleFromMenuBar(on screen: NSScreen?) {
+        let decision = DockPolicy.menuBarClick(Self.describe(NSApp.windows), closing: closing, isActive: NSApp.isActive,
+                                               isHidden: NSApp.isHidden)
+        switch decision {
+        case .hide:
+            NSApp.hide(nil)
+        case .show:
+            // Unhidden first: asking to come forward while still hidden was ignored (seen in testing: the click after
+            // a hide left the other app in front). Then activated now, while the click is still the current event:
+            // macOS lets an app come forward in answer to the user's own click and may refuse a later request. The
+            // older call is the fallback many menu-bar apps still rely on when the newer, polite one is declined.
+            if NSApp.isHidden { NSApp.unhide(nil) }
+            NSApp.activate()
+            if !NSApp.isActive { NSApp.activate(ignoringOtherApps: true) }
+            reopen()
+            if let screen, let window = NSApp.windows.first(where: { Self.isMain($0) && $0.isVisible }), window.screen != screen {
+                let v = screen.visibleFrame
+                let f = DockPolicy.place(width: window.frame.width, height: window.frame.height,
+                                         on: .init(x: v.minX, y: v.minY, width: v.width, height: v.height))
+                window.setFrame(NSRect(x: f.x, y: f.y, width: f.width, height: f.height), display: true)
+            }
         }
     }
 
     /// The main window on home, through SwiftUI when it has handed over `openWindow`; otherwise a main window
     /// AppKit still holds.
     private func showHome() {
-        app.route = .home
+        open(.home)
+    }
+
+    /// Opens Lyra's one window on `route` and brings it forward. The menu-bar item uses this for a left click (home)
+    /// and for "New note" (the live meeting); the window re-reads `route` as it comes on screen.
+    func open(_ route: Route) {
+        app.route = route
         if let openMain { openMain() } else { NSApp.windows.first(where: Self.isMain)?.makeKeyAndOrderFront(nil) }
         activate()
     }
@@ -68,6 +105,9 @@ final class DockPresence: NSObject {
     }
 
     private func update(retry: Bool = true) {
+        // Hidden (menu-bar click or ⌘H), its windows report not visible, but it is still open: keep the Dock icon,
+        // as any hidden app does, rather than drop back to menu-bar-only.
+        guard !NSApp.isHidden else { return }
         let policy: NSApplication.ActivationPolicy = DockPolicy.showsInDock(Self.describe(NSApp.windows), closing: closing)
             ? .regular : .accessory
         guard NSApp.activationPolicy() != policy else { return }
