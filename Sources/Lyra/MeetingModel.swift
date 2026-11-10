@@ -52,6 +52,8 @@ final class MeetingModel: ObservableObject {
     @Published private(set) var naming = false
 
     private var watcher: NoteWatcher?
+    /// The page has gone; the editors' last flush can still arrive after this.
+    private var closed = false
 
     init(folder: URL, app: AppModel) {
         self.folder = folder
@@ -139,9 +141,15 @@ final class MeetingModel: ObservableObject {
         }
         loadError = nil
         guard var sync else {
-            sync = NoteSync(loaded: disk)
+            var fresh = NoteSync(loaded: disk)
             myBlocks = NoteMarkdown.parse(disk.document.myNotes)
             expandedBlocks = NoteMarkdown.parse(disk.document.expanded)
+            // Typing left in a conflict when the page last closed: shown again, waiting for Reload or Keep mine.
+            for (section, mine) in UnsavedTyping.load(from: folder) {
+                fresh.restoreConflict(section, mine: mine)
+                setBlocks(mine, for: section)
+            }
+            self.sync = fresh
             titleDraft = disk.document.front.title
             watch(disk.url)
             return
@@ -158,7 +166,27 @@ final class MeetingModel: ObservableObject {
         }
     }
 
-    func close() { watcher?.stop() }
+    func close() {
+        closed = true
+        watcher?.stop()
+        keepUnsavedTyping()
+    }
+
+    /// Once the page has gone nobody can answer a conflict banner, so the typing in each conflict is kept beside
+    /// the recording and asked about next time the meeting opens.
+    private func keepUnsavedTyping() {
+        guard let conflicts = sync?.conflicts, !conflicts.isEmpty else { return }
+        do { try UnsavedTyping.save(conflicts.mapValues(\.mine), in: folder) } catch {
+            notice = "Lyra couldn't keep your unsaved typing: \(error.localizedDescription)"
+        }
+    }
+
+    /// The conflict for `section` is settled: typing kept from an earlier visit is done with.
+    private func settled(_ section: NoteSection) {
+        do { try UnsavedTyping.clear(section, in: folder) } catch {
+            notice = "Lyra couldn't tidy up kept typing: \(error.localizedDescription)"
+        }
+    }
 
     /// Pushes blocks to the editors and follows the note to wherever it now is.
     private func apply(_ effects: [NoteSync.Effect]) {
@@ -198,6 +226,7 @@ final class MeetingModel: ObservableObject {
             self.sync = sync
             notice = "Lyra couldn't save this note: \(error.localizedDescription)"
         }
+        if closed { keepUnsavedTyping() }
     }
 
     /// An editor's answer to push `id`: shown, or refused because of unsent typing.
@@ -226,6 +255,7 @@ final class MeetingModel: ObservableObject {
         let effects = sync.reload(section)
         self.sync = sync
         apply(effects)
+        settled(section)
     }
 
     /// "Keep mine": this section is written over Obsidian's, as the file is right now.
@@ -235,6 +265,7 @@ final class MeetingModel: ObservableObject {
             let effects = try sync.keepMine(section, index: notes)
             self.sync = sync
             apply(effects)
+            settled(section)
         } catch { notice = "Lyra couldn't save your version: \(error.localizedDescription)" }
     }
 
