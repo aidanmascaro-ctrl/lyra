@@ -426,6 +426,42 @@ final class AfterMeetingTests: XCTestCase {
         XCTAssertEqual(again.insightsCalls, 0)
     }
 
+    /// Retry after a failed rename still renames the note to its title (without asking Claude again).
+    func testRetryAfterARelocateFailureRenamesTheNote() async throws {
+        let nested = notesRoot.appendingPathComponent("Old/Deeper", isDirectory: true)
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        let stuck = nested.appendingPathComponent("Zoom Meeting.md")
+        try FileManager.default.moveItem(at: reserved, to: stuck)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: notesRoot.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: notesRoot.path) }
+        do {
+            try await after(ScriptedClaude(insights: .success(insightsJSON), expansion: expansionLines)).run(folder: folder)
+            XCTFail("expected the rename to fail")
+        } catch {}
+        XCTAssertEqual(try index.load(meeting.id, hint: nil).url.lastPathComponent, stuck.lastPathComponent)
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: notesRoot.path)
+        let again = ScriptedClaude(insights: .success(insightsJSON), expansion: expansionLines)
+        try await after(again).run(folder: folder)
+        XCTAssertEqual(again.insightsCalls, 0)
+        let note = try index.load(meeting.id, hint: nil)
+        XCTAssertEqual(note.url.lastPathComponent, "\(stamp(meeting.startedAt)) — Northwind pricing review.md")
+        let saved = try Meeting.load(from: folder)
+        XCTAssertEqual(saved.notePath.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath() }, note.url.resolvingSymlinksInPath())
+        XCTAssertNotEqual(saved.renamePending, true)
+    }
+
+    /// A meeting from before the retry fix (insights done, no pending rename recorded) is never moved by Retry:
+    /// Aidan may have renamed it in Obsidian.
+    func testRetryLeavesANoteWithNoPendingRenameWhereItIs() async throws {
+        var old = try Meeting.load(from: folder)
+        old.insightsDone = true
+        old.expandError = "Claude stopped."
+        try old.save(in: folder)
+        try await after(ScriptedClaude(insights: .success(insightsJSON), expansion: expansionLines)).run(folder: folder)
+        XCTAssertEqual(try index.load(meeting.id, hint: nil).url.lastPathComponent, reserved.lastPathComponent)
+    }
+
     /// What Aidan's editor does: saves Expanded over the note as it is now.
     private static func typeExpanded(_ index: NoteIndex, _ id: UUID, _ change: (String) -> String) throws {
         let loaded = try index.load(id, hint: nil)

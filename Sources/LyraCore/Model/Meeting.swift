@@ -34,6 +34,9 @@ public struct Meeting: Codable, Sendable {
     public var expandError: String? = nil
     /// True once Claude's title/tags call has succeeded, so a re-run never replaces a title Aidan edited.
     public var insightsDone: Bool? = nil
+    /// True from when the new title is written until the note's file is renamed to it, so Retry finishes a rename
+    /// that failed. Nil on meetings filed before this existed: Retry never moves those.
+    public var renamePending: Bool? = nil
     /// True once naming voices from the conversation (`TalkNamer`) has run, after the meeting or from Suggest names.
     public var namesDone: Bool? = nil
     /// Why naming from the conversation failed; nil once it succeeds. Never stops the rest of the after-meeting step.
