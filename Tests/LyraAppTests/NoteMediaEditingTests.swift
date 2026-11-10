@@ -156,4 +156,12 @@ final class NoteMediaEditingTests: XCTestCase {
         XCTAssertEqual(NoteMediaCell.size(kind: .image, image: big, column: 680), NSSize(width: 680, height: 200))
         XCTAssertEqual(NoteMediaCell.size(kind: .divider, image: nil, column: 680).width, 680)
     }
+
+    func testOnlyAPicturesOwnCharacterIsDrawnAsOne() {
+        let styled = NoteStyle.styled(NoteText.attributed([picture, divider, text("x")]))
+        XCTAssertTrue(styled.attribute(.attachment, at: 0, effectiveRange: nil) is NoteMediaAttachment)
+        XCTAssertNil(styled.attribute(.attachment, at: 1, effectiveRange: nil))  // its "\n"
+        XCTAssertTrue(styled.attribute(.attachment, at: 2, effectiveRange: nil) is NoteMediaAttachment)
+        XCTAssertNil(styled.attribute(.attachment, at: 4, effectiveRange: nil))
+    }
 }

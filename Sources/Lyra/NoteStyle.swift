@@ -48,7 +48,7 @@ enum NoteStyle {
             let found = units.range(of: NoteText.mediaCharacter, range: search)
             guard found.location != NSNotFound else { return }
             let attrs = text.attributes(at: found.location, effectiveRange: nil)
-            let kind = NoteText.blocks(NSAttributedString(string: "x", attributes: attrs)).first?.kind ?? .paragraph
+            let kind = NoteText.kind(of: attrs)
             if kind.isMedia {
                 text.addAttribute(.attachment, value: NoteMediaAttachment(kind: kind, media: attrs[NoteText.media] as? String), range: found)
             }
@@ -111,7 +111,7 @@ enum NoteStyle {
 
     /// The note keys in `attrs` plus the look they stand for.
     static func display(_ attrs: [NSAttributedString.Key: Any]) -> [NSAttributedString.Key: Any] {
-        let kind = NoteText.blocks(NSAttributedString(string: "x", attributes: attrs)).first?.kind ?? .paragraph
+        let kind = NoteText.kind(of: attrs)
         let indent = attrs[NoteText.indent] as? Int ?? 0
         var result = attrs
         result[.font] = font(for: kind, bold: attrs[NoteText.bold] as? Bool ?? false)

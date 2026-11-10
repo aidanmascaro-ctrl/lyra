@@ -19,6 +19,11 @@ public enum NoteText {
     /// The one character a divider or picture is in the text: the attachment character.
     public static let mediaCharacter = "\u{FFFC}"
 
+    /// The kind of block a character with these keys belongs to.
+    public static func kind(of attributes: [NSAttributedString.Key: Any]) -> BlockKind {
+        kind(named: attributes[blockKind] as? String)
+    }
+
     /// How many UTF-16 units block `block` takes in the text, not counting the "\n" after it.
     public static func length(of block: NoteBlock) -> Int {
         block.kind.isMedia ? 1 : block.plainText.utf16.count
