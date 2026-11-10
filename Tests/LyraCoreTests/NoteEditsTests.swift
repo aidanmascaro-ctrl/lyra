@@ -94,3 +94,15 @@ final class NoteEditsTests: XCTestCase {
         XCTAssertEqual(try index.load(id, hint: moved).document.myNotes, "- typed\n- more")
     }
 }
+
+extension NoteEditsTests {
+    func testSaveKeepsAidansListNumbersAndIndents() throws {
+        try editOnDisk { $0.myNotes = "1. one\n1. two\n   - deep" }
+        let loaded = try index.load(id, hint: url)
+        var blocks = NoteMarkdown.parse(loaded.document.myNotes)
+        blocks.append(NoteBlock(kind: .paragraph, runs: [InlineRun(text: "added")]))
+        guard case .saved = try NoteEdits.save(blocks, to: .myNotes, over: loaded, index: index)
+        else { return XCTFail("expected a save") }
+        XCTAssertEqual(try index.load(id, hint: url).document.myNotes, "1. one\n1. two\n   - deep\nadded")
+    }
+}

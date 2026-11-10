@@ -49,6 +49,8 @@ public struct NoteIndex: Sendable {
     private static let scanByteLimit = 16 * 1024
     static let saveAttempts = 3
     private static let writeLock = NSLock()
+    /// Tests only: called for each file the link scan reads, outside the write lock.
+    var linkScanProbe: (@Sendable (URL) -> Void)?
 
     public init(notesRoot: URL, vaultRoot: URL) {
         self.notesRoot = notesRoot
@@ -120,6 +122,13 @@ public struct NoteIndex: Sendable {
         try writeLock.withLock(body)
     }
 
+    /// Tests only: nobody (this thread included) holds the write lock right now.
+    static var writeLockIsFree: Bool {
+        guard writeLock.try() else { return false }
+        writeLock.unlock()
+        return true
+    }
+
     // MARK: Rename and move
 
     /// Moves the note to `notesRoot/<series>/<date — title>.md` and points `[[links]]` at the new name.
@@ -127,12 +136,13 @@ public struct NoteIndex: Sendable {
         try relocateReportingSkips(loaded, title: title, series: series).note
     }
 
+    /// The move holds the write lock; the vault-wide `[[link]]` rewrite runs after it, locking one file at a time.
     public func relocateReportingSkips(_ loaded: LoadedNote, title: String, series: String?) throws -> Relocation {
-        try Self.withWriteLock { try relocateLocked(loaded, title: title, series: series) }
+        withLinksRewritten(try Self.withWriteLock { try relocateLocked(loaded, title: title, series: series) })
     }
 
     /// A note filed in a sidebar folder stays there whatever its title or series; otherwise it goes to its series folder.
-    private func relocateLocked(_ loaded: LoadedNote, title: String, series: String?) throws -> Relocation {
+    private func relocateLocked(_ loaded: LoadedNote, title: String, series: String?) throws -> Move {
         let filed = MeetingFolders.folderName(of: loaded.url, under: notesRoot)
         let folder = filed.map { notesRoot.appendingPathComponent($0, isDirectory: true) } ?? Self.seriesFolder(series, under: notesRoot)
         return try moveLocked(loaded, into: folder, base: Self.noteBaseName(title: title, date: loaded.document.front.date))
@@ -142,28 +152,36 @@ public struct NoteIndex: Sendable {
     /// Used for sidebar folders: nothing in the note changes.
     public func move(_ loaded: LoadedNote, into folder: URL) throws -> Relocation {
         let base = loaded.url.deletingPathExtension().lastPathComponent
-        return try Self.withWriteLock { try moveLocked(loaded, into: folder, base: base) }
+        return withLinksRewritten(try Self.withWriteLock { try moveLocked(loaded, into: folder, base: base) })
     }
 
-    /// The caller holds the write lock.
-    private func moveLocked(_ loaded: LoadedNote, into folder: URL, base: String) throws -> Relocation {
+    /// A finished move: the note where it is now, and the file name its `[[links]]` still have to follow.
+    private struct Move {
+        let note: LoadedNote
+        let oldName: String
+    }
+
+    private func withLinksRewritten(_ move: Move) -> Relocation {
+        let newName = move.note.url.deletingPathExtension().lastPathComponent
+        return Relocation(note: move.note, skippedLinkFiles: rewriteLinks(from: move.oldName, to: newName))
+    }
+
+    /// The caller holds the write lock. Links are left for `withLinksRewritten`, after the lock.
+    private func moveLocked(_ loaded: LoadedNote, into folder: URL, base: String) throws -> Move {
         let fm = FileManager.default
+        let oldName = loaded.url.deletingPathExtension().lastPathComponent
         var target = folder.appendingPathComponent(base + ".md")
-        if Self.samePath(target, loaded.url) { return Relocation(note: loaded, skippedLinkFiles: []) }
+        if Self.samePath(target, loaded.url) { return Move(note: loaded, oldName: oldName) }
         var n = 2
         while fm.fileExists(atPath: target.path) {
             target = folder.appendingPathComponent("\(base) (\(n)).md")
-            if Self.samePath(target, loaded.url) { return Relocation(note: loaded, skippedLinkFiles: []) }
+            if Self.samePath(target, loaded.url) { return Move(note: loaded, oldName: oldName) }
             n += 1
         }
 
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
         try fm.moveItem(at: loaded.url, to: target)
-
-        let oldName = loaded.url.deletingPathExtension().lastPathComponent
-        let newName = target.deletingPathExtension().lastPathComponent
-        let skipped = rewriteLinks(from: oldName, to: newName)
-        return Relocation(note: try read(target), skippedLinkFiles: skipped)
+        return Move(note: try read(target), oldName: oldName)
     }
 
     /// Renames the series: its folder (when there is one), `series:` in every Lyra note of the series wherever it is
@@ -172,10 +190,11 @@ public struct NoteIndex: Sendable {
     /// Returns files it could not update (a note changed by hand meanwhile, an unreadable file); the rename itself still happened.
     @discardableResult
     public func renameSeriesFolder(from: String, to: String) throws -> [URL] {
-        try Self.withWriteLock { try renameSeriesFolderLocked(from: from, to: to) }
+        let skipped = try Self.withWriteLock { try renameSeriesFolderLocked(from: from, to: to) }
+        return skipped + rewriteLinks(from: Self.folderName(from), to: Self.folderName(to))
     }
 
-    /// The caller holds the write lock.
+    /// The caller holds the write lock. Links are rewritten by the caller, after the lock.
     private func renameSeriesFolderLocked(from: String, to: String) throws -> [URL] {
         let fm = FileManager.default
         let oldName = Self.folderName(from), newName = Self.folderName(to)
@@ -210,7 +229,6 @@ public struct NoteIndex: Sendable {
         if hasFolder, oldName != newName, fm.fileExists(atPath: oldPage.path), !fm.fileExists(atPath: newPage.path) {
             try fm.moveItem(at: oldPage, to: newPage)
         }
-        if oldName != newName { skipped += rewriteLinks(from: oldName, to: newName) }
         return skipped
     }
 
@@ -226,23 +244,34 @@ public struct NoteIndex: Sendable {
     // MARK: Links
 
     /// Rewrites `[[old]]`, `[[old|…]]` and `[[old#…]]` in every visible `.md` under the vault. Returns files it could not rewrite.
+    /// The scan takes no lock (it can take a while on a big vault); each file found is read again and rewritten
+    /// under the write lock, so a Lyra save to that file can't land between the read and the write. Never call it
+    /// holding the lock.
     private func rewriteLinks(from oldName: String, to newName: String) -> [URL] {
         guard oldName != newName else { return [] }
-        let patterns = ["]]", "|", "#"].map { ("[[\(oldName)\($0)", "[[\(newName)\($0)") }
+        let needle = Data("[[\(oldName)".utf8)
         var skipped: [URL] = []
         for url in markdownFiles(under: vaultRoot) {
+            linkScanProbe?(url)
             do {
-                let data = try Data(contentsOf: url)
-                guard data.range(of: Data("[[\(oldName)".utf8)) != nil else { continue }
-                guard let text = String(data: data, encoding: .utf8) else { skipped.append(url); continue }
-                let updated = patterns.reduce(text) { $0.replacingOccurrences(of: $1.0, with: $1.1) }
-                guard updated != text else { continue }
-                try Self.writeAtomically(Data(updated.utf8), to: url)
+                guard try Data(contentsOf: url).range(of: needle) != nil else { continue }
+                try Self.withWriteLock { try rewriteLinksLocked(in: url, from: oldName, to: newName) }
             } catch {
                 skipped.append(url)
             }
         }
         return skipped.sorted { $0.path < $1.path }
+    }
+
+    /// The caller holds the write lock.
+    private func rewriteLinksLocked(in url: URL, from oldName: String, to newName: String) throws {
+        let patterns = ["]]", "|", "#"].map { ("[[\(oldName)\($0)", "[[\(newName)\($0)") }
+        guard let text = String(data: try Data(contentsOf: url), encoding: .utf8) else {
+            throw CocoaError(.fileReadInapplicableStringEncoding, userInfo: [NSFilePathErrorKey: url.path])
+        }
+        let updated = patterns.reduce(text) { $0.replacingOccurrences(of: $1.0, with: $1.1) }
+        guard updated != text else { return }
+        try Self.writeAtomically(Data(updated.utf8), to: url)
     }
 
     // MARK: Files

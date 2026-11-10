@@ -27,14 +27,14 @@ public enum NoteLayoutUpgrade {
     /// Claude's grey headings were the small heading before 2026-10-27 and are the big (topic) heading since.
     static func currentLayout(of document: NoteDocument) -> NoteDocument {
         var current = document
-        current.myNotes = NoteMarkdown.render(NoteMarkdown.parse(document.myNotes))
+        current.myNotes = NoteFormatting.text(for: NoteMarkdown.parse(document.myNotes), keepingStyleOf: document.myNotes)
         let expanded = NoteMarkdown.parse(document.expanded).map { block -> NoteBlock in
             guard block.byClaude, block.kind == .heading2 else { return block }
             var topic = block
             topic.kind = .heading1
             return topic
         }
-        current.expanded = NoteMarkdown.render(expanded)
+        current.expanded = NoteFormatting.text(for: expanded, keepingStyleOf: document.expanded)
         return current
     }
 }

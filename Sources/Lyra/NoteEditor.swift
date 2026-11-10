@@ -166,10 +166,33 @@ struct NoteEditor: NSViewRepresentable {
 
 /// Only ever the thin overlay scroller that shows while scrolling, whatever the system setting, so
 /// no track strip breaks the page.
+///
+/// A note scrolled to the very top stays there through a resize: the text re-wrapping on a narrower window would
+/// otherwise keep its first line at the top of the view and scroll the page's top padding out of sight.
 private final class OverlayScrollView: NSScrollView {
     override var scrollerStyle: NSScroller.Style {
         get { .overlay }
         set { super.scrollerStyle = .overlay }
+    }
+
+    private var atTop: Bool { contentView.bounds.origin.y <= 0.5 }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let wasAtTop = atTop
+        super.setFrameSize(newSize)
+        if wasAtTop { keepAtTop() }
+    }
+
+    override func tile() {
+        let wasAtTop = atTop
+        super.tile()
+        if wasAtTop { keepAtTop() }
+    }
+
+    private func keepAtTop() {
+        guard !atTop else { return }
+        contentView.scroll(to: NSPoint(x: contentView.bounds.origin.x, y: 0))
+        reflectScrolledClipView(contentView)
     }
 }
 

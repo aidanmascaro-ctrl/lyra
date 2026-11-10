@@ -32,7 +32,7 @@ public enum NoteEdits {
     /// itself changed, nothing is written and the file as it is now comes back for Aidan to choose.
     public static func save(_ blocks: [NoteBlock], to section: NoteSection, over loaded: LoadedNote,
                             index: NoteIndex) throws -> SectionSave {
-        let text = NoteMarkdown.render(blocks)
+        let text = NoteFormatting.text(for: blocks, keepingStyleOf: section.text(in: loaded.document))
         var document = loaded.document
         section.set(text, in: &document)
         if document == loaded.document { return .saved(loaded) }
@@ -48,8 +48,9 @@ public enum NoteEdits {
 
     /// "Keep mine": this section becomes `blocks`, everything else stays as it is on disk now.
     public static func keepMine(_ blocks: [NoteBlock], section: NoteSection, over disk: LoadedNote, index: NoteIndex) throws -> LoadedNote {
-        let text = NoteMarkdown.render(blocks)
-        return try index.update(disk) { section.set(text, in: &$0) }
+        try index.update(disk) { document in
+            section.set(NoteFormatting.text(for: blocks, keepingStyleOf: section.text(in: document)), in: &document)
+        }
     }
 
     /// Records Claude's blocks as Lyra's own writing, so Re-expand knows they're untouched grey.

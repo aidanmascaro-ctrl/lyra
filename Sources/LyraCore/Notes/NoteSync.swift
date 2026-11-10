@@ -122,6 +122,12 @@ public struct NoteSync: Sendable {
         return accept(note, saved: section)
     }
 
+    /// Typing kept from a page that closed during a conflict (`UnsavedTyping`): the section waits for Reload or
+    /// Keep mine again, against the file as it is now.
+    public mutating func restoreConflict(_ section: NoteSection, mine: [NoteBlock]) {
+        openConflict(section, mine: mine)
+    }
+
     private mutating func openConflict(_ section: NoteSection, mine: [NoteBlock]) {
         pending[section] = nil
         if conflicts[section] == nil { conflicts[section] = Conflict(mine: mine, disk: loaded) }

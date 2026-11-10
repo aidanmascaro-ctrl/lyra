@@ -62,6 +62,8 @@ public struct AfterMeeting: Sendable {
         var note = try index.load(meeting.id, hint: meeting.notePath.map { URL(fileURLWithPath: $0) })
         if meeting.insightsDone != true {
             note = try await fileMeeting(meeting, note: note, lines: Self.transcript(in: folder), folder: folder)
+        } else if meeting.renamePending == true {
+            note = try rename(note, folder: folder)  // the rename failed last time
         }
 
         let current = try Meeting.load(from: folder)
@@ -135,12 +137,19 @@ public struct AfterMeeting: Sendable {
             $0.seriesSuggestion = insights.series
             $0.insightsError = nil
             $0.insightsDone = true
+            $0.renamePending = true
             $0.notePath = saved.url.path
         }
+        return try rename(saved, folder: folder)
+    }
+
+    /// The note's file renamed to its title. Until this succeeds `renamePending` stays set, so Retry tries again.
+    private func rename(_ saved: LoadedNote, folder: URL) throws -> LoadedNote {
         // The series it is already in (a folder Aidan moved it to counts), so the rename never pulls it out.
         let series = SeriesLibrary.summaries(notes: [saved], meetingsByID: [:], notesRoot: index.notesRoot).first?.series
         let moved = try index.relocateReportingSkips(saved, title: saved.document.front.title, series: series)
         try Self.updateMeeting(in: folder) {
+            $0.renamePending = nil
             $0.notePath = moved.note.url.path
             if !moved.skippedLinkFiles.isEmpty {
                 $0.warn("Lyra renamed the note but couldn't update links to it in: "
