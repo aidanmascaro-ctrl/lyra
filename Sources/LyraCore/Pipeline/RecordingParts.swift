@@ -6,8 +6,9 @@ import Foundation
 /// part's transcript on after the filed one (`join`).
 public enum RecordingParts {
     static let folderName = "parts"
-    /// `onscreen.json` goes with its part: its times are that part's. Slides stay at the top, where the note links them.
-    private static let filed: Set<String> = ["transcript.json", "speakers.json", OnScreenLog.fileName]
+    /// `onscreen.json` goes with its part: its times are that part's. So does `callwindow.json`: each part says for
+    /// itself whether the call window was seen. Slides stay at the top, where the note links them.
+    private static let filed: Set<String> = ["transcript.json", "speakers.json", OnScreenLog.fileName, CallWatchHealth.fileName]
 
     /// Files the finished part away and readies `meeting.json` for the next one. Returns the meeting as it was,
     /// for `restore` if recording then can't start.

@@ -55,6 +55,7 @@ struct BottomBar: View {
             Divider().frame(height: 18)
             RecordControl(model: model, app: app)
                 .padding(.leading, 12).padding(.trailing, model.isLive ? 6 : 16).frame(height: 38)
+            if model.isLive, app.slides != nil, !ScreenAccess.isGranted { screenAccessButton }
             if model.isLive, let slides = app.slides { slidesButton(slides) }
             if model.isLive {
                 Button { app.stopRecording() } label: {
@@ -67,6 +68,20 @@ struct BottomBar: View {
         }
         .capsuleSurface()
         .fixedSize()
+    }
+
+    /// Shown while recording a call Lyra isn't allowed to see: opens the Screen Recording settings page.
+    private var screenAccessButton: some View {
+        Button { ScreenAccess.openSettings() } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "eye.slash").font(.system(size: 12))
+                Text("Let Lyra see the call").font(.system(size: 12, weight: .medium))
+            }
+            .foregroundStyle(.orange)
+            .padding(.horizontal, 6).frame(height: 38).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Lyra can't see the call window, so it can't read names off the call's tiles. Click to turn on Screen Recording for Lyra in System Settings; Lyra may need to be quit and reopened after.")
     }
 
     /// Slides on or off for the call being recorded, with how many it has saved. Off until clicked.

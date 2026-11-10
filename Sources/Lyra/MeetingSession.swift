@@ -153,6 +153,7 @@ final class MeetingSession {
             meeting.warn("Lyra couldn't save who was on screen during this call, so speakers are named by voice only. (\(error.localizedDescription))")
         }
         if let slideError = await callWatcher.slideError { meeting.warn(slideError) }
+        if target != nil, let unseen = await callWatcher.warning { meeting.warn(unseen) }
         liveReader?.cancel()
         liveReader = nil
         let tracks = await recorder.stop()
@@ -184,17 +185,23 @@ final class MeetingSession {
         let startTitle = meeting.title
         let watcher = callWatcher
         callReader = Task { [weak self] in
-            var frames = 0
+            var looks = 0
             while !Task.isCancelled {
                 guard let self else { return }
-                if !isPaused, let image = await CallWindow.frame(pid: pid, startTitle: startTitle), !Task.isCancelled, !isPaused {
-                    let t = clock.seconds  // when the frame came back, not when it was asked for
-                    if let text = await watcher.look(at: image, t: t, saveSlides: slidesOn) {
-                        keep(text)
-                        onSlideSaved?(await watcher.slideCount)
+                if !isPaused {
+                    let (image, outcome) = await CallWindow.look(pid: pid, startTitle: startTitle)
+                    if !Task.isCancelled, !isPaused {
+                        await watcher.record(outcome)
+                        if let image {
+                            let t = clock.seconds  // when the frame came back, not when it was asked for
+                            if let text = await watcher.look(at: image, t: t, saveSlides: slidesOn) {
+                                keep(text)
+                                onSlideSaved?(await watcher.slideCount)
+                            }
+                        }
+                        looks += 1
+                        if looks % Self.callFlushEvery == 0 { try? await watcher.flush() }  // stop() saves it again, and says if it can't
                     }
-                    frames += 1
-                    if frames % Self.callFlushEvery == 0 { try? await watcher.flush() }  // stop() saves it again, and says if it can't
                 }
                 try? await Task.sleep(for: Self.callFrameInterval)
             }

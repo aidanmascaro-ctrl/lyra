@@ -17,12 +17,23 @@ public actor CallWatcher {
     private var tileNames: Set<String> = []
     /// The first slide that couldn't be saved; kept so the note can say so.
     public private(set) var slideError: String?
+    /// How each look at the call window went, so a call where it was never seen says why.
+    private var health: CallWatchHealth
 
     public init(folder: URL) {
         self.folder = folder
         samples = OnScreenLog.load(from: folder)
         slides = SlideLog.load(from: folder)
+        health = CallWatchHealth.load(from: folder)
     }
+
+    /// Counts one look at the call window (a seen one is counted here, before `look(at:)`).
+    public func record(_ outcome: CallLook) {
+        health.record(outcome)
+    }
+
+    /// Why the call window was never seen, for the note; nil when it was seen or never looked for.
+    public var warning: String? { health.warning }
 
     public var slideCount: Int { slides.count }
 
@@ -45,9 +56,10 @@ public actor CallWatcher {
         return save(image, at: t, text: text) ? text : nil
     }
 
-    /// Writes `onscreen.json` and `slides.json`, so a crash keeps what was seen so far.
+    /// Writes `onscreen.json`, `slides.json` and `callwindow.json`, so a crash keeps what was seen so far.
     public func flush() throws {
         try OnScreenLog.save(samples, in: folder)
+        try health.save(in: folder)
         if !slides.isEmpty { try SlideLog.save(slides, in: folder) }
     }
 

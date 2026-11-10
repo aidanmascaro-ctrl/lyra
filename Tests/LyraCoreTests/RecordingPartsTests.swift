@@ -66,6 +66,17 @@ final class RecordingPartsTests: XCTestCase {
         XCTAssertTrue(exists("slides.json"))
     }
 
+    /// The next part starts with no counts, so it warns (or not) on its own looks.
+    func testCallWindowCountsFiledWithTheirPart() throws {
+        _ = try finishedMeeting(seconds: 300)
+        var health = CallWatchHealth()
+        health.record(.seen)
+        try health.save(in: folder)
+        _ = try RecordingParts.archive(folder: folder)
+        XCTAssertTrue(exists("parts/1/callwindow.json"))
+        XCTAssertEqual(CallWatchHealth.load(from: folder), CallWatchHealth())
+    }
+
     func testASecondResumeAddsTheSecondPartsLength() throws {
         var meeting = try finishedMeeting(seconds: 120)
         meeting.earlierParts = 1
