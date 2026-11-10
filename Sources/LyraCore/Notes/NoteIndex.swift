@@ -159,6 +159,7 @@ public struct NoteIndex: Sendable {
 
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
         try fm.moveItem(at: loaded.url, to: target)
+        NoteImages.moveEmbedded(loaded.document, from: loaded.url, to: target)
 
         let oldName = loaded.url.deletingPathExtension().lastPathComponent
         let newName = target.deletingPathExtension().lastPathComponent

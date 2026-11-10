@@ -6,6 +6,15 @@ import LyraCore
 final class NoteTextView: NSTextView {
     var selectionActions = false { didSet { updateSelectionMenu() } }
     var onSelectionAction: ((SelectionAction, String, Int) -> Void)?
+    /// Where this note's pictures are saved and found; nil (no note file yet) shows them as not found and pastes text only.
+    var imageLoader: NoteImageLoader? {
+        didSet {
+            guard imageLoader?.note != oldValue?.note || imageLoader?.vaultRoot != oldValue?.vaultRoot else { return }
+            relayoutMedia()
+        }
+    }
+    /// Something Aidan should hear about (a picture that couldn't be saved).
+    var onNotice: ((String) -> Void)?
 
     /// Where the last typing landed (in the new text), so the blocks it touched can turn white.
     private var typedRange: NSRange?
@@ -30,6 +39,7 @@ final class NoteTextView: NSTextView {
         usesFontPanel = false
         usesRuler = false
         isAutomaticDashSubstitutionEnabled = false
+        registerForDraggedTypes([.fileURL, .png, .tiff])
         drawsBackground = true
         backgroundColor = NoteStyle.background
         insertionPointColor = .labelColor
@@ -67,6 +77,7 @@ final class NoteTextView: NSTextView {
         // `NoteEditor` gives each editor its own undo manager, so this clears only this note's history.
         undoManager?.removeAllActions()
         emptyBlock = NoteText.emptyBlock(of: blocks)
+        imageLoader?.reset()  // a picture added in Obsidian since shows now
         storage.setAttributedString(NoteStyle.styled(NoteText.attributed(blocks)))
         let location = min(caret.location, storage.length)
         setSelectedRange(NSRange(location: location, length: min(caret.length, storage.length - location)))
@@ -108,13 +119,21 @@ final class NoteTextView: NSTextView {
     /// Re-applies each touched block's keys across its whole paragraph (typing at a block's edge can
     /// borrow a neighbour's), clears grey where Aidan typed, then restyles.
     override func didChangeText() {
+        var repaired: [NoteBlock]?
         if let typed = typedRange, let storage = textStorage {
             var blocks = self.blocks
             let touched = paragraphs(covering: typed)
             for i in touched where blocks.indices.contains(i) { blocks[i].byClaude = false }
-            restyle(blocks, in: (storage.string as NSString).paragraphRange(for: typed))
+            // A deletion that joined a picture or divider onto text: put it back on a line of its own.
+            if NoteText.attributed(blocks).string != storage.string { repaired = blocks }
+            else { restyle(blocks, in: (storage.string as NSString).paragraphRange(for: typed)) }
         }
         typedRange = nil
+        if let repaired {
+            let caret = selectedRange().location
+            super.didChangeText()
+            return replace(with: repaired, caret: caret)
+        }
         refreshTyping()
         refreshGaps()
         needsDisplay = true
@@ -144,6 +163,7 @@ final class NoteTextView: NSTextView {
     }
 
     override func insertText(_ string: Any, replacementRange: NSRange) {
+        if replacementRange.location == NSNotFound, insertBesideMedia(string) { return }
         if (string as? String) == " ", selectedRange().length == 0, applyShortcut() { return }
         super.insertText(string, replacementRange: replacementRange)
     }
@@ -155,6 +175,20 @@ final class NoteTextView: NSTextView {
         var blocks = self.blocks
         guard !blocks.isEmpty else { return super.insertNewline(sender) }
         let i = blockIndex(at: caret.location), start = blockStart(i, in: blocks), block = blocks[i]
+        if block.kind.isMedia {
+            // Return on a picture or divider: a new empty line under it (above it, from just before it).
+            let at = caret.location == start ? i : i + 1
+            blocks.insert(NoteBlock(kind: .paragraph, runs: []), at: at)
+            return replace(with: blocks, caret: blockStart(at, in: blocks))
+        }
+        if block.kind == .paragraph, caret.location == start + NoteText.length(of: block),
+           Self.dividerShortcuts.contains(block.plainText) {
+            blocks[i] = NoteBlock(kind: .divider, runs: [])
+            if i + 1 == blocks.count || !(blocks[i + 1].kind == .paragraph && blocks[i + 1].runs.isEmpty) {
+                blocks.insert(NoteBlock(kind: .paragraph, runs: []), at: i + 1)
+            }
+            return replace(with: blocks, caret: blockStart(i + 1, in: blocks))
+        }
         let isList = block.kind == .bullet || block.kind == .numbered
         if isList, NoteText.continuation(after: block) == nil {
             blocks[i] = NoteBlock(kind: .paragraph, runs: block.runs)
@@ -174,6 +208,9 @@ final class NoteTextView: NSTextView {
     override func deleteBackward(_ sender: Any?) {
         let caret = selectedRange()
         var blocks = self.blocks
+        if let removal = mediaRemoval(backward: true, selection: caret, in: blocks) {
+            return replace(with: removal.blocks, caret: removal.caret)
+        }
         if caret.length == 0, !blocks.isEmpty {
             let i = blockIndex(at: caret.location)
             if caret.location == blockStart(i, in: blocks), blocks[i].kind != .paragraph {
@@ -182,6 +219,13 @@ final class NoteTextView: NSTextView {
             }
         }
         super.deleteBackward(sender)
+    }
+
+    override func deleteForward(_ sender: Any?) {
+        if let removal = mediaRemoval(backward: false, selection: selectedRange(), in: blocks) {
+            return replace(with: removal.blocks, caret: removal.caret)
+        }
+        super.deleteForward(sender)
     }
 
     override func insertTab(_ sender: Any?) { shiftIndent(by: 1) }
@@ -195,6 +239,7 @@ final class NoteTextView: NSTextView {
 
     /// Pastes plain text in the current block's style, with every kind of line break made "\n".
     override func paste(_ sender: Any?) {
+        if pasteImages(from: NSPasteboard.general, at: nil) { return }
         guard let text = NSPasteboard.general.string(forType: .string) else { return }
         insertText(Self.plainLines(text), replacementRange: selectedRange())
     }
@@ -288,7 +333,7 @@ final class NoteTextView: NSTextView {
     private func isHeading(_ block: NoteBlock) -> Bool { block.kind == .heading1 || block.kind == .heading2 }
 
     /// One undoable step that swaps the whole text for `blocks`; Lyra's own changes never whiten grey.
-    private func replace(with blocks: [NoteBlock], caret: Int) {
+    func replace(with blocks: [NoteBlock], caret: Int) {
         replace(with: blocks, selection: NSRange(location: caret, length: 0))
     }
 
@@ -332,9 +377,10 @@ final class NoteTextView: NSTextView {
             return
         }
         let i = blockIndex(at: caret), start = blockStart(i, in: blocks)
-        var attrs = NoteText.attributed([NoteBlock(kind: blocks[i].kind, indent: blocks[i].indent, runs: [.init(text: " ")])])
+        let kind: BlockKind = blocks[i].kind.isMedia ? .paragraph : blocks[i].kind
+        var attrs = NoteText.attributed([NoteBlock(kind: kind, indent: blocks[i].indent, runs: [.init(text: " ")])])
             .attributes(at: 0, effectiveRange: nil)
-        let source = caret > start ? caret - 1 : (blocks[i].runs.isEmpty ? nil : caret)
+        let source = blocks[i].kind.isMedia ? nil : caret > start ? caret - 1 : (blocks[i].runs.isEmpty ? nil : caret)
         if let source, source < storage.length {
             attrs[NoteText.bold] = storage.attribute(NoteText.bold, at: source, effectiveRange: nil) ?? false
             attrs[NoteText.underline] = storage.attribute(NoteText.underline, at: source, effectiveRange: nil) ?? false
@@ -344,7 +390,7 @@ final class NoteTextView: NSTextView {
 
     // MARK: Geometry
 
-    private func blockIndex(at location: Int) -> Int {
+    func blockIndex(at location: Int) -> Int {
         let s = string as NSString
         var count = 0, index = 0
         while index < min(location, s.length) {
@@ -355,8 +401,8 @@ final class NoteTextView: NSTextView {
         return count
     }
 
-    private func blockStart(_ i: Int, in blocks: [NoteBlock]) -> Int {
-        blocks.prefix(i).reduce(0) { $0 + $1.plainText.utf16.count + 1 }
+    func blockStart(_ i: Int, in blocks: [NoteBlock]) -> Int {
+        blocks.prefix(i).reduce(0) { $0 + NoteText.length(of: $1) + 1 }
     }
 
     private func paragraphs(covering range: NSRange) -> ClosedRange<Int> {
@@ -365,7 +411,7 @@ final class NoteTextView: NSTextView {
 
     private func split(_ i: Int, at offset: Int) -> (head: [InlineRun], tail: [InlineRun]) {
         guard let storage = textStorage else { return ([], []) }
-        let start = blockStart(i, in: blocks), length = blocks[i].plainText.utf16.count
+        let start = blockStart(i, in: blocks), length = NoteText.length(of: blocks[i])
         let cut = min(max(offset, 0), length)
         func runs(_ r: NSRange) -> [InlineRun] { NoteText.blocks(storage.attributedSubstring(from: r)).first?.runs ?? [] }
         return (runs(NSRange(location: start, length: cut)), runs(NSRange(location: start + cut, length: length - cut)))
@@ -391,11 +437,15 @@ final class NoteTextView: NSTextView {
     private func handleRect(ofBlock i: Int, in blocks: [NoteBlock]) -> NSRect? {
         guard let line = lineRect(ofBlock: i, in: blocks) else { return nil }
         let x = textContainerOrigin.x + CGFloat(blocks[i].indent) * NoteStyle.indentStep - NoteStyle.handleWidth - 4
-        return NSRect(x: x, y: line.baseline - 14, width: NoteStyle.handleWidth, height: 18)
+        switch blocks[i].kind {
+        case .image: return NSRect(x: x, y: line.rect.minY + 6, width: NoteStyle.handleWidth, height: 18)
+        case .divider: return NSRect(x: x, y: line.rect.midY - 9, width: NoteStyle.handleWidth, height: 18)
+        default: return NSRect(x: x, y: line.baseline - 14, width: NoteStyle.handleWidth, height: 18)
+        }
     }
 
     /// The block boundary (0...count) nearest a point: where a dragged block would land.
-    private func dropIndex(at point: NSPoint, in blocks: [NoteBlock]) -> Int {
+    func dropIndex(at point: NSPoint, in blocks: [NoteBlock]) -> Int {
         for i in blocks.indices {
             guard let line = lineRect(ofBlock: i, in: blocks) else { continue }
             if point.y < line.rect.midY { return i }
@@ -506,7 +556,7 @@ final class NoteTextView: NSTextView {
             let index = layout.characterIndex(for: inContainer, in: container, fractionOfDistanceBetweenInsertionPoints: nil)
             let candidate = blockIndex(at: index)
             if let line = lineRect(ofBlock: candidate, in: blocks), point.y >= line.rect.minY - 4,
-               !blocks[candidate].runs.isEmpty { hovered = candidate }
+               !blocks[candidate].runs.isEmpty || blocks[candidate].kind.isMedia { hovered = candidate }
         }
         if hovered != hoveredBlock { hoveredBlock = hovered; needsDisplay = true }
     }
@@ -519,16 +569,36 @@ final class NoteTextView: NSTextView {
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         let blocks = self.blocks
+        if isEditable, let picture = mediaBlock(at: point, in: blocks) {
+            // A picture or divider is dragged by itself, not only by its handle; a click without a drag selects it.
+            if dragBlock(picture, in: blocks, startedBy: event) { return }
+            return setSelectedRange(NSRange(location: blockStart(picture, in: blocks), length: 1))
+        }
         guard isEditable, let from = hoveredBlock, blocks.indices.contains(from),
               let handle = handleRect(ofBlock: from, in: blocks), handle.insetBy(dx: -4, dy: -4).contains(point)
         else { return super.mouseDown(with: event) }
-        drag = (from, from)
-        NSCursor.closedHand.push()
+        _ = dragBlock(from, in: blocks, startedBy: nil)
+    }
+
+    /// Follows the mouse until it is let go, showing where block `from` would land, then moves it there. With
+    /// `startedBy` (a press on a picture) nothing happens unless the mouse moves a few points first; returns whether
+    /// a drag happened.
+    private func dragBlock(_ from: Int, in blocks: [NoteBlock], startedBy press: NSEvent?) -> Bool {
+        let start = press.map { convert($0.locationInWindow, from: nil) }
+        var dragging = press == nil
+        if dragging { beginDrag(from) }
         while let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]), next.type == .leftMouseDragged {
+            let point = convert(next.locationInWindow, from: nil)
+            if !dragging, let start, hypot(point.x - start.x, point.y - start.y) > Self.dragThreshold {
+                dragging = true
+                beginDrag(from)
+            }
+            guard dragging else { continue }
             autoscroll(with: next)
-            drag?.to = dropIndex(at: convert(next.locationInWindow, from: nil), in: blocks)
+            drag?.to = dropIndex(at: point, in: blocks)
             needsDisplay = true
         }
+        guard dragging else { return false }
         NSCursor.pop()
         let to = drag?.to ?? from
         drag = nil
@@ -538,6 +608,27 @@ final class NoteTextView: NSTextView {
             replace(with: moved, caret: blockStart(landed, in: moved))
         }
         needsDisplay = true
+        return true
+    }
+
+    private func beginDrag(_ from: Int) {
+        drag = (from, from)
+        NSCursor.closedHand.push()
+    }
+
+    private static let dragThreshold: CGFloat = 4
+
+    /// The divider or picture drawn under `point`, if any.
+    private func mediaBlock(at point: NSPoint, in blocks: [NoteBlock]) -> Int? {
+        guard let layout = layoutManager, let container = textContainer else { return nil }
+        let inContainer = NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
+        let glyph = layout.glyphIndex(for: inContainer, in: container)
+        guard glyph < layout.numberOfGlyphs else { return nil }
+        let character = layout.characterIndexForGlyph(at: glyph)
+        let i = blockIndex(at: character)
+        guard blocks.indices.contains(i), blocks[i].kind.isMedia else { return nil }
+        let rect = layout.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container)
+        return rect.contains(inContainer) ? i : nil
     }
 
     // MARK: Selection menu

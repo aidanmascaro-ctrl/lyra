@@ -71,6 +71,9 @@ final class MeetingModel: ObservableObject {
     }
 
     var loaded: LoadedNote? { sync?.loaded }
+    /// Where this meeting's note is, for the editors' pictures.
+    var noteURL: URL? { loaded?.url }
+    var vaultRoot: URL { notes.vaultRoot }
     /// Sections changed elsewhere while they had typing Lyra hadn't saved; each waits for Reload or Keep mine.
     var conflicts: [NoteSection: NoteSync.Conflict] { sync?.conflicts ?? [:] }
     var isLive: Bool { app.liveMeeting?.folder == folder }
