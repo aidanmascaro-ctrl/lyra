@@ -5,7 +5,7 @@ import LyraCore
 final class NoteMediaAttachment: NSTextAttachment {
     init(kind: BlockKind, media: String?) {
         super.init(data: nil, ofType: nil)
-        attachmentCell = NoteMediaCell(kind: kind, media: media)
+        attachmentCell = MainActor.assumeIsolated { NoteMediaCell(kind: kind, media: media) }  // AppKit builds text on the main thread
     }
 
     required init?(coder: NSCoder) { fatalError("NoteMediaAttachment is built in code") }
@@ -35,8 +35,12 @@ final class NoteMediaCell: NSTextAttachmentCell {
     override func cellFrame(for textContainer: NSTextContainer, proposedLineFragment lineFrag: NSRect,
                             glyphPosition position: NSPoint, characterIndex charIndex: Int) -> NSRect {
         let column = max(textContainer.size.width - 2 * textContainer.lineFragmentPadding, 40)
-        let view = textContainer.textView as? NoteTextView
-        return NSRect(origin: .zero, size: Self.size(kind: kind, image: view?.image(for: media), column: column))
+        let (kind, media) = (kind, media)
+        nonisolated(unsafe) let container = textContainer  // AppKit lays text out on the main thread
+        return MainActor.assumeIsolated {
+            let view = container.textView as? NoteTextView
+            return NSRect(origin: .zero, size: Self.size(kind: kind, image: view?.image(for: media), column: column))
+        }
     }
 
     /// A picture's own size in points, scaled down (never up) to fit `column`.
@@ -54,7 +58,7 @@ final class NoteMediaCell: NSTextAttachmentCell {
         let view = controlView as? NoteTextView
         let selected = view.map { NSLocationInRange(charIndex, $0.selectedRange()) && $0.selectedRange().length > 0 } ?? false
         switch kind {
-        case .image: drawPicture(view?.image(for: media), in: cellFrame, selected: selected)
+        case .image: drawPicture(view?.image(for: media), missing: view?.isMissing(media) ?? true, in: cellFrame, selected: selected)
         default: drawDivider(in: cellFrame, selected: selected)
         }
     }
@@ -68,7 +72,7 @@ final class NoteMediaCell: NSTextAttachmentCell {
         NSRect(x: frame.minX, y: floor(frame.midY), width: frame.width, height: 1).fill()
     }
 
-    private func drawPicture(_ image: NSImage?, in frame: NSRect, selected: Bool) {
+    private func drawPicture(_ image: NSImage?, missing: Bool, in frame: NSRect, selected: Bool) {
         let shape = NSBezierPath(roundedRect: frame, xRadius: Self.cornerRadius, yRadius: Self.cornerRadius)
         if let image {
             NSGraphicsContext.saveGraphicsState()
@@ -76,7 +80,7 @@ final class NoteMediaCell: NSTextAttachmentCell {
             image.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true,
                        hints: [.interpolation: NSImageInterpolation.high.rawValue])
             NSGraphicsContext.restoreGraphicsState()
-        } else {
+        } else if missing {
             NSColor.quaternaryLabelColor.setFill()
             shape.fill()
             let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor]
@@ -96,26 +100,52 @@ final class NoteMediaCell: NSTextAttachmentCell {
     override func wantsToTrackMouse() -> Bool { false }
 }
 
-/// Finds and holds the pictures one note shows. Each picture line is looked up once (found or not) until `reset`.
+/// Finds and holds the pictures one note shows. Finding a file (which can mean searching the vault) and reading it
+/// happen off the main thread; until then a picture is drawn as an empty box, and `onLoaded` fires when it arrives.
+/// `reset` looks every picture up again (one added in Obsidian since) while still showing what it had.
 @MainActor
 final class NoteImageLoader {
     let note: URL
     let vaultRoot: URL
-    private var cache: [String: NSImage?] = [:]
+    var onLoaded: (() -> Void)?
+    private enum Entry { case loading, found(NSImage), missing }
+    private var cache: [String: Entry] = [:]
+    private var stale: Set<String> = []
 
     init(note: URL, vaultRoot: URL) {
         self.note = note
         self.vaultRoot = vaultRoot
     }
 
+    /// The picture for `media` if it has been read; nil while looking or when not found (`isMissing` tells which).
     func image(for media: String) -> NSImage? {
-        if let known = cache[media] { return known }
-        let image = NoteMarkdown.imageTarget(of: media)
-            .flatMap { NoteImages.resolve($0, note: note, vaultRoot: vaultRoot) }
-            .flatMap(NSImage.init(contentsOf:))
-        cache[media] = image
-        return image
+        lookUpIfNeeded(media)
+        if case .found(let image) = cache[media] { return image }
+        return nil
     }
 
-    func reset() { cache = [:] }
+    func isMissing(_ media: String) -> Bool {
+        if case .missing = cache[media] { return true }
+        return false
+    }
+
+    func reset() { stale = Set(cache.keys) }
+
+    private func lookUpIfNeeded(_ media: String) {
+        let known = cache[media]
+        if known != nil, !stale.contains(media) { return }
+        stale.remove(media)
+        if known == nil { cache[media] = .loading }
+        guard let target = NoteMarkdown.imageTarget(of: media) else { cache[media] = .missing; return }
+        let (note, vault) = (note, vaultRoot)
+        Task.detached(priority: .userInitiated) {
+            let data = NoteImages.resolve(target, note: note, vaultRoot: vault).flatMap { try? Data(contentsOf: $0) }
+            await MainActor.run { [weak self] in self?.loaded(media, data: data) }
+        }
+    }
+
+    private func loaded(_ media: String, data: Data?) {
+        cache[media] = data.flatMap(NSImage.init(data:)).map(Entry.found) ?? .missing
+        onLoaded?()
+    }
 }

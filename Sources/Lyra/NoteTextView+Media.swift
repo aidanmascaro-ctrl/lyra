@@ -12,6 +12,59 @@ extension NoteTextView {
         return imageLoader?.image(for: media)
     }
 
+    /// True once Lyra has looked and the picture isn't there (or there is no note to look beside).
+    func isMissing(_ media: String?) -> Bool {
+        guard let media, let imageLoader else { return true }
+        return imageLoader.isMissing(media)
+    }
+
+    /// With exactly one picture or divider selected, the cursor goes just after it: typing or Return then starts a
+    /// new line under it instead of replacing it.
+    func collapseSelectedMedia() {
+        let sel = selectedRange()
+        guard sel.length == 1, isMediaCharacter(at: sel.location) else { return }
+        setSelectedRange(NSRange(location: sel.location + 1, length: 0))
+    }
+
+    func isMediaCharacter(at location: Int) -> Bool {
+        guard let storage = textStorage, location < storage.length,
+              (storage.string as NSString).character(at: location) == 0xFFFC else { return false }
+        return NoteText.kind(of: storage.attributes(at: location, effectiveRange: nil)).isMedia
+    }
+
+    /// The selection as plain text, each picture or divider written as its line in the file (`![[a.png]]`, `***`), so
+    /// pasting it back (here or in Obsidian) brings the picture, never an invisible placeholder character.
+    func plainText(of range: NSRange) -> String {
+        guard let storage = textStorage else { return "" }
+        let units = storage.string as NSString
+        var out = ""
+        var cursor = range.location
+        for i in range.location..<NSMaxRange(range) where isMediaCharacter(at: i) {
+            out += units.substring(with: NSRange(location: cursor, length: i - cursor))
+            let attrs = storage.attributes(at: i, effectiveRange: nil)
+            out += attrs[NoteText.media] as? String ?? NoteMarkdown.render([NoteBlock(kind: .divider, runs: [])])
+            cursor = i + 1
+        }
+        out += units.substring(with: NSRange(location: cursor, length: NSMaxRange(range) - cursor))
+        return out.replacingOccurrences(of: NoteText.mediaCharacter, with: "")
+    }
+
+    override func writeSelection(to pboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
+        let sel = selectedRange()
+        guard sel.length > 0 else { return false }
+        pboard.clearContents()
+        return pboard.setString(plainText(of: sel), forType: .string)
+    }
+
+    /// A pasted or typed line that is exactly a picture's line (`![[a.png]]`) becomes that picture.
+    static func picturesFromLines(_ blocks: [NoteBlock]) -> [NoteBlock] {
+        blocks.map { block in
+            guard block.kind == .paragraph, !block.byClaude, block.runs.allSatisfy({ !$0.bold && !$0.underline }),
+                  NoteMarkdown.imageTarget(of: block.plainText) != nil else { return block }
+            return NoteBlock(kind: .image, runs: [], media: block.plainText)
+        }
+    }
+
     /// Pictures are measured again (found, or a new note folder): their size depends on the file.
     func relayoutMedia() {
         guard let layout = layoutManager, let storage = textStorage else { return }
@@ -87,9 +140,7 @@ extension NoteTextView {
     /// picture that comes with it, unless that text is only a web address. Returns false when there was no picture.
     func pasteImages(from pasteboard: NSPasteboard, at boundary: Int?) -> Bool {
         let files = imageFiles(on: pasteboard)
-        let text = pasteboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let textIsAddress = text.map { $0.hasPrefix("http://") || $0.hasPrefix("https://") } ?? false
-        let data = files.isEmpty && (text == nil || textIsAddress) ? pastedImageData(on: pasteboard) : nil
+        let data = files.isEmpty && Self.pictureWinsOverText(on: pasteboard) ? pastedImageData(on: pasteboard) : nil
         guard !files.isEmpty || data != nil else { return false }
         guard let loader = imageLoader else {
             onNotice?("Lyra can't add a picture until this note has been saved.")
@@ -110,6 +161,12 @@ extension NoteTextView {
         return true
     }
 
+    /// A picture comes with no text, or only with its web address (a browser's Copy Image): the picture is what was meant.
+    static func pictureWinsOverText(on pasteboard: NSPasteboard) -> Bool {
+        guard let text = pasteboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) else { return true }
+        return (text.hasPrefix("http://") || text.hasPrefix("https://")) && !text.contains(where: \.isWhitespace)
+    }
+
     private func insertImages(_ names: [String], at boundary: Int?) {
         var blocks = self.blocks
         let pictures = names.map(NoteBlock.image(fileName:))
@@ -124,7 +181,10 @@ extension NoteTextView {
                 blocks.remove(at: i)
                 at = i
             } else {
+                // After the line and the lines nested under it, so a list keeps its children together.
                 at = i + 1
+                while at < blocks.count, blocks[i].kind == .bullet || blocks[i].kind == .numbered,
+                      blocks[at].kind == .bullet || blocks[at].kind == .numbered, blocks[at].indent > blocks[i].indent { at += 1 }
             }
         }
         blocks.insert(contentsOf: pictures, at: at)
@@ -166,7 +226,7 @@ extension NoteTextView {
         guard isEditable, sender.draggingSource as AnyObject? !== self else { return false }
         let pasteboard = sender.draggingPasteboard
         return !imageFiles(on: pasteboard).isEmpty
-            || (pasteboard.string(forType: .string) == nil && pastedImageData(on: pasteboard) != nil)
+            || (Self.pictureWinsOverText(on: pasteboard) && pastedImageData(on: pasteboard) != nil)
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {

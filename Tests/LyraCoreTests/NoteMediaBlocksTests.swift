@@ -21,6 +21,13 @@ final class NoteMediaBlocksTests: XCTestCase {
         XCTAssertEqual(NoteMarkdown.parse("- a\n---").map(\.kind), [.bullet, .divider])
     }
 
+    func testADashDividerThatEndsUpUnderTextIsWrittenAsStars() {
+        var blocks = NoteMarkdown.parse("a\n\n---")
+        blocks.remove(at: 1)  // the blank line between them deleted
+        XCTAssertEqual(NoteMarkdown.render(blocks), "a\n***")
+        XCTAssertEqual(NoteMarkdown.parse(NoteMarkdown.render(blocks)).map(\.kind), [.paragraph, .divider])
+    }
+
     func testANewDividerIsWrittenAsStars() {
         XCTAssertEqual(NoteMarkdown.render([NoteBlock(kind: .paragraph, runs: [.init(text: "x")]), NoteBlock(kind: .divider, runs: [])]),
                        "x\n***")

@@ -86,28 +86,39 @@ public enum NoteMarkdown {
     /// indent; any other block at that indent or shallower restarts it.
     public static func renderLines(_ blocks: [NoteBlock]) -> [String] {
         var counters = [Int](repeating: 0, count: maxIndent + 1)
+        var previous: String?
         return blocks.map { block in
-            let level = min(max(block.indent, 0), maxIndent)
-            let resetFrom = block.kind == .numbered ? level + 1 : level
-            for i in resetFrom..<counters.count { counters[i] = 0 }
-            if block.kind != .bullet && block.kind != .numbered {
-                counters = [Int](repeating: 0, count: maxIndent + 1)
-            }
-            var marker = ""
-            switch block.kind {
-            case .divider: return block.media ?? newDivider
-            case .image: return block.media ?? ""
-            case .paragraph: break
-            case .heading1: marker = heading1Marker
-            case .heading2: marker = heading2Marker
-            case .bullet: marker = String(repeating: "  ", count: level) + "- "
-            case .numbered:
-                counters[level] += 1
-                marker = String(repeating: "  ", count: level) + "\(counters[level]). "
-            }
-            let inline = renderRuns(block.runs)
-            return marker + (block.byClaude ? claudeOpen + inline + claudeClose : inline)
+            let line = renderLine(block, counters: &counters, under: previous)
+            previous = line
+            return line
         }
+    }
+
+    private static func renderLine(_ block: NoteBlock, counters: inout [Int], under previous: String?) -> String {
+        let level = min(max(block.indent, 0), maxIndent)
+        let resetFrom = block.kind == .numbered ? level + 1 : level
+        for i in resetFrom..<counters.count { counters[i] = 0 }
+        if block.kind != .bullet && block.kind != .numbered {
+            counters = [Int](repeating: 0, count: maxIndent + 1)
+        }
+        var marker = ""
+        switch block.kind {
+        case .divider:
+            // `---` straight under text would make that text a heading in Obsidian (and stop being a divider).
+            let line = block.media ?? newDivider
+            let bare = line.replacingOccurrences(of: " +$", with: "", options: .regularExpression)
+            return bare == "---" && previous.map(isTextLine) == true ? newDivider : line
+        case .image: return block.media ?? ""
+        case .paragraph: break
+        case .heading1: marker = heading1Marker
+        case .heading2: marker = heading2Marker
+        case .bullet: marker = String(repeating: "  ", count: level) + "- "
+        case .numbered:
+            counters[level] += 1
+            marker = String(repeating: "  ", count: level) + "\(counters[level]). "
+        }
+        let inline = renderRuns(block.runs)
+        return marker + (block.byClaude ? claudeOpen + inline + claudeClose : inline)
     }
 
     private static func needsGapBefore(_ block: NoteBlock, after previous: NoteBlock) -> Bool {

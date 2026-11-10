@@ -119,7 +119,7 @@ final class NoteMediaEditingTests: XCTestCase {
         XCTAssertEqual(view.blocks, [text("a"), picture, text("cd")])
     }
 
-    func testPastedPictureIsSavedBesideTheNoteAndGoesOnItsOwnLine() throws {
+    func testPastedPictureIsSavedBesideTheNoteAndGoesOnItsOwnLine() async throws {
         let note = folder.appendingPathComponent("Note.md")
         view.imageLoader = NoteImageLoader(note: note, vaultRoot: folder)
         view.load([text("a"), text("")])
@@ -136,6 +136,8 @@ final class NoteMediaEditingTests: XCTestCase {
         let name = try XCTUnwrap(blocks[1].media.flatMap(NoteMarkdown.imageTarget(of:)))
         XCTAssertTrue(name.hasPrefix("Pasted image "))
         XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appendingPathComponent(name).path))
+        _ = view.image(for: blocks[1].media)  // starts the lookup, off the main thread
+        for _ in 0..<100 where view.image(for: blocks[1].media) == nil { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertNotNil(view.image(for: blocks[1].media))
         pasteboard.releaseGlobally()
     }
@@ -163,5 +165,59 @@ final class NoteMediaEditingTests: XCTestCase {
         XCTAssertNil(styled.attribute(.attachment, at: 1, effectiveRange: nil))  // its "\n"
         XCTAssertTrue(styled.attribute(.attachment, at: 2, effectiveRange: nil) is NoteMediaAttachment)
         XCTAssertNil(styled.attribute(.attachment, at: 4, effectiveRange: nil))
+    }
+
+    func testTypingOnASelectedPictureStartsALineUnderIt() {
+        view.load([picture, text("b")])
+        view.setSelectedRange(NSRange(location: 0, length: 1))
+        type("x")
+        XCTAssertEqual(view.blocks, [picture, text("x"), text("b")])
+        view.setSelectedRange(NSRange(location: 0, length: 1))
+        key { $0.insertNewline(nil) }
+        XCTAssertEqual(view.blocks, [picture, text(""), text("x"), text("b")])
+    }
+
+    func testCopyingAPictureCopiesItsLineAndPastingThatLineBringsItBack() {
+        view.load([text("a"), picture])
+        view.setSelectedRange(NSRange(location: 0, length: 3))
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("lyra-test-\(UUID().uuidString)"))
+        XCTAssertTrue(view.writeSelection(to: pasteboard, types: [.string]))
+        XCTAssertEqual(pasteboard.string(forType: .string), "a\n![[a.png]]")
+        pasteboard.releaseGlobally()
+        view.load([text("")])
+        view.setSelectedRange(NSRange(location: 0, length: 0))
+        key { $0.insertText("a\n![[a.png]]", replacementRange: NSRange(location: NSNotFound, length: 0)) }
+        XCTAssertEqual(view.blocks, [text("a"), picture])
+        XCTAssertFalse(view.string.contains("\u{FFFC}\u{FFFC}"))
+    }
+
+    func testAStrayPlaceholderCharacterIsNeverPasted() {
+        XCTAssertEqual(NoteTextView.plainLines("a\u{FFFC}b"), "ab")
+    }
+
+    func testAPastedPictureGoesAfterABulletsChildren() throws {
+        let note = folder.appendingPathComponent("Note.md")
+        view.imageLoader = NoteImageLoader(note: note, vaultRoot: folder)
+        let parent = NoteBlock(kind: .bullet, runs: [.init(text: "p")])
+        let child = NoteBlock(kind: .bullet, indent: 1, runs: [.init(text: "c")])
+        view.load([parent, child, text("z")])
+        view.setSelectedRange(NSRange(location: 1, length: 0))
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("lyra-test-\(UUID().uuidString)"))
+        pasteboard.clearContents()
+        pasteboard.setData(Data([0x89, 0x50]), forType: .png)
+        key { _ = $0.pasteImages(from: pasteboard, at: nil) }
+        XCTAssertEqual(view.blocks.map(\.kind), [.bullet, .bullet, .image, .paragraph])
+        pasteboard.releaseGlobally()
+    }
+
+    func testAWebAddressDoesNotBeatAPicture() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("lyra-test-\(UUID().uuidString)"))
+        pasteboard.clearContents()
+        pasteboard.setString("https://example.com/cat.png", forType: .string)
+        XCTAssertTrue(NoteTextView.pictureWinsOverText(on: pasteboard))
+        pasteboard.clearContents()
+        pasteboard.setString("some words", forType: .string)
+        XCTAssertFalse(NoteTextView.pictureWinsOverText(on: pasteboard))
+        pasteboard.releaseGlobally()
     }
 }

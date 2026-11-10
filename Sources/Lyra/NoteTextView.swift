@@ -9,6 +9,7 @@ final class NoteTextView: NSTextView {
     /// Where this note's pictures are saved and found; nil (no note file yet) shows them as not found and pastes text only.
     var imageLoader: NoteImageLoader? {
         didSet {
+            imageLoader?.onLoaded = { [weak self] in self?.relayoutMedia() }
             guard imageLoader?.note != oldValue?.note || imageLoader?.vaultRoot != oldValue?.vaultRoot else { return }
             relayoutMedia()
         }
@@ -124,6 +125,7 @@ final class NoteTextView: NSTextView {
             var blocks = self.blocks
             let touched = paragraphs(covering: typed)
             for i in touched where blocks.indices.contains(i) { blocks[i].byClaude = false }
+            blocks = Self.picturesFromLines(blocks)
             // A deletion that joined a picture or divider onto text: put it back on a line of its own.
             if NoteText.attributed(blocks).string != storage.string { repaired = blocks }
             else { restyle(blocks, in: (storage.string as NSString).paragraphRange(for: typed)) }
@@ -163,13 +165,17 @@ final class NoteTextView: NSTextView {
     }
 
     override func insertText(_ string: Any, replacementRange: NSRange) {
-        if replacementRange.location == NSNotFound, insertBesideMedia(string) { return }
+        if replacementRange.location == NSNotFound {
+            collapseSelectedMedia()
+            if insertBesideMedia(string) { return }
+        }
         if (string as? String) == " ", selectedRange().length == 0, applyShortcut() { return }
         super.insertText(string, replacementRange: replacementRange)
     }
 
     /// Return splits the block; on a list item the new line continues the list, and on an empty item it ends it.
     override func insertNewline(_ sender: Any?) {
+        collapseSelectedMedia()
         let caret = selectedRange()
         guard caret.length == 0 else { return super.insertNewline(sender) }
         var blocks = self.blocks
@@ -246,6 +252,7 @@ final class NoteTextView: NSTextView {
 
     static func plainLines(_ text: String) -> String {
         ["\r\n", "\r", "\u{2028}", "\u{2029}"].reduce(text) { $0.replacingOccurrences(of: $1, with: "\n") }
+            .replacingOccurrences(of: NoteText.mediaCharacter, with: "")  // a stray placeholder never goes into a note
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -661,6 +668,6 @@ final class NoteTextView: NSTextView {
         let sel = selectedRange()
         guard sel.length > 0 else { return }
         selectionMenu.isHidden = true
-        onSelectionAction?(action, (string as NSString).substring(with: sel), blockIndex(at: sel.location))
+        onSelectionAction?(action, plainText(of: sel), blockIndex(at: sel.location))
     }
 }
