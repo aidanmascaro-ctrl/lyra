@@ -66,9 +66,14 @@ final class AppModel: ObservableObject {
             people: { people.all() },
             learn: { name, sample in try people.learn(name: name, sample: sample) })
     }()
-    private lazy var afterMeeting: AfterMeeting = { [notes] in
+    private lazy var afterMeeting: AfterMeeting = { [notes, talkNamer] in
         let claude = ClaudeCLI()
-        return AfterMeeting(index: notes, claude: claude, expander: Expander(claude: claude), vaultRoot: notes.vaultRoot)
+        return AfterMeeting(index: notes, claude: claude, expander: Expander(claude: claude), vaultRoot: notes.vaultRoot,
+                            talkNamer: talkNamer)
+    }()
+    /// Names "Speaker N" voices from the conversation: after each meeting, and from Suggest names on the Transcript tab.
+    lazy var talkNamer: TalkNamer = { [people] in
+        TalkNamer(claude: ClaudeCLI(), people: { people.all().map(\.name) })
     }()
     /// The tail of the background queue: processing and after-meeting work run one at a time, in order.
     private var pipeline: Task<Void, Never>?
@@ -391,6 +396,17 @@ final class AppModel: ObservableObject {
         busyFolders[folder.standardizedFileURL.path, default: 0] += 1
         defer { showExpansion(nil, for: id); endBusy(folder); revision += 1 }
         try await after.reExpand(folder: folder) { blocks in await self.showExpansion(blocks, for: id) }
+    }
+
+    /// Suggest names from the Transcript tab. The meeting counts as busy meanwhile, so it can't be written up, trashed
+    /// or named twice at once. Returns how the note fared (`.needsConfirmation`: its transcript was edited by hand).
+    func suggestNames(folder: URL) async throws -> RenameOutcome {
+        let (namer, notes) = (talkNamer, notes)
+        busyFolders[folder.standardizedFileURL.path, default: 0] += 1
+        defer { endBusy(folder); revision += 1 }
+        return try await Task.detached {
+            try await namer.run(folder: folder, note: RenameService.noteURL(inMeetingFolder: folder, index: notes)).note
+        }.value
     }
 
     private func enqueue(folder: URL, _ work: @escaping @Sendable () async -> Void) {

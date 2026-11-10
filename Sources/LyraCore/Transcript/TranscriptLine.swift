@@ -1,7 +1,8 @@
 import Foundation
 
-/// How a line's person was named: matched from a known voice, read off the call's lit tile, or set by Aidan by hand.
-public enum NameSource: String, Codable, Sendable { case knownVoice, onScreen, setByAidan }
+/// How a line's person was named: matched from a known voice, read off the call's lit tile, set by Aidan by hand, or
+/// heard in the conversation (an introduction, or being spoken to by name; see `HeardNames`).
+public enum NameSource: String, Codable, Sendable { case knownVoice, onScreen, setByAidan, heard }
 
 /// One speaker-attributed line of a meeting transcript. Times are seconds on the shared meeting timeline
 /// (the track's start offset applied), not seconds into that track's own audio file.

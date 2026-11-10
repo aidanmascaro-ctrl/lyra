@@ -207,6 +207,69 @@ public enum Prompts {
         return (head + [trimmedMarker] + tail).joined(separator: "\n")
     }
 
+    // MARK: Names from the conversation
+
+    public static let heardNamesSystem = """
+    You work out who the unnamed voices in a meeting transcript are, for Aidan, who recorded it. A speech \
+    program split the meeting into voices; the ones it could not recognise are labelled "Speaker 1", \
+    "Speaker 2" and so on. A wrong name is much worse than no name, so you name a voice only when the \
+    transcript itself shows who it is.
+
+    Your reply is read by a program. Reply with only one JSON object, no code fence and no other text, \
+    shaped exactly like this:
+    {"speakers": [{"speaker": "Speaker 3", "name": "...", "sure": true, "evidence": ["...", "..."]}]}
+
+    Before you answer, silently check yourself: for each name, ask whether the quotes really show that \
+    this voice is that person, or only that the person was mentioned; whether a speech-to-text spelling \
+    error could have changed the name; whether two voices could be the same person split in two; and \
+    whether the label could have drifted onto someone else. Drop or downgrade anything that fails. Never \
+    write that check down.
+    """
+
+    public static func heardNamesUser(lines: [TranscriptLine], toName: [String], screenText: [String],
+                                      people: [String]) -> String {
+        let screen = screenText.isEmpty ? "(Nothing read.)" : screenText.joined(separator: "\n")
+        return """
+        <transcript>
+        \(transcript(lines))
+        </transcript>
+
+        <screen_text>
+        \(screen)
+        </screen_text>
+
+        <people_aidan_knows>\(people.isEmpty ? "(None.)" : people.joined(separator: ", "))</people_aidan_knows>
+
+        <to_name>\(toName.joined(separator: ", "))</to_name>
+
+        <task>
+        For each voice in <to_name>, decide whether the transcript shows who it is. Evidence that counts:
+        - The voice introduces itself: "I'm Sam", "Sam here", "my name's Sam".
+        - Someone speaks to a person by name and that voice is the one who answers: "Thanks, Sam", \
+        "Sam, what do you think?", then the voice replies.
+        - Several such moments that agree.
+        Evidence that does not count on its own: a person being talked about ("Sam sent the file"), a \
+        name in <screen_text> or <people_aidan_knows> (use those only to spell a heard name correctly), \
+        or a guess from what the voice talks about.
+        For each voice you can name, give:
+        - speaker: the label exactly as in <to_name>.
+        - name: the name as people said it, a first name is fine; spelt as in <screen_text> or \
+        <people_aidan_knows> when that is clearly the same person.
+        - sure: true only when several moments, or one clear self-introduction, point to this voice and \
+        nothing points elsewhere; otherwise false.
+        - evidence: 1 to 3 short quotes, each copied word for word from one transcript line (no speaker \
+        label or time), each containing the name.
+        Leave out every voice you cannot name. An empty list is a good answer when nothing is clear.
+        </task>
+
+        <constraints>
+        - Never name a voice that is already named in the transcript, and never give two voices the same name.
+        - Quotes must be copied exactly; Lyra checks them and drops any it cannot find.
+        - Output only the JSON object.
+        </constraints>
+        """
+    }
+
     // MARK: Building blocks
 
     private static let expandConstraints = """

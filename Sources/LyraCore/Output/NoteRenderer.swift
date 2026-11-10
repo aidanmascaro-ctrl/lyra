@@ -25,6 +25,7 @@ public enum NoteRenderer {
             let badge = switch line.nameSource {
             case .knownVoice: " _(known voice)_"
             case .onScreen: " _(on screen)_"
+            case .heard: " _(from the talk)_"
             case .setByAidan, nil: ""
             }
             return "**\(escapeName(line.speakerLabel))**\(badge) [\(stamp(line.start))] \(line.text.replacingOccurrences(of: "<!--", with: "&lt;!--"))"

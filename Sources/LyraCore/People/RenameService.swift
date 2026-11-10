@@ -51,8 +51,11 @@ public struct RenameService: Sendable {
             ? "Speaker " + trimmed.split(whereSeparator: \.isWhitespace).last!
             : existing?.name ?? trimmed
 
-        if display == speakerLabel {  // same name: nothing to rename, but `.done` must still mean the note matches
-            return try writeNote(lines: before, previous: before, folder: folder, note: note, overwrite: overwriteEditedNote)
+        // Same name: nothing to rename, but `.done` must still mean the note matches. A name heard in the conversation
+        // is the exception: saying it again is Aidan's yes, so it becomes his name and the voice is learned.
+        let confirmsHeard = picked.contains { before[$0].nameSource == .heard }
+        if display == speakerLabel, !confirmsHeard {
+            return try Self.writeTranscriptSection(lines: before, previous: before, folder: folder, note: note, overwrite: overwriteEditedNote)
         }
 
         var lines = before
@@ -78,7 +81,7 @@ public struct RenameService: Sendable {
         } catch { learnError = error }
 
         let outcome: RenameOutcome
-        do { outcome = try writeNote(lines: lines, previous: before, folder: folder, note: note, overwrite: overwriteEditedNote) }
+        do { outcome = try Self.writeTranscriptSection(lines: lines, previous: before, folder: folder, note: note, overwrite: overwriteEditedNote) }
         catch { throw learnError.map { RenameError.notLearnedAndNoteFailed(learnError: $0, noteError: error) } ?? error }
         if let learnError { throw RenameError.notLearned(outcome: outcome, underlying: learnError) }
         return outcome
@@ -109,7 +112,7 @@ public struct RenameService: Sendable {
     /// transcript.json, overwriting Aidan's edits inside it (text outside the section is kept), and records the new hash.
     public func rewriteNote(inMeetingFolder folder: URL, note: URL) throws {
         let lines = try JSONDecoder().decode([TranscriptLine].self, from: Data(contentsOf: folder.appendingPathComponent("transcript.json")))
-        _ = try writeNote(lines: lines, previous: lines, folder: folder, note: note, overwrite: true)
+        _ = try Self.writeTranscriptSection(lines: lines, previous: lines, folder: folder, note: note, overwrite: true)
     }
 
     /// Learns each of the speaker's clusters that speakers.json has. A join keeps only its first cluster's id, so for a
@@ -140,7 +143,8 @@ public struct RenameService: Sendable {
     }
 
     /// Rewrites the note's transcript section only if it is still as Lyra last wrote it (or Aidan said to overwrite).
-    private func writeNote(lines: [TranscriptLine], previous: [TranscriptLine], folder: URL, note: URL,
+    /// Shared with `TalkNamer`, which changes names in the same section.
+    static func writeTranscriptSection(lines: [TranscriptLine], previous: [TranscriptLine], folder: URL, note: URL,
                            overwrite: Bool) throws -> RenameOutcome {
         var meeting = try Meeting.load(from: folder)
         let body = NoteRenderer.transcriptBody(lines: lines)

@@ -1,6 +1,7 @@
 import Foundation
 
-/// What happens once a meeting's transcript is in its note: Claude names and files it (title, tags, client links,
+/// What happens once a meeting's transcript is in its note: Claude names the voices it can from the conversation
+/// (`TalkNamer`, when given one), then names and files the meeting (title, tags, client links,
 /// one-line summary, a series *suggestion*), the note is renamed to the title, then Claude's expansion streams into
 /// the Expanded section. My notes is never written. Each step is saved before the next starts, so a failure keeps
 /// what came before; failures are recorded in `meeting.json` (`insightsError`, `expandError`) for the UI's Retry.
@@ -19,12 +20,14 @@ public struct AfterMeeting: Sendable {
     private let expander: Expander
     private let vaultRoot: URL
     private let saveInterval: Duration
+    private let talkNamer: TalkNamer?
 
     /// `saveInterval` is how often the streaming expansion is written to the note (and once more at the end).
+    /// `talkNamer` nil: voices aren't named from the conversation.
     public init(index: NoteIndex, claude: any ClaudeRunning, expander: Expander, vaultRoot: URL,
-                saveInterval: Duration = .seconds(1)) {
+                saveInterval: Duration = .seconds(1), talkNamer: TalkNamer? = nil) {
         self.index = index; self.claude = claude; self.expander = expander
-        self.vaultRoot = vaultRoot; self.saveInterval = saveInterval
+        self.vaultRoot = vaultRoot; self.saveInterval = saveInterval; self.talkNamer = talkNamer
     }
 
     /// Safe to run again (Retry): insights run only until they first succeed, and Expanded is only written when it
@@ -53,6 +56,8 @@ public struct AfterMeeting: Sendable {
     }
 
     private func steps(folder: URL, onExpansion: @Sendable ([NoteBlock]) async -> Void) async throws {
+        // First, so the title, tags and Expanded notes use the names.
+        if let talkNamer, try Meeting.load(from: folder).namesDone != true { await nameVoices(with: talkNamer, folder: folder) }
         let meeting = try Meeting.load(from: folder)
         var note = try index.load(meeting.id, hint: meeting.notePath.map { URL(fileURLWithPath: $0) })
         if meeting.insightsDone != true {
@@ -84,6 +89,18 @@ public struct AfterMeeting: Sendable {
         } catch {
             try? Self.updateMeeting(in: folder) { $0.expandedHashes = previousHashes }
             throw error
+        }
+    }
+
+    // MARK: Names from the conversation
+
+    /// A failure is recorded as `namesError` and the step goes on: the meeting is still filed and expanded, with
+    /// "Speaker N" where no name could be given, and Suggest names on the Transcript tab tries again.
+    private func nameVoices(with namer: TalkNamer, folder: URL) async {
+        do {
+            try await namer.run(folder: folder, note: RenameService.noteURL(inMeetingFolder: folder, index: index))
+        } catch {
+            try? Self.updateMeeting(in: folder) { $0.namesError = Self.plainEnglish(error) }
         }
     }
 
@@ -270,7 +287,8 @@ public struct AfterMeeting: Sendable {
 
     /// Lyra's own errors already read as plain English; anything else (a decode or file error) is wrapped.
     private static func plainEnglish(_ error: Error) -> String {
-        if error is ClaudeError || error is InsightsError || error is NoteIndexError || error is NoteDocumentError {
+        if error is ClaudeError || error is InsightsError || error is NoteIndexError || error is NoteDocumentError
+            || error is HeardNamesError || error is RenameError {
             return error.localizedDescription
         }
         return "Lyra couldn't read or save this meeting's files. (\(error.localizedDescription))"

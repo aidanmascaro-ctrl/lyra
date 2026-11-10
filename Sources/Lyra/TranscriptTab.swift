@@ -36,29 +36,75 @@ struct TranscriptTab: View {
     }
 
     private var speakers: some View {
-        HStack(spacing: 6) {
+        FlowLayout(spacing: 6, lineSpacing: 6) {
             ForEach(model.speakers, id: \.label) { s in
+                let heard = model.heardEntry(for: s)
                 Button { editing = s.label; newName = s.label.hasPrefix("Speaker ") ? "" : s.label } label: {
                     Pill {
                         HStack(spacing: 5) {
                             Text(s.label).foregroundStyle(.primary)
+                            // An unsure name from the conversation: a question on the pill until Aidan answers it.
+                            if s.source == nil, let heard { Text("\(heard.name)?").italic() }
                             if let badge = Self.badge(s.source) { Text(badge) }
                             Text(Self.duration(s.seconds)).monospacedDigit()
                         }
                     }
                 }
                 .buttonStyle(.plain)
-                .disabled(model.renaming)
-                .help("Rename this speaker")
+                .disabled(model.renaming || model.naming)  // no rename while Claude's answer is on its way
+                .help(heard.map { "See why Lyra thinks this is \($0.name)" } ?? "Rename this speaker")
                 .popover(isPresented: Binding(get: { editing == s.label }, set: { if !$0 { editing = nil } })) {
-                    renameField(for: s.label).padding(14).frame(width: 240)
+                    VStack(alignment: .leading, spacing: 12) {
+                        if let heard {
+                            heardSection(heard, speaker: s)
+                            Divider()
+                        }
+                        renameField(for: s.label, asking: heard == nil ? "Who is \(s.label)?" : "Or someone else?")
+                    }
+                    .padding(14).frame(width: 280)
                 }
             }
             if model.renaming { ProgressView().controlSize(.small) }
+            suggestNamesButton
         }
     }
 
-    private func renameField(for label: String) -> some View {
+    /// The quotes a name was heard in, and Aidan's answer.
+    private func heardSection(_ heard: HeardName, speaker s: SpeakerSummary) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(s.source == .heard ? "Lyra heard this is \(heard.name)" : "Could this be \(heard.name)?").font(.headline)
+            ForEach(heard.evidence, id: \.self) { quote in
+                Text("\u{201C}\(quote)\u{201D}")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Spacer()
+                Button("Not them") { editing = nil; model.rejectHeard(heard) }
+                Button("Yes, that\u{2019}s them") { editing = nil; model.confirmHeard(heard, label: s.label) }
+            }
+        }
+    }
+
+    /// Asks Claude who the "Speaker N" voices are, for meetings recorded before this existed or where it failed.
+    @ViewBuilder private var suggestNamesButton: some View {
+        if model.naming {
+            Pill {
+                HStack(spacing: 5) {
+                    ProgressView().controlSize(.mini)
+                    Text("Listening for names\u{2026}")
+                }
+            }
+        } else if model.canSuggestNames {
+            Button { model.suggestNames() } label: {
+                Pill { Label("Suggest names", systemImage: "sparkles") }
+            }
+            .buttonStyle(.plain)
+            .help("Ask Claude who the unnamed speakers are, from introductions and people using each other\u{2019}s names")
+        }
+    }
+
+    private func renameField(for label: String, asking question: String) -> some View {
         let typed = newName.trimmingCharacters(in: .whitespaces).lowercased()
         let suggestions = people.all().map(\.name)
             .filter { typed.isEmpty || $0.lowercased().hasPrefix(typed) }
@@ -66,7 +112,7 @@ struct TranscriptTab: View {
             .sorted()
             .prefix(5)
         return VStack(alignment: .leading, spacing: 6) {
-            Text("Who is \(label)?").font(.headline)
+            Text(question).font(.headline)
             TextField("Name", text: $newName).onSubmit { commit(label) }
             ForEach(Array(suggestions), id: \.self) { name in
                 Button(name) { newName = name }.buttonStyle(.link)
@@ -93,7 +139,7 @@ struct TranscriptTab: View {
             ForEach(model.lines.indices, id: \.self) { i in
                 let line = model.lines[i]
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text(Self.stamp(line.start)).monospacedDigit().foregroundStyle(.tertiary).frame(width: 48, alignment: .leading)
+                    Text(Self.stamp(line.start)).monospacedDigit().lineLimit(1).foregroundStyle(.tertiary).frame(width: 56, alignment: .leading)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(line.speakerLabel).fontWeight(.semibold)
                         Text(line.text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
@@ -114,6 +160,7 @@ struct TranscriptTab: View {
         case .knownVoice: "known voice"
         case .onScreen: "on screen"
         case .setByAidan: "named by you"
+        case .heard: "from the talk"
         case nil: nil
         }
     }
