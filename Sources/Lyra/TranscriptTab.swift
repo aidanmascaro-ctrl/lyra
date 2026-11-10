@@ -36,7 +36,7 @@ struct TranscriptTab: View {
     }
 
     private var speakers: some View {
-        HStack(spacing: 6) {
+        FlowLayout(spacing: 6, lineSpacing: 6) {
             ForEach(model.speakers, id: \.label) { s in
                 Button { editing = s.label; newName = s.label.hasPrefix("Speaker ") ? "" : s.label } label: {
                     Pill {
@@ -93,7 +93,7 @@ struct TranscriptTab: View {
             ForEach(model.lines.indices, id: \.self) { i in
                 let line = model.lines[i]
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text(Self.stamp(line.start)).monospacedDigit().foregroundStyle(.tertiary).frame(width: 48, alignment: .leading)
+                    Text(Self.stamp(line.start)).monospacedDigit().lineLimit(1).foregroundStyle(.tertiary).frame(width: 56, alignment: .leading)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(line.speakerLabel).fontWeight(.semibold)
                         Text(line.text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
