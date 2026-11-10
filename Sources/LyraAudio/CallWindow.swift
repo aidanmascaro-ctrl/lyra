@@ -16,16 +16,27 @@ public enum CallWindow {
     /// One frame of the call window of the app owning `pid`, or nil without Screen Recording permission, without a
     /// call window (a browser showing another tab), or on any failure.
     public static func frame(pid: pid_t, startTitle: String) async -> CGImage? {
-        guard CGPreflightScreenCaptureAccess() else { return nil }
+        await look(pid: pid, startTitle: startTitle).image
+    }
+
+    /// One frame of the call window, and what the look came to (why there is no frame, when there isn't).
+    /// A call window on another desktop is still tried: ScreenCaptureKit may be able to take it.
+    public static func look(pid: pid_t, startTitle: String) async -> (image: CGImage?, outcome: CallLook) {
+        guard CGPreflightScreenCaptureAccess() else { return (nil, .noPermission) }
         let app = CoreAudioMicUsage.owningApp(of: pid)
         let owner = app?.processIdentifier ?? pid
-        guard let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true) else { return nil }
+        guard let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false) else {
+            return (nil, .captureFailed)
+        }
         // The app's windows (Chrome's, for its audio helper), and any of the process's own.
         let windows = content.windows.filter { [owner, pid].contains($0.owningApplication?.processID) && $0.windowLayer == 0 }
-        let infos = windows.map { WindowInfo(id: $0.windowID, title: $0.title ?? "", width: $0.frame.width, height: $0.frame.height) }
+        let infos = windows.map {
+            WindowInfo(id: $0.windowID, title: $0.title ?? "", width: $0.frame.width, height: $0.frame.height, isOnScreen: $0.isOnScreen)
+        }
         guard let picked = CallWindowRule.pick(infos, appName: app?.localizedName ?? "", startTitle: startTitle),
-              let window = windows.first(where: { $0.windowID == picked.id }) else { return nil }
-        return await capture(window)
+              let window = windows.first(where: { $0.windowID == picked.id }) else { return (nil, .noCallWindow) }
+        guard let image = await capture(window) else { return (nil, window.isOnScreen ? .captureFailed : .offScreen) }
+        return (image, .seen)
     }
 
     private static func capture(_ window: SCWindow) async -> CGImage? {

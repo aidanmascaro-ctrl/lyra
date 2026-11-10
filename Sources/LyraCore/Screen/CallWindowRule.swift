@@ -6,8 +6,10 @@ public struct WindowInfo: Equatable, Sendable {
     public let title: String
     public let width: Double
     public let height: Double
-    public init(id: UInt32, title: String, width: Double, height: Double) {
-        self.id = id; self.title = title; self.width = width; self.height = height
+    /// On this desktop and not minimised.
+    public let isOnScreen: Bool
+    public init(id: UInt32, title: String, width: Double, height: Double, isOnScreen: Bool = true) {
+        self.id = id; self.title = title; self.width = width; self.height = height; self.isOnScreen = isOnScreen
     }
 }
 
@@ -36,7 +38,8 @@ public enum CallWindowRule {
 
     /// The call's window, or nil: a browser with no call tab in front of any window, an app with no window titled as
     /// a call, or nothing big enough. `startTitle` (the meeting's title at Allow) only chooses between call windows:
-    /// it may itself be another tab's title.
+    /// it may itself be another tab's title. A call window on this desktop wins over one that isn't (full screen on its
+    /// own desktop, or minimised).
     public static func pick(_ windows: [WindowInfo], appName: String, startTitle: String) -> WindowInfo? {
         let big = windows.filter { $0.width >= minWidth && $0.height >= minHeight }
         let start = startTitle.trimmingCharacters(in: .whitespaces)
@@ -45,7 +48,13 @@ public enum CallWindowRule {
         if isBrowser(appName) { calls = big.filter { isCallTab($0.title) } }
         else if callOnlyApps.contains(appName) { calls = big }
         else { calls = big.filter { hasWord($0.title, callWindows) } }
-        return largest(calls.filter { start.count >= 4 && start != appName && $0.title.contains(start) }) ?? largest(calls)
+        let shown = calls.filter(\.isOnScreen)
+        return best(shown.isEmpty ? calls : shown, appName: appName, start: start, largest: largest)
+    }
+
+    private static func best(_ calls: [WindowInfo], appName: String, start: String,
+                             largest: ([WindowInfo]) -> WindowInfo?) -> WindowInfo? {
+        largest(calls.filter { start.count >= 4 && start != appName && $0.title.contains(start) }) ?? largest(calls)
     }
 
     private static func isCallTab(_ title: String) -> Bool {

@@ -74,3 +74,18 @@ final class RecordingClockTests: XCTestCase {
         XCTAssertEqual(clock.seconds, 15)
     }
 }
+
+final class CallWindowRuleScreenTests: XCTestCase {
+    /// A call window on this desktop wins over a bigger one that isn't.
+    func testPrefersTheCallWindowOnThisDesktop() {
+        let windows = [WindowInfo(id: 1, title: "Zoom Meeting", width: 2000, height: 1200, isOnScreen: false),
+                       WindowInfo(id: 2, title: "Zoom Meeting", width: 1000, height: 700)]
+        XCTAssertEqual(CallWindowRule.pick(windows, appName: "zoom.us", startTitle: "")?.id, 2)
+    }
+
+    /// Full screen on its own desktop: still picked, so the capture side can say where it was.
+    func testOffScreenCallWindowIsStillPicked() {
+        let window = WindowInfo(id: 1, title: "Zoom Meeting", width: 2000, height: 1200, isOnScreen: false)
+        XCTAssertEqual(CallWindowRule.pick([window], appName: "zoom.us", startTitle: "")?.id, 1)
+    }
+}
