@@ -92,6 +92,9 @@ public struct MeetingProcessor: Sendable {
             let earlier = try RecordingParts.earlier(in: folder, part: part)
             (merged, speakers) = RecordingParts.join(earlier: earlier.lines, earlierClusters: earlier.clusters, new: named,
                                                      newClusters: speakers, offset: meeting.recordedBefore ?? 0, part: part + 1)
+            // "Speaker N" may now mean a new part's voice: drop name suggestions keyed by those labels. An unreadable
+            // file is left as it is; naming reports it when it next runs.
+            try? TalkNamer.afterJoin(folder: folder, lines: merged)
         }
         let noteAt = try writeTranscript(merged, meeting: &meeting, folder: folder, reserved: noteURL)
         meeting.notePath = noteAt.path

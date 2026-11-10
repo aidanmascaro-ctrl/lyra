@@ -45,6 +45,11 @@ final class MeetingModel: ObservableObject {
     @Published private(set) var renameMessage: String?
     @Published var askToReplace = false
     private var confirmAfterMessage = false
+    // Names from the conversation
+    /// heardnames.json: every checked name, applied or a suggestion, with its quotes.
+    @Published private(set) var heardNames: [HeardName] = []
+    /// Suggest names is asking Claude.
+    @Published private(set) var naming = false
 
     private var watcher: NoteWatcher?
 
@@ -112,6 +117,7 @@ final class MeetingModel: ObservableObject {
             } else {
                 lines = []
             }
+            heardNames = HeardNames.load(from: folder)
             loadError = nil
         } catch {
             loadError = "Couldn't read this meeting: \(error.localizedDescription)"
@@ -306,6 +312,55 @@ final class MeetingModel: ObservableObject {
             case .failure(RenameError.notLearned(let outcome, let underlying)):
                 renameMessage = RenameError.notLearned(outcome: outcome, underlying: underlying).localizedDescription
                 confirmAfterMessage = outcome == .needsConfirmation
+            case .failure(let error): renameMessage = error.localizedDescription
+            }
+            reload()
+        }
+    }
+
+    // MARK: Names from the conversation
+
+    /// The quotes behind a speaker's name or suggestion, for its pill.
+    func heardEntry(for speaker: SpeakerSummary) -> HeardName? {
+        HeardNames.entry(for: speaker.label, source: speaker.source, in: heardNames)
+    }
+
+    /// Suggest names shows while some voice is still "Speaker N" and naming hasn't run (or last failed).
+    var canSuggestNames: Bool {
+        !naming && !renaming && !isWritingUp && meeting?.namesDone != true && !HeardNames.placeholders(in: lines).isEmpty
+    }
+
+    func suggestNames() {
+        guard !naming, !renaming else { return }
+        naming = true
+        Task {
+            do {
+                if try await app.suggestNames(folder: folder) == .needsConfirmation { askToReplace = true }
+            } catch {
+                renameMessage = "Lyra couldn't suggest names: \(error.localizedDescription)"
+            }
+            naming = false
+            reload()
+        }
+    }
+
+    /// "Yes, that's them": the heard name becomes Aidan's, and the voice is learned, through the normal rename.
+    func confirmHeard(_ heard: HeardName, label: String) {
+        rename(label, to: heard.name)
+    }
+
+    /// "Not them": the name goes, and stays gone if names are suggested again.
+    func rejectHeard(_ heard: HeardName) {
+        renaming = true
+        let (folder, notes) = (folder, notes)
+        Task {
+            let result = await Task.detached { () -> Result<RenameOutcome, Error> in
+                do { return .success(try TalkNamer.reject(heard, folder: folder, note: RenameService.noteURL(inMeetingFolder: folder, index: notes))) }
+                catch { return .failure(error) }
+            }.value
+            renaming = false
+            switch result {
+            case .success(let outcome): if outcome == .needsConfirmation { askToReplace = true }
             case .failure(let error): renameMessage = error.localizedDescription
             }
             reload()

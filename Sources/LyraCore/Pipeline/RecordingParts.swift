@@ -36,6 +36,8 @@ public enum RecordingParts {
         meeting.endedAt = nil
         meeting.afterMeetingDone = nil
         meeting.expandError = nil
+        meeting.namesDone = nil  // the new part's voices get named too
+        meeting.namesError = nil
         try meeting.save(in: folder)
         return previous
     }
