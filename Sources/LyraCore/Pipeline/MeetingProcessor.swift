@@ -39,6 +39,58 @@ public struct MeetingProcessor: Sendable {
 
     public func process(meeting: Meeting, tracks: [TrackResult], folder: URL, noteURL: URL) async throws -> URL {
         var meeting = meeting
+        try await writeUnwrittenParts(meeting: &meeting, folder: folder)
+        let part = try await transcribe(meeting: &meeting, tracks: tracks, folder: folder)
+        var (merged, speakers) = (part.lines, part.speakers)
+        // Recording resumed after End: this part goes on after the ones filed under parts/.
+        if let earlierParts = meeting.earlierParts, earlierParts > 0 {
+            let earlier = try RecordingParts.earlier(in: folder, part: earlierParts)
+            (merged, speakers) = RecordingParts.join(earlier: earlier.lines, earlierClusters: earlier.clusters, new: merged,
+                                                     newClusters: speakers, offset: meeting.recordedBefore ?? 0, part: earlierParts + 1)
+            // "Speaker N" may now mean a new part's voice: drop name suggestions keyed by those labels. An unreadable
+            // file is left as it is; naming reports it when it next runs.
+            try? TalkNamer.afterJoin(folder: folder, lines: merged)
+        }
+        let noteAt = try writeTranscript(merged, meeting: &meeting, folder: folder, reserved: noteURL)
+        meeting.notePath = noteAt.path
+        try meeting.save(in: folder)
+        try writeDone(lines: merged, speakers: speakers, converted: part.converted, in: folder)
+        return noteAt
+    }
+
+    /// Parts Quit stopped and Resume filed away unwritten: each is transcribed in its own folder, joined on after the
+    /// part before it, and given its transcript there — as if it had been written up before Resume. Their warnings
+    /// join the meeting's.
+    private func writeUnwrittenParts(meeting: inout Meeting, folder: URL) async throws {
+        for number in RecordingParts.unwritten(in: folder, upTo: meeting.earlierParts ?? 0) {
+            let dir = RecordingParts.partFolder(folder, number)
+            let job = try Self.recoveryJob(folder: dir, notesDir: folder)
+            var partMeeting = job.meeting
+            let part = try await transcribe(meeting: &partMeeting, tracks: job.tracks, folder: dir)
+            var (lines, speakers) = (part.lines, part.speakers)
+            if number > 1 {
+                let earlier = try RecordingParts.earlier(in: folder, part: number - 1)
+                (lines, speakers) = RecordingParts.join(earlier: earlier.lines, earlierClusters: earlier.clusters, new: lines,
+                                                        newClusters: speakers, offset: partMeeting.recordedBefore ?? 0, part: number)
+            }
+            for warning in partMeeting.warnings { meeting.warn(warning) }
+            try writeDone(lines: lines, speakers: speakers, converted: part.converted, in: dir)
+        }
+    }
+
+    /// speakers.json, then transcript.json (the "done" marker), then the CAFs that were converted go.
+    private func writeDone(lines: [TranscriptLine], speakers: [SpeakerCluster], converted: [URL], in folder: URL) throws {
+        // Before transcript.json: a crash between the two leaves no done marker, so the folder is reprocessed.
+        try PeopleStore.writeOwnerOnly(Self.encoder.encode(speakers), to: folder.appendingPathComponent("speakers.json"))
+        try Self.encoder.encode(lines).write(to: folder.appendingPathComponent("transcript.json"), options: .atomic)
+        // Only now is the meeting safe without its CAFs; a crash before this point reprocesses the folder.
+        for caf in converted { try? FileManager.default.removeItem(at: caf) }
+    }
+
+    /// One part's tracks to named lines and the speakers that kept a line; its CAFs are converted to M4A (kept until
+    /// the transcript is saved). Warnings go into `meeting`.
+    private func transcribe(meeting: inout Meeting, tracks: [TrackResult], folder: URL) async throws
+        -> (lines: [TranscriptLine], speakers: [SpeakerCluster], converted: [URL]) {
         if let m = tracks.first(where: { $0.kind == .meeting }), m.peakLevel < Self.silentPeak || m.error != nil {
             meeting.warn(Self.noSoundWarning(appName: meeting.appName))
         }
@@ -85,26 +137,7 @@ public struct MeetingProcessor: Sendable {
         // Only clusters with a line left after the echo filter: an echo-only mic cluster is the remote voice leaking in.
         // Taken before naming: a join keeps only its first line's raw id, but both clusters still spoke.
         let kept = Set(echoFree.compactMap(\.speakerID))
-        var speakers = allClusters.filter { kept.contains($0.id) }
-        // Recording resumed after End: this part goes on after the ones filed under parts/.
-        var merged = named
-        if let part = meeting.earlierParts, part > 0 {
-            let earlier = try RecordingParts.earlier(in: folder, part: part)
-            (merged, speakers) = RecordingParts.join(earlier: earlier.lines, earlierClusters: earlier.clusters, new: named,
-                                                     newClusters: speakers, offset: meeting.recordedBefore ?? 0, part: part + 1)
-            // "Speaker N" may now mean a new part's voice: drop name suggestions keyed by those labels. An unreadable
-            // file is left as it is; naming reports it when it next runs.
-            try? TalkNamer.afterJoin(folder: folder, lines: merged)
-        }
-        let noteAt = try writeTranscript(merged, meeting: &meeting, folder: folder, reserved: noteURL)
-        meeting.notePath = noteAt.path
-        try meeting.save(in: folder)
-        // Before transcript.json: a crash between the two leaves no done marker, so the folder is reprocessed.
-        try PeopleStore.writeOwnerOnly(Self.encoder.encode(speakers), to: folder.appendingPathComponent("speakers.json"))
-        try Self.encoder.encode(merged).write(to: folder.appendingPathComponent("transcript.json"), options: .atomic)
-        // Only now is the meeting safe without its CAFs; a crash before this point reprocesses the folder.
-        for caf in converted { try? FileManager.default.removeItem(at: caf) }
-        return noteAt
+        return (named, allClusters.filter { kept.contains($0.id) }, converted)
     }
 
     /// Learns each voice the call's tiles named, and gives its lines that person's id. If a voice can't be learned

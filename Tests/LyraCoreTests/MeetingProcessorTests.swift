@@ -203,6 +203,47 @@ final class MeetingProcessorTests: XCTestCase {
         XCTAssertEqual(try Meeting.load(from: folder).transcriptSectionHash, NoteSections.hash(section))
     }
 
+    /// Resume after Quit: the part before the quit was filed unwritten (audio only); writing up transcribes it in
+    /// its own folder first, then joins the new part on after it.
+    func testUnwrittenFiledPartIsTranscribedFirstThenJoined() async throws {
+        var first = meeting
+        first.notePath = note.path
+        first.tracks = [try track(.mic)]
+        first.stoppedByQuit = true
+        try MeetingProcessor.createSkeletonNote(for: first, recordingsFolder: folder, at: note)
+        try first.save(in: folder)
+        _ = try RecordingParts.archive(folder: folder)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appendingPathComponent("parts/1/mic.caf").path))
+        let resumed = try Meeting.load(from: folder)
+        _ = try await processor().process(meeting: resumed, tracks: [track(.mic)], folder: folder, noteURL: note)
+        let part = folder.appendingPathComponent("parts/1")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: part.appendingPathComponent("transcript.json").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: part.appendingPathComponent("mic.m4a").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: part.appendingPathComponent("mic.caf").path), "kept until written up")
+        let lines = try JSONDecoder().decode([TranscriptLine].self, from: Data(contentsOf: folder.appendingPathComponent("transcript.json")))
+        XCTAssertEqual(lines.map(\.text), ["hi back", "hi back"])
+        XCTAssertEqual(lines[1].start, 61, "the new part starts after the 60 s recorded before the quit")
+        let text = try String(contentsOf: note, encoding: .utf8)
+        XCTAssertEqual(text.components(separatedBy: "hi back").count - 1, 2, "both parts in the note")
+    }
+
+    /// Quit twice in one meeting: parts 1 and 2 are both unwritten; each is transcribed and joined in order.
+    func testTwoUnwrittenPartsAreJoinedInOrder() async throws {
+        var m = meeting
+        m.notePath = note.path
+        try MeetingProcessor.createSkeletonNote(for: m, recordingsFolder: folder, at: note)
+        for _ in 0..<2 {
+            m.tracks = [try track(.mic)]
+            try m.save(in: folder)
+            _ = try RecordingParts.archive(folder: folder)
+            m = try Meeting.load(from: folder)
+        }
+        _ = try await processor().process(meeting: m, tracks: [track(.mic)], folder: folder, noteURL: note)
+        let lines = try JSONDecoder().decode([TranscriptLine].self, from: Data(contentsOf: folder.appendingPathComponent("transcript.json")))
+        XCTAssertEqual(lines.map(\.start), [1, 61, 121])
+        XCTAssertEqual(lines.map(\.speakerLabel), ["Speaker 1", "Speaker 2", "Speaker 3"])
+    }
+
     /// A transcript edited by hand in Obsidian is never replaced; the joined one is still saved in transcript.json.
     func testResumedPartLeavesAHandEditedTranscriptAlone() async throws {
         var first = meeting

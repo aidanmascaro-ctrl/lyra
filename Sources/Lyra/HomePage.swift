@@ -25,6 +25,7 @@ struct HomePage: View {
             VStack(alignment: .leading, spacing: 28) {
                 Text("Meetings").font(Chrome.titleFont)
                 if let live = app.liveMeeting { liveCard(live) } else { newNote }
+                ForEach(app.resumeOffers, id: \.folder) { ResumeOfferCard(app: app, offer: $0) }
                 UpcomingSection(app: app)
                 if let notice = model.notice { Banner(text: notice) { Button("OK") { model.notice = nil } } }
                 // The sidebar shows its own notices while it is open.
