@@ -92,4 +92,10 @@ final class NoteLayoutUpgradeTests: XCTestCase {
         XCTAssertEqual(NoteLayoutUpgrade.run(index: index), [])
         XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "---\nlyra_series: true\n---\n# Weekly\n\n")
     }
+
+    func testMyNotesListStyleIsKept() {
+        var doc = try! NoteDocument.parse(oldLayout)
+        doc.myNotes = "1. one\n1. two\n   - deep\n# old heading"
+        XCTAssertEqual(NoteLayoutUpgrade.currentLayout(of: doc).myNotes, "1. one\n1. two\n   - deep\n### old heading")
+    }
 }
