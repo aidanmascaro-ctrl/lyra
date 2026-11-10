@@ -1,6 +1,5 @@
 import AppKit
 import LyraCore
-import os
 import SwiftUI
 
 /// Lyra is a Dock app (Dock icon, ⌘-Tab, app menu) while any of its windows is open, and menu-bar-only once the
@@ -48,15 +47,17 @@ final class DockPresence: NSObject {
     func toggleFromMenuBar(on screen: NSScreen?) {
         let decision = DockPolicy.menuBarClick(Self.describe(NSApp.windows), closing: closing, isActive: NSApp.isActive,
                                                isHidden: NSApp.isHidden)
-        Self.log.notice("Menu-bar click: \(String(describing: decision), privacy: .public); active \(NSApp.isActive, privacy: .public), hidden \(NSApp.isHidden, privacy: .public)")
         switch decision {
         case .hide:
             NSApp.hide(nil)
         case .show:
-            // Activated now, while the click is still the current event: macOS lets an app come forward in answer to
-            // the user's own click, and may refuse a later request once the click has been handled.
-            NSApp.activate()
+            // Unhidden first: asking to come forward while still hidden was ignored (seen in testing: the click after
+            // a hide left the other app in front). Then activated now, while the click is still the current event:
+            // macOS lets an app come forward in answer to the user's own click and may refuse a later request. The
+            // older call is the fallback many menu-bar apps still rely on when the newer, polite one is declined.
             if NSApp.isHidden { NSApp.unhide(nil) }
+            NSApp.activate()
+            if !NSApp.isActive { NSApp.activate(ignoringOtherApps: true) }
             reopen()
             if let screen, let window = NSApp.windows.first(where: { Self.isMain($0) && $0.isVisible }), window.screen != screen {
                 let v = screen.visibleFrame
@@ -64,15 +65,8 @@ final class DockPresence: NSObject {
                                          on: .init(x: v.minX, y: v.minY, width: v.width, height: v.height))
                 window.setFrame(NSRect(x: f.x, y: f.y, width: f.width, height: f.height), display: true)
             }
-            Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(400))
-                let main = NSApp.windows.first(where: Self.isMain)
-                Self.log.notice("After menu-bar show: active \(NSApp.isActive, privacy: .public), main window key \(main?.isKeyWindow ?? false, privacy: .public), on clicked screen \(main?.screen == screen, privacy: .public)")
-            }
         }
     }
-
-    private static let log = Logger(subsystem: "au.aidos.lyra", category: "window")
 
     /// The main window on home, through SwiftUI when it has handed over `openWindow`; otherwise a main window
     /// AppKit still holds.
