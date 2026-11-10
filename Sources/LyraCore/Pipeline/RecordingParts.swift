@@ -4,20 +4,25 @@ import Foundation
 /// parts so far, as Aidan may have renamed them), speakers and audio — is filed under `parts/N`; the folder then
 /// looks like any recording in progress, so crash recovery and processing work unchanged. Processing joins the new
 /// part's transcript on after the filed one (`join`).
+///
+/// A part Quit stopped was never written up: its audio is filed instead, with a copy of its `meeting.json` (its
+/// track levels and warnings). Processing transcribes such parts in their own folders first (`unwritten`).
 public enum RecordingParts {
     static let folderName = "parts"
     /// `onscreen.json` goes with its part: its times are that part's. Slides stay at the top, where the note links them.
     private static let filed: Set<String> = ["transcript.json", "speakers.json", OnScreenLog.fileName]
 
-    /// Files the finished part away and readies `meeting.json` for the next one. Returns the meeting as it was,
-    /// for `restore` if recording then can't start.
+    /// Files the finished part (written up, or stopped by Quit and not) away and readies `meeting.json` for the next
+    /// one. Returns the meeting as it was, for `restore` if recording then can't start.
     public static func archive(folder: URL) throws -> Meeting {
         let fm = FileManager.default
         let previous = try Meeting.load(from: folder)
         let part = (previous.earlierParts ?? 0) + 1
         let target = partFolder(folder, part)
         try fm.createDirectory(at: target, withIntermediateDirectories: true)
-        let names = try fm.contentsOfDirectory(atPath: folder.path).filter { filed.contains($0) || $0.hasSuffix(".m4a") }
+        let names = try fm.contentsOfDirectory(atPath: folder.path)
+            .filter { filed.contains($0) || $0.hasSuffix(".m4a") || $0.hasSuffix(".caf") }
+        if names.contains(where: { $0.hasSuffix(".caf") }) { try previous.save(in: target) }  // unwritten: its tracks, for later
         var moved: [String] = []
         do {
             for name in names {
@@ -38,6 +43,7 @@ public enum RecordingParts {
         meeting.expandError = nil
         meeting.namesDone = nil  // the new part's voices get named too
         meeting.namesError = nil
+        meeting.stoppedByQuit = nil  // resumed: no longer offered
         try meeting.save(in: folder)
         return previous
     }
@@ -47,6 +53,8 @@ public enum RecordingParts {
         let fm = FileManager.default
         let source = partFolder(folder, (previous.earlierParts ?? 0) + 1)
         for name in try fm.contentsOfDirectory(atPath: source.path) {
+            // The copy `archive` made of an unwritten part's meeting.json: `previous` is saved below.
+            if name == "meeting.json" { try fm.removeItem(at: source.appendingPathComponent(name)); continue }
             try fm.moveItem(at: source.appendingPathComponent(name), to: folder.appendingPathComponent(name))
         }
         try fm.removeItem(at: source)
@@ -54,6 +62,15 @@ public enum RecordingParts {
             try? fm.removeItem(at: folder.appendingPathComponent(folderName))
         }
         try previous.save(in: folder)
+    }
+
+    /// Filed parts 1…`upTo` that still hold audio but no transcript (Quit stopped them), in order.
+    public static func unwritten(in folder: URL, upTo: Int) -> [Int] {
+        guard upTo > 0 else { return [] }
+        return (1...upTo).filter { part in
+            let names = (try? FileManager.default.contentsOfDirectory(atPath: partFolder(folder, part).path)) ?? []
+            return names.contains { $0.hasSuffix(".caf") } && !names.contains("transcript.json")
+        }
     }
 
     /// The transcript and speakers of every part before the one being processed.

@@ -72,24 +72,26 @@ final class MeetingSession {
         transcribeLive()
     }
 
-    /// Records into a note that already exists — one New note made, or one ended and written up — keeping its
-    /// folder, note and meeting.json. A written-up part is filed under parts/ first, and joined back on when this
-    /// part is written up. If recording can't start, the note is left exactly as it was.
-    init(recordingInto folder: URL, noteURL: URL, meeting: Meeting,
+    /// Records into a note that already exists — one New note made, one ended and written up, or one Quit stopped —
+    /// keeping its folder, note and meeting.json. An earlier part is filed under parts/ first (unwritten, if Quit
+    /// stopped it), and joined back on when this part is written up. `callAudio`: the call's app, to record its sound
+    /// again too (its window isn't watched). If recording can't start, the note is left exactly as it was.
+    init(recordingInto folder: URL, noteURL: URL, meeting: Meeting, callAudio: MicUser? = nil,
          onLive: @escaping @MainActor (_ lines: [LiveLine], _ error: String?) -> Void) async throws {
         var meeting = meeting
         var previous: Meeting?
-        if FileManager.default.fileExists(atPath: folder.appendingPathComponent("transcript.json").path) {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        if names.contains("transcript.json") || names.contains(where: { $0.hasSuffix(".caf") }) {
             previous = try RecordingParts.archive(folder: folder)
             meeting = try Meeting.load(from: folder)
         }
         meeting.recordingStartedAt = Date()
         self.meeting = meeting
-        self.target = nil
+        self.target = callAudio
         self.onLive = onLive
         self.folder = folder
         self.noteURL = noteURL
-        recorder = TwoTrackRecorder(target: nil)
+        recorder = TwoTrackRecorder(target: callAudio)
         callWatcher = CallWatcher(folder: folder)  // never started: a note recorded into has no call window
         do { try await startRecorder() } catch {
             // A half-opened file would make crash recovery treat this note as a recording.

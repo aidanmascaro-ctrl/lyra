@@ -29,11 +29,13 @@ extension AppModel {
     }
 
     /// True when Record can start in this note: nothing else records, and the note isn't waiting to be written
-    /// up (an unprocessed .caf) or being written up. Never recorded (New note) or ended and written up both qualify.
+    /// up (an unprocessed .caf) or being written up. Never recorded (New note), ended and written up, or stopped by
+    /// Quit and offered for Resume all qualify.
     func canRecord(in folder: URL) -> Bool {
         guard session == nil, state.phase == .idle, !isBusy(folder: folder, id: nil) else { return false }
         let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
-        return names.contains("meeting.json") && !names.contains { $0.hasSuffix(".caf") }
+        guard names.contains("meeting.json") else { return false }
+        return !names.contains { $0.hasSuffix(".caf") } || isOfferedForResume(folder)
     }
 
     /// Start Recording in the menu-bar menu: New note then Record, without opening the window. Makes no note
@@ -43,14 +45,16 @@ extension AppModel {
         record(in: folder)
     }
 
-    /// Record (or Resume, after End) in a note: records into that note rather than a new one.
+    /// Record (or Resume, after End or Quit) in a note: records into that note rather than a new one. Resuming a
+    /// call Quit stopped records the call's sound again too, if its app still has the mic.
     func record(in folder: URL) {
         guard canRecord(in: folder) else { return }
         do {
             let meeting = try Meeting.load(from: folder)
             let note = meeting.notePath.map { URL(fileURLWithPath: $0) }
                 ?? paths.notesDir.appendingPathComponent(folder.lastPathComponent + ".md")
-            startRecording(target: nil, meeting: meeting, into: (folder, note))
+            let call = isOfferedForResume(folder) ? callStillOn(for: meeting) : nil
+            startRecording(target: call, meeting: meeting, into: (folder, note))
         } catch {
             lastError = ErrorBrief.sentence("Couldn't start recording", error)
         }
@@ -84,12 +88,14 @@ extension AppModel {
                     self?.liveError = error
                 }
                 let started = if let existing {
-                    try await MeetingSession(recordingInto: existing.folder, noteURL: existing.note, meeting: meeting, onLive: onLive)
+                    try await MeetingSession(recordingInto: existing.folder, noteURL: existing.note, meeting: meeting,
+                                             callAudio: target, onLive: onLive)
                 } else {
                     try await MeetingSession(meeting: meeting, target: target, paths: paths, onLive: onLive)
                 }
                 session = started
-                if started.target != nil {
+                if let existing { resumeOffers.removeAll { $0.folder == existing.folder } }  // filed under parts/: resumed
+                if existing == nil, started.target != nil {  // a note recorded into has no call window to watch
                     self.slides = CallSlides(on: false, count: 0)
                     started.onSlideSaved = { [weak self] count in self?.slides?.count = count }
                     if slides { setSlides(true) }
@@ -153,11 +159,20 @@ extension AppModel {
         }
     }
 
-    /// On quit: only finalise the CAFs. Processing is left to crash recovery on the next launch.
+    /// On quit: only finalise the CAFs and mark the recording as stopped by Quit. The next launch offers to Resume
+    /// it in the same note (`recoverUnprocessed`); it is written up if Aidan says Not now or the offer runs out.
     func stopForQuit() async {
         while starting { try? await Task.sleep(for: .milliseconds(100)) }  // let a start finish (≤ ~3 s), then stop it
         guard state.requestStop(), let session else { return }
         self.session = nil
         _ = await session.stop()
+        // Unmarked, it is simply written up next launch, as after a crash.
+        try? ResumeOffer.markStoppedByQuit(folder: session.folder)
+    }
+
+    /// The call's app, if it still has the mic: the meeting app recorded before Quit, matched by bundle id.
+    private func callStillOn(for meeting: Meeting) -> MicUser? {
+        guard let bundleID = meeting.bundleID else { return nil }
+        return micUsage.currentMicUsers().first { $0.bundleID == bundleID }
     }
 }

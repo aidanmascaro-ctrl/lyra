@@ -43,6 +43,10 @@ final class AppModel: ObservableObject {
     @Published var pendingJoin: PendingJoin?
     /// Slides for the call being recorded: nil when nothing records or the recording has no call window.
     @Published var slides: CallSlides?
+    /// Recordings Quit stopped, offered on Home for Resume until Aidan chooses or the offer runs out.
+    @Published var resumeOffers: [ResumeOffer] = []
+    /// Writes up the offers left when they run out (`ResumeOffer.lifetime` after launch).
+    var resumeOfferExpiry: Task<Void, Never>?
 
     let paths = MeetingPaths(recordingsRoot: AppModel.recordingsRoot, notesDir: AppModel.notesRoot)
     /// Notes are found by `lyra_id` anywhere under Meetings/; links are rewritten across the whole vault.

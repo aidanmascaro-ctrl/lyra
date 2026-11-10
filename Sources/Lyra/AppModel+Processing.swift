@@ -107,19 +107,49 @@ extension AppModel {
         lastError = message  // the latest problem only
     }
 
-    /// Any folder with `.caf` files but no `transcript.json` was cut short by a crash or quit.
-    /// A folder that can't be recovered is reported, never skipped silently.
+    /// Any folder with `.caf` files but no `transcript.json` was cut short by a crash or quit. One Quit stopped is
+    /// offered for Resume first (Home shows it) and written up once declined or after `ResumeOffer.lifetime`; the
+    /// rest are written up now. A folder that can't be recovered is reported, never skipped silently.
     func recoverUnprocessed() {
-        var jobs: [Job] = []
-        for folder in MeetingProcessor.pendingFolders(in: paths.recordingsRoot) {
-            do {
-                let job = try MeetingProcessor.recoveryJob(folder: folder, notesDir: paths.notesDir)
-                jobs.append((job.meeting, job.tracks, folder, job.note))
-            } catch {
-                report("Couldn't recover \(folder.lastPathComponent): \(error.localizedDescription)")
-            }
+        let pending = ResumeOffer.split(pending: MeetingProcessor.pendingFolders(in: paths.recordingsRoot))
+        resumeOffers = pending.offers
+        run(pending.recover.compactMap(recoveryJob))
+        guard !pending.offers.isEmpty else { return }
+        let offeredAt = Date()
+        resumeOfferExpiry?.cancel()
+        resumeOfferExpiry = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(ResumeOffer.lifetime))
+            guard !Task.isCancelled, let self, ResumeOffer.expired(offeredAt: offeredAt, now: Date()) else { return }
+            for offer in resumeOffers { declineResume(offer) }
         }
-        run(jobs)
+    }
+
+    /// Not now on a Resume offer (or the offer ran out): written up like any recording. Resume is still there in the
+    /// note afterwards, as after End.
+    func declineResume(_ offer: ResumeOffer) {
+        resumeOffers.removeAll { $0.folder == offer.folder }
+        guard FileManager.default.fileExists(atPath: offer.folder.path) else { return }  // trashed meanwhile
+        do { try ResumeOffer.decline(folder: offer.folder) } catch {
+            // Still marked, so it is offered again next launch; nothing is lost.
+            return report(ErrorBrief.sentence("Couldn't write up \(offer.folder.lastPathComponent) yet", error))
+        }
+        run(recoveryJob(offer.folder).map { [$0] } ?? [])
+    }
+
+    /// True while `folder` is offered for Resume after Quit (not yet resumed, declined or run out).
+    func isOfferedForResume(_ folder: URL) -> Bool {
+        let key = folder.standardizedFileURL.path
+        return resumeOffers.contains { $0.folder.standardizedFileURL.path == key }
+    }
+
+    private func recoveryJob(_ folder: URL) -> Job? {
+        do {
+            let job = try MeetingProcessor.recoveryJob(folder: folder, notesDir: paths.notesDir)
+            return (job.meeting, job.tracks, folder, job.note)
+        } catch {
+            report("Couldn't recover \(folder.lastPathComponent): \(error.localizedDescription)")
+            return nil
+        }
     }
 }
 

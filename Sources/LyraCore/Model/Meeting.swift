@@ -28,6 +28,8 @@ public struct Meeting: Codable, Sendable {
     public var earlierParts: Int? = nil
     /// Seconds recorded in those earlier parts: where the latest part starts on the note's timeline.
     public var recordedBefore: Double? = nil
+    /// True when Quit stopped this recording: on the next launch it is offered for Resume before being written up.
+    public var stoppedByQuit: Bool? = nil
     /// Why the after-meeting title/tags call failed, for the UI; nil once it succeeds.
     public var insightsError: String? = nil
     /// Why expanding the notes failed, for the UI's Retry; nil once it succeeds.
