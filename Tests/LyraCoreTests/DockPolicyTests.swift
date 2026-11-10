@@ -56,6 +56,17 @@ final class DockPolicyTests: XCTestCase {
         XCTAssertEqual(DockPolicy.menuBarClick([w(1)], closing: [1], isActive: true, isHidden: false), .show)
     }
 
+    func testPlacementCentresTheWindowOnTheClickedScreen() {
+        let screen = DockPolicy.Frame(x: -275, y: 1329, width: 2560, height: 1415)  // a second display above the laptop
+        let frame = DockPolicy.place(width: 820, height: 860, on: screen)
+        XCTAssertEqual(frame, DockPolicy.Frame(x: -275 + 870, y: 1329 + 277.5, width: 820, height: 860))
+    }
+
+    func testPlacementShrinksAWindowTooBigForTheScreen() {
+        let screen = DockPolicy.Frame(x: 0, y: 0, width: 1000, height: 700)
+        XCTAssertEqual(DockPolicy.place(width: 1200, height: 900, on: screen), screen)
+    }
+
     func testMenuBarClickIgnoresPanelsWhenDecidingToHide() {
         // Only the Allow prompt (a panel) is up: there is no Lyra window to hide, so the click shows home.
         XCTAssertEqual(DockPolicy.menuBarClick([w(1, panel: true)], closing: [], isActive: true, isHidden: false), .show)

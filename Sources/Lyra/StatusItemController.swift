@@ -38,7 +38,8 @@ final class StatusItemController: NSObject {
         if NSApp.currentEvent?.type == .rightMouseUp {
             showMenu()
         } else {
-            presence.toggleFromMenuBar()  // left click: show Lyra, or hide it if it's already in front
+            // Left click: show Lyra on the display whose menu bar was clicked, or hide it if it's already in front.
+            presence.toggleFromMenuBar(on: item.button?.window?.screen)
         }
     }
 
