@@ -37,4 +37,27 @@ final class DockPolicyTests: XCTestCase {
         XCTAssertEqual(DockPolicy.reopen([w(1, visible: false, minimised: true), w(2)], closing: []), .front(restore: [1]))
         XCTAssertEqual(DockPolicy.reopen([w(2)], closing: []), .front(restore: []))
     }
+
+    func testMenuBarClickHidesLyraWhenItIsInFrontWithAWindowShowing() {
+        XCTAssertEqual(DockPolicy.menuBarClick([w(1)], closing: [], isActive: true, isHidden: false), .hide)
+    }
+
+    func testMenuBarClickShowsLyraWhenAnotherAppIsInFront() {
+        XCTAssertEqual(DockPolicy.menuBarClick([w(1)], closing: [], isActive: false, isHidden: false), .show)
+    }
+
+    func testMenuBarClickShowsLyraWhenItIsHidden() {
+        XCTAssertEqual(DockPolicy.menuBarClick([w(1, visible: false)], closing: [], isActive: true, isHidden: true), .show)
+    }
+
+    func testMenuBarClickShowsLyraWhenItsOnlyWindowIsMinimisedOrClosed() {
+        XCTAssertEqual(DockPolicy.menuBarClick([w(1, visible: false, minimised: true)], closing: [], isActive: true, isHidden: false), .show)
+        XCTAssertEqual(DockPolicy.menuBarClick([], closing: [], isActive: true, isHidden: false), .show)
+        XCTAssertEqual(DockPolicy.menuBarClick([w(1)], closing: [1], isActive: true, isHidden: false), .show)
+    }
+
+    func testMenuBarClickIgnoresPanelsWhenDecidingToHide() {
+        // Only the Allow prompt (a panel) is up: there is no Lyra window to hide, so the click shows home.
+        XCTAssertEqual(DockPolicy.menuBarClick([w(1, panel: true)], closing: [], isActive: true, isHidden: false), .show)
+    }
 }

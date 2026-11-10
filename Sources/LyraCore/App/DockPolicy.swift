@@ -39,6 +39,20 @@ public enum DockPolicy {
         return .front(restore: open.filter { $0.isMiniaturized }.map(\.id))
     }
 
+    public enum MenuBarClick: Equatable, Sendable {
+        /// Lyra is already in front: hide it, keeping whatever page it is on.
+        case hide
+        /// Bring Lyra forward: unhide it, then as `reopen` (restore a minimised window, or open home).
+        case show
+    }
+
+    /// The menu-bar icon left-clicked: a toggle. Hide when Lyra is the app in front with one of its windows showing;
+    /// show it otherwise (another app in front, Lyra hidden, or only minimised or no windows).
+    public static func menuBarClick(_ windows: [Window], closing: Set<Int>, isActive: Bool, isHidden: Bool) -> MenuBarClick {
+        let showing = lyraWindows(windows, closing: closing).contains { $0.isVisible && !$0.isMiniaturized }
+        return isActive && !isHidden && showing ? .hide : .show
+    }
+
     private static func lyraWindows(_ windows: [Window], closing: Set<Int>) -> [Window] {
         windows.filter { !closing.contains($0.id) && !$0.isPanel && $0.isTitled && ($0.isVisible || $0.isMiniaturized) }
     }

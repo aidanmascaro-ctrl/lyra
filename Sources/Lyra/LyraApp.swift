@@ -14,11 +14,8 @@ struct LyraApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra {
-            MenuContent(model: delegate.model, loginItem: delegate.loginItem)
-        } label: {
-            MenuLabel(model: delegate.model).modifier(MainWindowOpener(presence: delegate.presence))
-        }
+        // The menu-bar item is an AppKit NSStatusItem (see StatusItemController), not a MenuBarExtra, so a left click
+        // can open the app and the menu only drops on a right click.
         Window("Teach Lyra my voice", id: "enrol") { EnrolmentWindow(app: delegate.model) }
             .windowResizability(.contentSize)
             .defaultLaunchBehavior(.suppressed)
@@ -56,9 +53,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
     let loginItem = LoginItem()
     lazy var presence = DockPresence(app: model)
+    private var statusItem: StatusItemController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         presence.start()
+        statusItem = StatusItemController(model: model, loginItem: loginItem, presence: presence)
         model.launch()
         #if DEBUG
         DebugLaunch.apply(to: model)
